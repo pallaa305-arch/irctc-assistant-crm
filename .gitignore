@@ -1,0 +1,36 @@
+# Environments
+.env
+.venv/
+env/
+venv/
+ENV/
+
+# Python cache & artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+*.pytest_cache/
+.coverage
+htmlcov/
+
+# Node & Frontend
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Database & Local user data
+data/assistant.db
+data/backups/*
+!data/backups/.gitkeep
+data/exports/*
+!data/exports/.gitkeep
+data/bookings/bookings.xlsx
+
+# Playwright
+.playwright/
+test-results/
+
+# OS files
+.DS_Store
+Thumbs.db
