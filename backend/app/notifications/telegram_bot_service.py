@@ -104,11 +104,29 @@ class TelegramBotService:
                 await send_telegram_message("ℹ️ Koi active waiting booking nahi hai.", chat_id=chat_id)
             return
 
-        if data == "action_cancel":
-            waiting_session = get_latest_waiting_session()
-            if waiting_session:
-                waiting_session.user_cancelled("Cancelled via Telegram")
-                await send_telegram_message("❌ *Booking cancelled by you.*", chat_id=chat_id)
+        if data == "action_cancel" or data == "cmd_cancel":
+            await self._handle_cancel(chat_id)
+            return
+
+        if data == "cmd_book":
+            user_chat_states[chat_id] = {"step": "ASK_ROUTE", "data": {}}
+            await self._ask_route(chat_id)
+            return
+
+        if data == "cmd_status":
+            await self._send_status(chat_id)
+            return
+
+        if data == "cmd_passengers":
+            await self._send_passengers(chat_id)
+            return
+
+        if data == "cmd_routes":
+            await self._send_routes(chat_id)
+            return
+
+        if data == "cmd_menu":
+            await self._send_welcome_menu(chat_id)
             return
 
         # Handle conversational booking wizard button selections
@@ -147,7 +165,8 @@ class TelegramBotService:
 
         elif data == "cancel_book":
             user_chat_states.pop(chat_id, None)
-            await send_telegram_message("❌ Booking request cancel kar di gayi.", chat_id=chat_id)
+            menu_btn = {"inline_keyboard": [[{"text": "🎫 Nayi Booking Karein", "callback_data": "cmd_book"}]]}
+            await send_telegram_message("❌ Booking request cancel kar di gayi.", chat_id=chat_id, reply_markup=menu_btn)
 
     async def _handle_text_message(self, chat_id: str, text: str):
         # 1. Check if an active booking is waiting for manual input (CAPTCHA or OTP)
@@ -161,73 +180,132 @@ class TelegramBotService:
             )
             return
 
-        # 2. Command handlers
-        if text.startswith("/start") or text.startswith("/help"):
-            welcome = (
-                "🚆 *Namaste! Personal IRCTC Booking Assistant me aapka swagat hai.*\n\n"
-                "Aap apne phone se seedha train ticket book kar sakte hain.\n"
-                "Jab bhi CAPTCHA aayega, bot aapko photo bhejega aur aap yahi text reply karke solve kar denge!\n\n"
-                "*Commands:*\n"
-                "👉 `/book` - Nayi ticket booking shuru karein\n"
-                "👉 `/status` - Current booking status check karein\n"
-                "👉 `/passengers` - Saved travelers list dekhein\n"
-                "👉 `/routes` - Saved frequent journeys dekhein\n"
-                "👉 `/cancel` - Ongoing request cancel karein"
-            )
-            await send_telegram_message(welcome, chat_id=chat_id)
+        clean = text.strip().lower()
+
+        # 2. Command handlers (support /command, emojis, and plain words)
+        if clean.startswith("/start") or clean.startswith("/help") or clean == "menu" or clean.startswith("/menu"):
+            await self._send_welcome_menu(chat_id)
             return
 
-        if text.startswith("/cancel"):
-            if chat_id in user_chat_states:
-                user_chat_states.pop(chat_id, None)
-                await send_telegram_message("❌ Current booking request cancel ho gayi.", chat_id=chat_id)
-            elif waiting_session:
-                waiting_session.user_cancelled()
-                await send_telegram_message("❌ Active booking session cancel ho gaya.", chat_id=chat_id)
-            else:
-                await send_telegram_message("Koi active booking ya conversation nahi hai.", chat_id=chat_id)
+        if clean.startswith("/cancel") or "cancel" in clean:
+            await self._handle_cancel(chat_id)
             return
 
-        if text.startswith("/status"):
-            waiting_session = get_latest_waiting_session()
-            if waiting_session:
-                await send_telegram_message(
-                    f"🔄 *Active Booking:* `{waiting_session.booking_ref}`\n"
-                    f"*Status:* `{waiting_session.status}`\n"
-                    f"*Stage:* `{waiting_session.stage}`\n"
-                    f"*Prompt:* {waiting_session.manual_prompt or 'Processing...'}",
-                    chat_id=chat_id
-                )
-            else:
-                await send_telegram_message("✅ Koi active booking in-progress nahi hai.", chat_id=chat_id)
+        if clean.startswith("/status") or "status" in clean:
+            await self._send_status(chat_id)
             return
 
-        if text.startswith("/passengers"):
-            db = SessionLocal()
-            pax_list = db.query(Passenger).all()
-            db.close()
-            if not pax_list:
-                await send_telegram_message("Koi saved passenger profile nahi hai. Web dashboard se add karein.", chat_id=chat_id)
-            else:
-                lines = [f"• *{p.name}* ({p.age}/{p.gender}) - Pref: {p.berth_preference}" for p in pax_list]
-                await send_telegram_message("👥 *Saved Passenger Profiles:*\n" + "\n".join(lines), chat_id=chat_id)
+        if clean.startswith("/passengers") or "passenger" in clean or "traveler" in clean:
+            await self._send_passengers(chat_id)
             return
 
-        if text.startswith("/routes"):
-            db = SessionLocal()
-            routes = db.query(SavedJourney).all()
-            db.close()
-            if not routes:
-                await send_telegram_message("Koi saved route nahi hai. Web dashboard se add karein.", chat_id=chat_id)
-            else:
-                lines = [f"• *{r.label}*: `{r.from_station}` ➔ `{r.to_station}` ({r.preferred_class})" for r in routes]
-                await send_telegram_message("📍 *Saved Frequent Routes:*\n" + "\n".join(lines), chat_id=chat_id)
+        if clean.startswith("/routes") or "route" in clean:
+            await self._send_routes(chat_id)
             return
 
-        if text.startswith("/book"):
+        if clean.startswith("/book") or "book" in clean or "ticket" in clean:
             user_chat_states[chat_id] = {"step": "ASK_ROUTE", "data": {}}
             await self._ask_route(chat_id)
             return
+
+    async def _send_welcome_menu(self, chat_id: str):
+        buttons = {
+            "inline_keyboard": [
+                [
+                    {"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}
+                ],
+                [
+                    {"text": "🔄 Current Status", "callback_data": "cmd_status"},
+                    {"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}
+                ],
+                [
+                    {"text": "📍 Saved Routes", "callback_data": "cmd_routes"},
+                    {"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}
+                ]
+            ]
+        }
+        welcome = (
+            "🚆 *Namaste! Personal IRCTC Booking Assistant me aapka swagat hai.*\n\n"
+            "Aap apne phone se seedha train ticket book kar sakte hain.\n"
+            "Jab bhi CAPTCHA aayega, bot aapko photo bhejega aur aap yahi text reply karke solve kar denge!\n\n"
+            "👉 *Kisi bhi option par tap karein:*"
+        )
+        await send_telegram_message(welcome, chat_id=chat_id, reply_markup=buttons)
+
+    async def _handle_cancel(self, chat_id: str):
+        waiting_session = get_latest_waiting_session()
+        keyboard = {"inline_keyboard": [[{"text": "🎫 Nayi Booking Shuru Karein", "callback_data": "cmd_book"}]]}
+        if chat_id in user_chat_states:
+            user_chat_states.pop(chat_id, None)
+            await send_telegram_message("❌ Current booking request cancel ho gayi.", chat_id=chat_id, reply_markup=keyboard)
+        elif waiting_session:
+            waiting_session.user_cancelled()
+            await send_telegram_message("❌ Active booking session cancel ho gaya.", chat_id=chat_id, reply_markup=keyboard)
+        else:
+            await send_telegram_message("Koi active booking ya conversation nahi hai.", chat_id=chat_id, reply_markup=keyboard)
+
+    async def _send_status(self, chat_id: str):
+        waiting_session = get_latest_waiting_session()
+        if waiting_session:
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {"text": "🔄 Refresh Status", "callback_data": "cmd_status"},
+                        {"text": "❌ Cancel Booking", "callback_data": "action_cancel"}
+                    ]
+                ]
+            }
+            await send_telegram_message(
+                f"🔄 *Active Booking:* `{waiting_session.booking_ref}`\n"
+                f"*Status:* `{waiting_session.status}`\n"
+                f"*Stage:* `{waiting_session.stage}`\n"
+                f"*Prompt:* {waiting_session.manual_prompt or 'Processing...'}",
+                chat_id=chat_id,
+                reply_markup=keyboard
+            )
+        else:
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}]
+                ]
+            }
+            await send_telegram_message("✅ *Koi active booking in-progress nahi hai.*", chat_id=chat_id, reply_markup=keyboard)
+
+    async def _send_passengers(self, chat_id: str):
+        db = SessionLocal()
+        pax_list = db.query(Passenger).all()
+        db.close()
+        if not pax_list:
+            keyboard = {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "cmd_menu"}]]}
+            await send_telegram_message("Koi saved passenger profile nahi hai. Web dashboard se add karein.", chat_id=chat_id, reply_markup=keyboard)
+        else:
+            lines = [f"• *{p.name}* ({p.age}/{p.gender}) - Pref: {p.berth_preference}" for p in pax_list]
+            keyboard = {
+                "inline_keyboard": [
+                    [{"text": "🎫 Nayi Booking Shuru Karein", "callback_data": "cmd_book"}],
+                    [{"text": "🏠 Main Menu", "callback_data": "cmd_menu"}]
+                ]
+            }
+            await send_telegram_message("👥 *Saved Passenger Profiles:*\n" + "\n".join(lines), chat_id=chat_id, reply_markup=keyboard)
+
+    async def _send_routes(self, chat_id: str):
+        db = SessionLocal()
+        routes = db.query(SavedJourney).all()
+        db.close()
+        if not routes:
+            keyboard = {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "cmd_menu"}]]}
+            await send_telegram_message("Koi saved route nahi hai. Web dashboard se add karein.", chat_id=chat_id, reply_markup=keyboard)
+        else:
+            lines = [f"• *{r.label}*: `{r.from_station}` ➔ `{r.to_station}` ({r.preferred_class})" for r in routes]
+            buttons = []
+            for r in routes:
+                buttons.append([{"text": f"🚀 Book {r.label} ({r.from_station} ➔ {r.to_station})", "callback_data": f"route_{r.from_station}_{r.to_station}"}])
+            buttons.append([{"text": "🏠 Main Menu", "callback_data": "cmd_menu"}])
+            await send_telegram_message(
+                "📍 *Saved Frequent Routes:*\n" + "\n".join(lines) + "\n\nQuick book karne ke liye kisi route par tap karein:",
+                chat_id=chat_id,
+                reply_markup={"inline_keyboard": buttons}
+            )
 
         # 3. Conversational State Machine for /book
         state = user_chat_states.get(chat_id)
@@ -287,6 +365,9 @@ class TelegramBotService:
                     {"text": f"Kal ({d1})", "callback_data": "date_1"},
                     {"text": f"Parso ({d2})", "callback_data": "date_2"},
                     {"text": f"Next Week ({d7})", "callback_data": "date_7"}
+                ],
+                [
+                    {"text": "❌ Cancel", "callback_data": "cancel_book"}
                 ]
             ]
         }
@@ -305,6 +386,7 @@ class TelegramBotService:
         buttons = []
         for p in saved_pax:
             buttons.append([{"text": f"👤 {p.name} ({p.age}/{p.gender})", "callback_data": f"pax_{p.name}"}])
+        buttons.append([{"text": "❌ Cancel", "callback_data": "cancel_book"}])
 
         keyboard = {"inline_keyboard": buttons}
         user_chat_states[chat_id]["step"] = "ASK_PASSENGER_MANUAL"
@@ -316,7 +398,8 @@ class TelegramBotService:
         keyboard = {
             "inline_keyboard": [
                 [{"text": "AC 3 Tier (3A)", "callback_data": "class_3A"}, {"text": "AC 2 Tier (2A)", "callback_data": "class_2A"}],
-                [{"text": "Sleeper (SL)", "callback_data": "class_SL"}, {"text": "Chair Car (CC)", "callback_data": "class_CC"}]
+                [{"text": "Sleeper (SL)", "callback_data": "class_SL"}, {"text": "Chair Car (CC)", "callback_data": "class_CC"}],
+                [{"text": "❌ Cancel", "callback_data": "cancel_book"}]
             ]
         }
         await send_telegram_message("💺 *Preferred Class select karein:*", chat_id=chat_id, reply_markup=keyboard)
