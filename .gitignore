@@ -21,6 +21,7 @@ dist-ssr/
 
 # Database & Local user data
 data/assistant.db
+backend/data/
 data/backups/*
 !data/backups/.gitkeep
 data/exports/*

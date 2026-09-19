@@ -18,6 +18,7 @@ from app.notifications.telegram import (
     answer_callback_query,
     format_booking_confirmation_telegram
 )
+from app.services.railway_service import railway_service
 
 # Common Indian Cities & Station Codes Map
 CITY_STATION_MAP = {
@@ -477,6 +478,83 @@ class TelegramBotService:
             await self._send_welcome_menu(chat_id)
             return
 
+        # PNR Status Check Callback
+        if data == "cmd_pnr":
+            user_chat_states[chat_id] = {"step": "WAIT_PNR_INPUT", "data": {}}
+            lang = user_languages.get(chat_id, "hinglish")
+            if lang == "hi":
+                pnr_prompt = (
+                    "🔍 *PNR स्थिति जांच*\n"
+                    "═════════════════════════════════════\n"
+                    "कृपया अपना 10 अंकों का PNR नंबर चैट में लिखकर भेजें:\n"
+                    "(उदा. `2451234567`)"
+                )
+                cancel_txt = "❌ रद्द करें"
+            elif lang == "en":
+                pnr_prompt = (
+                    "🔍 *PNR Status Check*\n"
+                    "═════════════════════════════════════\n"
+                    "Please send your 10-digit PNR number:\n"
+                    "(e.g., `2451234567`)"
+                )
+                cancel_txt = "❌ Cancel"
+            else:
+                pnr_prompt = (
+                    "🔍 *PNR Status Check*\n"
+                    "═════════════════════════════════════\n"
+                    "Kripya apna 10-digit PNR number chat me likh kar bhejein:\n"
+                    "(e.g., `2451234567`)"
+                )
+                cancel_txt = "❌ Cancel"
+            await send_telegram_message(pnr_prompt, chat_id=chat_id, reply_markup={"inline_keyboard": [[{"text": cancel_txt, "callback_data": "cmd_cancel"}]]})
+            return
+
+        # Live Train Status Callback
+        if data == "cmd_live_train":
+            user_chat_states[chat_id] = {"step": "WAIT_TRAIN_INPUT", "data": {}}
+            lang = user_languages.get(chat_id, "hinglish")
+            if lang == "hi":
+                train_prompt = (
+                    "📍 *लाइव ट्रेन रनिंग स्थिति*\n"
+                    "═════════════════════════════════════\n"
+                    "कृपया 5 अंकों का ट्रेन नंबर चैट में लिखकर भेजें:\n"
+                    "(उदा. `12952`, `22436`, `12301`)"
+                )
+                cancel_txt = "❌ रद्द करें"
+            elif lang == "en":
+                train_prompt = (
+                    "📍 *Live Train Running Status*\n"
+                    "═════════════════════════════════════\n"
+                    "Please send the 5-digit Train Number:\n"
+                    "(e.g., `12952`, `22436`, `12301`)"
+                )
+                cancel_txt = "❌ Cancel"
+            else:
+                train_prompt = (
+                    "📍 *Live Train Running Status*\n"
+                    "═════════════════════════════════════\n"
+                    "Kripya 5-digit Train Number chat me likh kar bhejein:\n"
+                    "(e.g., `12952`, `22436`, `12301`)"
+                )
+                cancel_txt = "❌ Cancel"
+            await send_telegram_message(train_prompt, chat_id=chat_id, reply_markup={"inline_keyboard": [[{"text": cancel_txt, "callback_data": "cmd_cancel"}]]})
+            return
+
+        if data.startswith("pnr_refresh_"):
+            pnr_val = data.replace("pnr_refresh_", "")
+            await self._lookup_and_send_pnr(chat_id, pnr_val)
+            return
+
+        if data.startswith("live_refresh_"):
+            train_val = data.replace("live_refresh_", "")
+            await self._lookup_and_send_live_train(chat_id, train_val)
+            return
+
+        if data.startswith("live_train_"):
+            train_val = data.replace("live_train_", "")
+            await self._lookup_and_send_live_train(chat_id, train_val)
+            return
+
         # Handle conversational booking wizard button selections
         state = user_chat_states.get(chat_id, {})
 
@@ -555,6 +633,17 @@ class TelegramBotService:
             await send_telegram_message(rec_msg, chat_id=chat_id)
             return
 
+        # Check if user is in waiting PNR or Train state
+        if user_chat_states.get(chat_id, {}).get("step") == "WAIT_PNR_INPUT":
+            user_chat_states.pop(chat_id, None)
+            await self._lookup_and_send_pnr(chat_id, text)
+            return
+
+        if user_chat_states.get(chat_id, {}).get("step") == "WAIT_TRAIN_INPUT":
+            user_chat_states.pop(chat_id, None)
+            await self._lookup_and_send_live_train(chat_id, text)
+            return
+
         clean = text.strip().lower()
 
         # Check for Language selection command
@@ -591,6 +680,38 @@ class TelegramBotService:
         if clean.startswith("/book") or clean in ["book", "booking", "ticket"]:
             user_chat_states[chat_id] = {"step": "ASK_ROUTE", "data": {}}
             await self._ask_route(chat_id)
+            return
+
+        # PNR Status commands or auto-detection
+        if clean.startswith("/pnr") or clean.startswith("pnr"):
+            pnr_match = re.search(r'\b\d{10}\b', text)
+            if pnr_match:
+                await self._lookup_and_send_pnr(chat_id, pnr_match.group(0))
+            else:
+                user_chat_states[chat_id] = {"step": "WAIT_PNR_INPUT", "data": {}}
+                p_msg = "🔍 कृपया 10 अंकों का PNR नंबर भेजें:" if lang == "hi" else ("🔍 Please send your 10-digit PNR number:" if lang == "en" else "🔍 Kripya 10-digit PNR number bhejein:")
+                await send_telegram_message(p_msg, chat_id=chat_id)
+            return
+
+        # Live Train Status commands or auto-detection
+        if clean.startswith("/live") or clean.startswith("live") or clean.startswith("/train") or clean.startswith("train"):
+            train_match = re.search(r'\b\d{4,5}\b', text)
+            if train_match:
+                await self._lookup_and_send_live_train(chat_id, train_match.group(0))
+            else:
+                user_chat_states[chat_id] = {"step": "WAIT_TRAIN_INPUT", "data": {}}
+                p_msg = "📍 कृपया 5 अंकों का ट्रेन नंबर भेजें:" if lang == "hi" else ("📍 Please send the 5-digit Train Number:" if lang == "en" else "📍 Kripya 5-digit Train Number bhejein:")
+                await send_telegram_message(p_msg, chat_id=chat_id)
+            return
+
+        # Standalone 10 digits -> Instant PNR Lookup
+        if re.fullmatch(r'\d{10}', text.strip()):
+            await self._lookup_and_send_pnr(chat_id, text.strip())
+            return
+
+        # Standalone 5 digits -> Instant Live Train Status
+        if re.fullmatch(r'\d{5}', text.strip()):
+            await self._lookup_and_send_live_train(chat_id, text.strip())
             return
 
         # 3. Check for One-Shot Booking or Rich Natural Language Booking Message FIRST
@@ -831,6 +952,7 @@ class TelegramBotService:
             )
             buttons = [
                 [{"text": "🎫 नई टिकट बुक करें", "callback_data": "cmd_book"}],
+                [{"text": "🔍 PNR स्टेटस चेक", "callback_data": "cmd_pnr"}, {"text": "📍 लाइव ट्रेन स्थिति", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 वर्तमान स्थिति", "callback_data": "cmd_status"}, {"text": "👥 सहेजे गए यात्री", "callback_data": "cmd_passengers"}],
                 [{"text": "📍 मुख्य मार्ग (Routes)", "callback_data": "cmd_routes"}, {"text": "🌐 भाषा बदलें (Language)", "callback_data": "cmd_lang"}],
                 [{"text": "❌ रद्द करें", "callback_data": "cmd_cancel"}]
@@ -850,6 +972,7 @@ class TelegramBotService:
             )
             buttons = [
                 [{"text": "🎫 Book New Ticket", "callback_data": "cmd_book"}],
+                [{"text": "🔍 Check PNR Status", "callback_data": "cmd_pnr"}, {"text": "📍 Live Train Status", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
                 [{"text": "📍 Popular Routes", "callback_data": "cmd_routes"}, {"text": "🌐 Change Language", "callback_data": "cmd_lang"}],
                 [{"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
@@ -869,11 +992,76 @@ class TelegramBotService:
             )
             buttons = [
                 [{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}],
+                [{"text": "🔍 PNR Status Check", "callback_data": "cmd_pnr"}, {"text": "📍 Live Train Status", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
                 [{"text": "📍 Saved Routes", "callback_data": "cmd_routes"}, {"text": "🌐 Bhasha Badlein (Language)", "callback_data": "cmd_lang"}],
                 [{"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
             ]
         await send_telegram_message(welcome, chat_id=chat_id, reply_markup={"inline_keyboard": buttons})
+
+    async def _lookup_and_send_pnr(self, chat_id: str, pnr_input: str):
+        lang = user_languages.get(chat_id, "hinglish")
+        pnr_clean = re.sub(r'\D', '', pnr_input.strip())
+        if len(pnr_clean) != 10:
+            err_msg = "⚠️ PNR नंबर ठीक 10 अंकों का होना चाहिए। कृपया पुनः प्रयास करें।" if lang == "hi" else ("⚠️ PNR must be exactly 10 digits. Please try again." if lang == "en" else "⚠️ PNR number exact 10 digits ka hona chahiye. Kripya dobara try karein.")
+            await send_telegram_message(err_msg, chat_id=chat_id)
+            return
+
+        loading = "🔄 PNR स्थिति जांची जा रही है..." if lang == "hi" else ("🔄 Fetching live PNR status..." if lang == "en" else "🔄 Live PNR status fetch ho raha hai...")
+        await send_telegram_message(loading, chat_id=chat_id)
+
+        data = await railway_service.get_pnr_status(pnr_clean)
+        msg = railway_service.format_pnr_message(data, lang=lang)
+
+        btn_refresh = "🔄 रिफ्रेश (Refresh)" if lang == "hi" else ("🔄 Refresh" if lang == "en" else "🔄 Refresh")
+        btn_track = "📍 ट्रेन ट्रैक करें" if lang == "hi" else ("📍 Track Train Live" if lang == "en" else "📍 Train Track Karein")
+        btn_book = "🎫 टिकट बुक करें" if lang == "hi" else ("🎫 Book Ticket" if lang == "en" else "🎫 Nayi Booking")
+        btn_menu = "🔙 मुख्य मेनू" if lang == "hi" else ("🔙 Main Menu" if lang == "en" else "🔙 Main Menu")
+
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": btn_refresh, "callback_data": f"pnr_refresh_{pnr_clean}"},
+                    {"text": btn_track, "callback_data": f"live_train_{data.get('train_number', '12952')}"}
+                ],
+                [
+                    {"text": btn_book, "callback_data": "cmd_book"},
+                    {"text": btn_menu, "callback_data": "cmd_menu"}
+                ]
+            ]
+        }
+        await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
+
+    async def _lookup_and_send_live_train(self, chat_id: str, train_input: str):
+        lang = user_languages.get(chat_id, "hinglish")
+        train_clean = re.sub(r'\D', '', train_input.strip())
+        if len(train_clean) < 4 or len(train_clean) > 5:
+            err_msg = "⚠️ ट्रेन नंबर 5 अंकों का होना चाहिए (उदा. 12952, 22436)।" if lang == "hi" else ("⚠️ Train number must be 5 digits (e.g. 12952, 22436)." if lang == "en" else "⚠️ Train number 5 digits ka hona chahiye (e.g. 12952, 22436).")
+            await send_telegram_message(err_msg, chat_id=chat_id)
+            return
+
+        loading = "🔄 लाइव ट्रेन स्थिति लोड हो रही है..." if lang == "hi" else ("🔄 Loading live train location..." if lang == "en" else "🔄 Live train location load ho rahi hai...")
+        await send_telegram_message(loading, chat_id=chat_id)
+
+        data = await railway_service.get_live_train_status(train_clean)
+        msg = railway_service.format_live_train_message(data, lang=lang)
+
+        btn_refresh = "🔄 रिफ्रेश (Refresh)" if lang == "hi" else ("🔄 Refresh" if lang == "en" else "🔄 Refresh")
+        btn_pnr = "🔍 PNR स्टेटस" if lang == "hi" else ("🔍 PNR Status" if lang == "en" else "🔍 PNR Status")
+        btn_menu = "🔙 मुख्य मेनू" if lang == "hi" else ("🔙 Main Menu" if lang == "en" else "🔙 Main Menu")
+
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": btn_refresh, "callback_data": f"live_refresh_{train_clean}"},
+                    {"text": btn_pnr, "callback_data": "cmd_pnr"}
+                ],
+                [
+                    {"text": btn_menu, "callback_data": "cmd_menu"}
+                ]
+            ]
+        }
+        await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
     async def _handle_cancel(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
