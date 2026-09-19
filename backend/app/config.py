@@ -23,9 +23,9 @@ class Settings(BaseSettings):
     EXCEL_FILE_PATH: str = str(BOOKINGS_DIR / "bookings.xlsx")
     
     # Telegram Bot config
-    TELEGRAM_BOT_TOKEN: str = ""
-    TELEGRAM_CHAT_ID: str = ""
-    TELEGRAM_ENABLED: bool = False
+    TELEGRAM_BOT_TOKEN: str = "8620217080:AAFUlVeFp-IqLvWmH5u4mI-Em3_9pZptTP4"
+    TELEGRAM_CHAT_ID: str = "7875481582"
+    TELEGRAM_ENABLED: bool = True
     
     # WhatsApp API config (Official Cloud API / Provider)
     WHATSAPP_API_KEY: str = ""
