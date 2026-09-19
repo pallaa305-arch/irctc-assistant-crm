@@ -173,6 +173,127 @@ def auto_save_passenger_to_db(pax: Dict[str, Any]):
     finally:
         db.close()
 
+def extract_one_shot_booking_data(text: str) -> Optional[Dict[str, Any]]:
+    # Requires at least a route mention (from -> to or city to city)
+    parts = re.split(r'\bto\b|\bse\b|\b-\b|\b➔\b|\b->\b', text, flags=re.IGNORECASE)
+    if len(parts) < 2:
+        return None
+
+    data: Dict[str, Any] = {}
+    remaining = text
+
+    # 1. Class extraction
+    cls_match = re.search(r'\b(3a|2a|1a|sl|cc|2s|3\s*tier|2\s*tier|first\s*ac|third\s*ac|second\s*ac|sleeper|chair\s*car)\b', remaining, re.IGNORECASE)
+    if cls_match:
+        c_raw = cls_match.group(1).upper()
+        if '3' in c_raw or 'THIRD' in c_raw: data['journey_class'] = '3A'
+        elif '2' in c_raw or 'SECOND' in c_raw: data['journey_class'] = '2A'
+        elif '1' in c_raw or 'FIRST' in c_raw: data['journey_class'] = '1A'
+        elif 'SL' in c_raw or 'SLEEP' in c_raw: data['journey_class'] = 'SL'
+        elif 'CC' in c_raw or 'CHAIR' in c_raw: data['journey_class'] = 'CC'
+        elif '2S' in c_raw: data['journey_class'] = '2S'
+        else: data['journey_class'] = '3A'
+        remaining = remaining[:cls_match.start()] + ' ' + remaining[cls_match.end():]
+
+    # 2. Date extraction
+    today = date.today()
+    date_found = None
+    if re.search(r'\bkal\b|\btomorrow\b', remaining, re.IGNORECASE):
+        date_found = (today + timedelta(days=1)).strftime('%d/%m/%Y')
+        remaining = re.sub(r'\bkal\b|\btomorrow\b', ' ', remaining, flags=re.IGNORECASE)
+    elif re.search(r'\bparso\b|\bparson\b|\bday\s*after\s*tomorrow\b', remaining, re.IGNORECASE):
+        date_found = (today + timedelta(days=2)).strftime('%d/%m/%Y')
+        remaining = re.sub(r'\bparso\b|\bparson\b|\bday\s*after\s*tomorrow\b', ' ', remaining, flags=re.IGNORECASE)
+    elif re.search(r'\baaj\b|\btoday\b', remaining, re.IGNORECASE):
+        date_found = today.strftime('%d/%m/%Y')
+        remaining = re.sub(r'\baaj\b|\btoday\b', ' ', remaining, flags=re.IGNORECASE)
+    else:
+        # DD/MM/YYYY or DD-MM-YYYY
+        dm = re.search(r'\b(\d{1,2})[/\-\.](\d{1,2})(?:[/\-\.](\d{2,4}))?\b', remaining)
+        if dm:
+            d, m = int(dm.group(1)), int(dm.group(2))
+            y = int(dm.group(3)) if dm.group(3) else today.year
+            if y < 100: y += 2000
+            try:
+                date_found = date(y, m, d).strftime('%d/%m/%Y')
+                remaining = remaining[:dm.start()] + ' ' + remaining[dm.end():]
+            except Exception: pass
+        if not date_found:
+            # 15 oct, 25 march
+            months = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
+            for m_name, m_num in months.items():
+                match_m = re.search(rf'\b(\d{{1,2}})\s+{m_name}\w*\b', remaining, re.IGNORECASE)
+                if match_m:
+                    d = int(match_m.group(1))
+                    date_found = date(today.year, m_num, d).strftime('%d/%m/%Y')
+                    remaining = remaining[:match_m.start()] + ' ' + remaining[match_m.end():]
+                    break
+    if date_found:
+        data['journey_date'] = date_found
+
+    # 3. Route extraction (From and To)
+    route_split = re.split(r'\bto\b|\bse\b|\b-\b|\b➔\b|\b->\b', remaining, flags=re.IGNORECASE)
+    if len(route_split) >= 2:
+        from_part = route_split[0].strip()
+        to_part = route_split[1].strip()
+
+        # Find from_station
+        for city, code in CITY_STATION_MAP.items():
+            if re.search(rf'\b{city}\b', from_part, re.IGNORECASE):
+                data['from_station'] = code
+                remaining = re.sub(rf'\b{city}\b', ' ', remaining, flags=re.IGNORECASE)
+                break
+        if not data.get('from_station'):
+            for t in from_part.split():
+                c = resolve_station(t)
+                if c:
+                    data['from_station'] = c
+                    remaining = re.sub(rf'\b{t}\b', ' ', remaining, flags=re.IGNORECASE)
+                    break
+
+        # Find to_station
+        for city, code in CITY_STATION_MAP.items():
+            if re.search(rf'\b{city}\b', to_part, re.IGNORECASE):
+                data['to_station'] = code
+                remaining = re.sub(rf'\b{city}\b', ' ', remaining, flags=re.IGNORECASE)
+                break
+        if not data.get('to_station'):
+            for t in to_part.split():
+                c = resolve_station(t)
+                if c:
+                    data['to_station'] = c
+                    remaining = re.sub(rf'\b{t}\b', ' ', remaining, flags=re.IGNORECASE)
+                    break
+
+    if not data.get('from_station') or not data.get('to_station'):
+        return None
+
+    # 4. Clean out stop words from remaining text to find Passenger
+    stop_words = r'\b(train|gadi|gaadi|railway|irctc|express|to|se|ki|ka|ke|ko|par|wali|wala|liye|ticket|book|kardo|karo|karna|hai|chahiye|please|me|mein)\b'
+    remaining = re.sub(stop_words, ' ', remaining, flags=re.IGNORECASE)
+    remaining = ' '.join(remaining.split())
+
+    # 5. Extract Passenger details
+    if remaining:
+        parts_pax = remaining.split()
+        name_parts = []
+        age = 30
+        gender = 'M'
+        for p in parts_pax:
+            if p.isdigit() and 1 <= int(p) <= 120:
+                age = int(p)
+            elif p.upper() in ['M', 'MALE', 'PURUSH']:
+                gender = 'M'
+            elif p.upper() in ['F', 'FEMALE', 'MAHILA']:
+                gender = 'F'
+            elif p.isalpha():
+                name_parts.append(p.capitalize())
+        pax_name = ' '.join(name_parts)
+        if pax_name and len(pax_name) >= 2:
+            data['passengers'] = [{'name': pax_name, 'age': age, 'gender': gender, 'berth_preference': 'NONE'}]
+
+    return data
+
 # In-memory conversational state per Telegram chat
 # Format: { chat_id: { "step": "...", "data": { ... } } }
 user_chat_states: Dict[str, Dict[str, Any]] = {}
@@ -317,9 +438,14 @@ class TelegramBotService:
 
             state["data"] = state.get("data", {})
             state["data"]["passengers"] = [{"name": pax_name, "age": age, "gender": gender, "berth_preference": berth}]
-            state["step"] = "ASK_CLASS"
-            user_chat_states[chat_id] = state
-            await self._ask_class(chat_id)
+            if state["data"].get("journey_class"):
+                state["step"] = "CONFIRM_SUMMARY"
+                user_chat_states[chat_id] = state
+                await self._show_summary_and_confirm(chat_id)
+            else:
+                state["step"] = "ASK_CLASS"
+                user_chat_states[chat_id] = state
+                await self._ask_class(chat_id)
 
         elif data.startswith("class_"):
             cls_name = data.replace("class_", "")
@@ -378,7 +504,60 @@ class TelegramBotService:
             await self._ask_route(chat_id)
             return
 
-        # 3. Conversational State Machine + Smart Free-Text Processing
+        # 3. Check for One-Shot Booking or Rich Natural Language Booking Message FIRST
+        # (e.g. "Delhi to Varanasi 15 oct Deepak 28 M 3A", "NDLS se BSB kal Deepak 3A me book kardo")
+        one_shot = extract_one_shot_booking_data(text)
+        if one_shot:
+            current_state = user_chat_states.get(chat_id, {})
+            current_data = current_state.get("data", {})
+            current_data.update(one_shot)
+
+            # Auto-save passenger if extracted
+            if current_data.get("passengers"):
+                for p in current_data["passengers"]:
+                    auto_save_passenger_to_db(p)
+
+            # Check for missing details step-by-step
+            if not current_data.get("journey_date"):
+                user_chat_states[chat_id] = {"step": "ASK_DATE", "data": current_data}
+                await send_telegram_message(f"🚆 Route Set: *{current_data['from_station']} ➔ {current_data['to_station']}*", chat_id=chat_id)
+                await self._ask_date(chat_id)
+                return
+
+            if not current_data.get("passengers"):
+                user_chat_states[chat_id] = {"step": "ASK_PASSENGER", "data": current_data}
+                await send_telegram_message(
+                    f"🚆 Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 Date: *{current_data['journey_date']}*",
+                    chat_id=chat_id
+                )
+                await self._ask_passenger(chat_id)
+                return
+
+            if not current_data.get("journey_class"):
+                user_chat_states[chat_id] = {"step": "ASK_CLASS", "data": current_data}
+                pax_name = current_data['passengers'][0]['name']
+                await send_telegram_message(
+                    f"🚆 Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 Date: *{current_data['journey_date']}*\n👤 Passenger: *{pax_name}*",
+                    chat_id=chat_id
+                )
+                await self._ask_class(chat_id)
+                return
+
+            # All 4 items are present (Route, Date, Passengers, Class)
+            user_chat_states[chat_id] = {"step": "CONFIRM_SUMMARY", "data": current_data}
+            pax = current_data["passengers"][0]
+            await send_telegram_message(
+                f"⚡ *One-Shot Booking Request Samjhi Gayi!*\n"
+                f"• Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n"
+                f"• Date: *{current_data['journey_date']}*\n"
+                f"• Class: *{current_data['journey_class']}*\n"
+                f"• Passenger: *{pax['name']}* ({pax['age']}/{pax['gender']})",
+                chat_id=chat_id
+            )
+            await self._show_summary_and_confirm(chat_id)
+            return
+
+        # 4. Conversational State Machine + Smart Free-Text Processing
         state = user_chat_states.get(chat_id)
 
         # A) If user is in ASK_ROUTE step
@@ -399,7 +578,7 @@ class TelegramBotService:
             buttons = {"inline_keyboard": [
                 [{"text": "📍 Delhi ➔ Mumbai", "callback_data": "route_NDLS_MMCT"}, {"text": "📍 Delhi ➔ Kolkata", "callback_data": "route_NDLS_HWH"}],
                 [{"text": "📍 Delhi ➔ Varanasi", "callback_data": "route_NDLS_BSB"}, {"text": "📍 Delhi ➔ Bengaluru", "callback_data": "route_NDLS_SBC"}],
-                [{"text": "❌ Cancel", "callback_data": "cmd_cancel"}]
+                [{"text": "❌ Cancel", "callback_data": "cancel_book"}]
             ]}
             await send_telegram_message(
                 "⚠️ Station samajh nahi aaya. Please aise likhein: `Delhi to Mumbai` ya `NDLS to BSB`\nYa neeche diye gaye popular route par tap karein:",
@@ -413,11 +592,25 @@ class TelegramBotService:
             parsed_d = parse_date_natural(text)
             if parsed_d:
                 state["data"]["journey_date"] = parsed_d
-                state["step"] = "ASK_PASSENGER"
-                user_chat_states[chat_id] = state
-                await send_telegram_message(f"✅ Journey Date: *{parsed_d}*", chat_id=chat_id)
-                await self._ask_passenger(chat_id)
-                return
+                if state["data"].get("passengers"):
+                    if state["data"].get("journey_class"):
+                        state["step"] = "CONFIRM_SUMMARY"
+                        user_chat_states[chat_id] = state
+                        await send_telegram_message(f"✅ Journey Date: *{parsed_d}*", chat_id=chat_id)
+                        await self._show_summary_and_confirm(chat_id)
+                        return
+                    else:
+                        state["step"] = "ASK_CLASS"
+                        user_chat_states[chat_id] = state
+                        await send_telegram_message(f"✅ Journey Date: *{parsed_d}*", chat_id=chat_id)
+                        await self._ask_class(chat_id)
+                        return
+                else:
+                    state["step"] = "ASK_PASSENGER"
+                    user_chat_states[chat_id] = state
+                    await send_telegram_message(f"✅ Journey Date: *{parsed_d}*", chat_id=chat_id)
+                    await self._ask_passenger(chat_id)
+                    return
             else:
                 date_keyboard = {
                     "inline_keyboard": [
@@ -437,14 +630,24 @@ class TelegramBotService:
             pax = parse_passenger_info(text)
             auto_save_passenger_to_db(pax)
             state["data"]["passengers"] = [pax]
-            state["step"] = "ASK_CLASS"
-            user_chat_states[chat_id] = state
-            await send_telegram_message(
-                f"✅ Traveler Added & Saved: *{pax['name']}* ({pax['age']}/{pax['gender']})",
-                chat_id=chat_id
-            )
-            await self._ask_class(chat_id)
-            return
+            if state["data"].get("journey_class"):
+                state["step"] = "CONFIRM_SUMMARY"
+                user_chat_states[chat_id] = state
+                await send_telegram_message(
+                    f"✅ Traveler Added & Saved: *{pax['name']}* ({pax['age']}/{pax['gender']})",
+                    chat_id=chat_id
+                )
+                await self._show_summary_and_confirm(chat_id)
+                return
+            else:
+                state["step"] = "ASK_CLASS"
+                user_chat_states[chat_id] = state
+                await send_telegram_message(
+                    f"✅ Traveler Added & Saved: *{pax['name']}* ({pax['age']}/{pax['gender']})",
+                    chat_id=chat_id
+                )
+                await self._ask_class(chat_id)
+                return
 
         # D) If user is in ASK_CLASS step
         if state and state.get("step") in ["ASK_CLASS"]:
@@ -471,27 +674,10 @@ class TelegramBotService:
                 )
                 return
 
-        # E) One-shot Full Sentence Parsing (e.g. "Delhi to Varanasi 15 oct Deepak 28 M 3A")
-        parts = re.split(r'\bto\b|\bse\b|\b-\b|\b➔\b|\b->\b', text, flags=re.IGNORECASE)
-        if len(parts) >= 2:
-            from_c = resolve_station(parts[0])
-            # Try to see if rest has to_station
-            to_parts = parts[1].strip().split()
-            if to_parts:
-                to_c = resolve_station(to_parts[0])
-                if from_c and to_c:
-                    user_chat_states[chat_id] = {
-                        "step": "ASK_DATE",
-                        "data": {"from_station": from_c, "to_station": to_c}
-                    }
-                    await send_telegram_message(f"🚆 Route detected: *{from_c} ➔ {to_c}*", chat_id=chat_id)
-                    await self._ask_date(chat_id)
-                    return
-
         # If passenger is added from outside /passengers mode
         if len(text.split()) <= 4 and any(c.isalpha() for c in text):
             pax = parse_passenger_info(text)
-            if pax["name"] and len(pax["name"]) >= 2 and pax["name"].lower() not in ["hi", "hello", "ok", "yes", "no"]:
+            if pax["name"] and len(pax["name"]) >= 2 and pax["name"].lower() not in ["hi", "hello", "ok", "yes", "no", "book", "cancel", "status"]:
                 auto_save_passenger_to_db(pax)
                 menu_btn = {"inline_keyboard": [[{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}], [{"text": "👥 Saved Passengers Dekhein", "callback_data": "cmd_passengers"}]]}
                 await send_telegram_message(
@@ -524,6 +710,10 @@ class TelegramBotService:
             "🚆 *Namaste! Personal IRCTC Booking Assistant me aapka swagat hai.*\n\n"
             "Aap apne phone se button click karke ya text chat me likh kar ticket book kar sakte hain.\n"
             "Jab bhi CAPTCHA aayega, bot aapko photo bhejega aur aap yahi text reply kar denge!\n\n"
+            "⚡ *One-Shot Direct Booking:*\n"
+            "Aap ek hi message me direct booking request bhej sakte hain, jaise:\n"
+            "`Delhi to Varanasi 15 oct Deepak 28 M 3A`\n"
+            "ya `NDLS se BSB kal Deepak 3A me book kardo`\n\n"
             "👉 *Neeche diye gaye buttons par tap karein ya chat me likhein:*"
         )
         await send_telegram_message(welcome, chat_id=chat_id, reply_markup=buttons)
@@ -786,17 +976,19 @@ class TelegramBotService:
         session_state = get_or_create_session(ref)
         session_state.set_stage("PREPARING", "INITIATED")
 
+        b_id = int(booking.id)
+        db.close()
+
         # Start automation task
         target_flow = run_mock_booking_flow if settings.DEMO_MODE else run_real_irctc_booking_flow
         async def runner():
             db_inner = SessionLocal()
             try:
-                await target_flow(db_inner, booking.id, session_state)
+                await target_flow(db_inner, b_id, session_state)
             finally:
                 db_inner.close()
 
         asyncio.create_task(runner())
-        db.close()
 
         await send_telegram_message(
             f"🚀 *Booking Initiated!*\nRef: `{ref}`\n"
