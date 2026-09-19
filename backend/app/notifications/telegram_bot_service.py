@@ -1,5 +1,7 @@
 import asyncio
 import re
+import json
+from pathlib import Path
 from datetime import datetime, date, timedelta
 from typing import Dict, Any, Optional, List
 import httpx
@@ -57,13 +59,13 @@ def resolve_station(text: str) -> Optional[str]:
 def parse_date_natural(text: str) -> Optional[str]:
     t = text.strip().lower()
     today = date.today()
-    if t in ["aaj", "today"]:
+    if t in ["aaj", "today", "आज"]:
         return today.strftime("%d/%m/%Y")
-    if t in ["kal", "tomorrow"]:
+    if t in ["kal", "tomorrow", "कल"]:
         return (today + timedelta(days=1)).strftime("%d/%m/%Y")
-    if t in ["parso", "parson", "day after tomorrow"]:
+    if t in ["parso", "parson", "day after tomorrow", "परसों", "परसो"]:
         return (today + timedelta(days=2)).strftime("%d/%m/%Y")
-    if t in ["next week", "agle hafte"]:
+    if t in ["next week", "agle hafte", "अगले हफ्ते", "अगले सप्ताह"]:
         return (today + timedelta(days=7)).strftime("%d/%m/%Y")
 
     # Match DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
@@ -294,6 +296,28 @@ def extract_one_shot_booking_data(text: str) -> Optional[Dict[str, Any]]:
 
     return data
 
+# Language preferences persisted per chat_id
+LANG_FILE = Path("data/telegram_languages.json")
+user_languages: Dict[str, str] = {}
+
+def load_user_languages():
+    try:
+        if LANG_FILE.exists():
+            with open(LANG_FILE, "r", encoding="utf-8") as f:
+                user_languages.update(json.load(f))
+    except Exception:
+        pass
+
+def save_user_languages():
+    try:
+        LANG_FILE.parent.mkdir(parents=True, exist_ok=True)
+        with open(LANG_FILE, "w", encoding="utf-8") as f:
+            json.dump(user_languages, f, indent=2, ensure_ascii=False)
+    except Exception:
+        pass
+
+load_user_languages()
+
 # In-memory conversational state per Telegram chat
 # Format: { chat_id: { "step": "...", "data": { ... } } }
 user_chat_states: Dict[str, Dict[str, Any]] = {}
@@ -330,26 +354,50 @@ class TelegramBotService:
         token = settings.TELEGRAM_BOT_TOKEN
         url = f"https://api.telegram.org/bot{token}/getUpdates"
 
-        while self._is_running:
-            try:
-                params = {
-                    "offset": self._offset,
-                    "timeout": 20
-                }
-                async with httpx.AsyncClient(timeout=30.0) as client:
+        # Persistent connection pool for fast, low-latency updates
+        async with httpx.AsyncClient(timeout=35.0, limits=httpx.Limits(max_keepalive_connections=5)) as client:
+            while self._is_running:
+                try:
+                    params = {
+                        "offset": self._offset,
+                        "timeout": 12
+                    }
                     resp = await client.get(url, params=params)
                     if resp.status_code == 200:
                         data = resp.json()
                         if data.get("ok"):
                             for update in data.get("result", []):
                                 self._offset = update["update_id"] + 1
-                                await self._handle_update(update)
+                                asyncio.create_task(self._handle_update(update))
                     elif resp.status_code == 409:
-                        await asyncio.sleep(5)
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                await asyncio.sleep(3)
+                        await asyncio.sleep(2)
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    await asyncio.sleep(1)
+
+    async def _send_irctc_greeting_and_language_selection(self, chat_id: str):
+        greeting_text = (
+            "🚆 *IRCTC (Indian Railway Catering and Tourism Corporation)*\n"
+            "🇮🇳 *भारतीय रेल खानपान एवं पर्यटन निगम*\n"
+            "═════════════════════════════════════\n"
+            "✨ *Personal Fast-Track Ticket Booking AI Assistant*\n\n"
+            "Namaste & Welcome! 🙏\n"
+            "IRCTC automated ticket booking service me aapka swagat hai.\n\n"
+            "👉 *Kripya aage badhne ke liye apni bhasha chunein:*\n"
+            "👉 *कृपया आगे बढ़ने के लिए अपनी भाषा का चयन करें:*\n"
+            "👉 *Please select your preferred language to proceed:*"
+        )
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "🇮🇳 हिन्दी (Hindi)", "callback_data": "setlang_hi"},
+                    {"text": "🇬🇧 English", "callback_data": "setlang_en"},
+                    {"text": "🇮🇳 Hinglish", "callback_data": "setlang_hinglish"}
+                ]
+            ]
+        }
+        await send_telegram_message(greeting_text, chat_id=chat_id, reply_markup=keyboard)
 
     async def _handle_update(self, update: Dict[str, Any]):
         # 1. Handle Inline Button Clicks (callback_query)
@@ -371,14 +419,37 @@ class TelegramBotService:
 
         await answer_callback_query(cb_id)
 
+        # Handle Language Selection & Switching
+        if data == "cmd_lang":
+            await self._send_irctc_greeting_and_language_selection(chat_id)
+            return
+
+        if data.startswith("setlang_"):
+            chosen_lang = data.replace("setlang_", "")
+            user_languages[chat_id] = chosen_lang
+            save_user_languages()
+            if chosen_lang == "hi":
+                ack = "✅ आपकी भाषा *हिन्दी* चुन ली गई है। 🇮🇳\nआइए IRCTC में आपकी यात्रा की टिकट बुक करते हैं!"
+            elif chosen_lang == "en":
+                ack = "✅ Language set to: *English*. 🇬🇧\nWelcome to IRCTC automated booking assistance!"
+            else:
+                ack = "✅ Language set to: *Hinglish*. 🇮🇳\nAapki IRCTC ticket booking shuru karte hain!"
+            await send_telegram_message(ack, chat_id=chat_id)
+            await self._send_welcome_menu(chat_id)
+            return
+
         # Handle Action / Continue buttons
         if data == "action_continue":
             waiting_session = get_latest_waiting_session()
             if waiting_session:
                 waiting_session.user_resumed()
-                await send_telegram_message("✅ *Resumed!* Automation aage badh rahi hai...", chat_id=chat_id)
+                lang = user_languages.get(chat_id, "hinglish")
+                msg = "✅ *प्रक्रिया पुनः प्रारंभ!* ऑटोमेशन आगे बढ़ रहा है..." if lang == "hi" else ("✅ *Resumed!* Automation progressing..." if lang == "en" else "✅ *Resumed!* Automation aage badh rahi hai...")
+                await send_telegram_message(msg, chat_id=chat_id)
             else:
-                await send_telegram_message("ℹ️ Koi active waiting booking nahi hai.", chat_id=chat_id)
+                lang = user_languages.get(chat_id, "hinglish")
+                msg = "ℹ️ कोई प्रतीक्षा कर रही बुकिंग नहीं है।" if lang == "hi" else ("ℹ️ No active waiting booking." if lang == "en" else "ℹ️ Koi active waiting booking nahi hai.")
+                await send_telegram_message(msg, chat_id=chat_id)
             return
 
         if data == "action_cancel" or data == "cmd_cancel":
@@ -461,37 +532,55 @@ class TelegramBotService:
 
         elif data == "cancel_book":
             user_chat_states.pop(chat_id, None)
-            menu_btn = {"inline_keyboard": [[{"text": "🎫 Nayi Booking Karein", "callback_data": "cmd_book"}]]}
-            await send_telegram_message("❌ Booking request cancel kar di gayi.", chat_id=chat_id, reply_markup=menu_btn)
+            lang = user_languages.get(chat_id, "hinglish")
+            btn_txt = "🎫 नई टिकट बुक करें" if lang == "hi" else ("🎫 Book New Ticket" if lang == "en" else "🎫 Nayi Booking Karein")
+            msg_txt = "❌ बुकिंग अनुरोध रद्द कर दिया गया।" if lang == "hi" else ("❌ Booking request has been cancelled." if lang == "en" else "❌ Booking request cancel kar di gayi.")
+            menu_btn = {"inline_keyboard": [[{"text": btn_txt, "callback_data": "cmd_book"}]]}
+            await send_telegram_message(msg_txt, chat_id=chat_id, reply_markup=menu_btn)
 
     async def _handle_text_message(self, chat_id: str, text: str):
+        lang = user_languages.get(chat_id, "hinglish")
+
         # 1. Check if an active booking is waiting for manual input (CAPTCHA or OTP)
         waiting_session = get_latest_waiting_session()
         if waiting_session and waiting_session.waiting_input_type in ["CAPTCHA", "OTP"]:
             input_type = waiting_session.waiting_input_type
             waiting_session.provide_user_input(text)
-            await send_telegram_message(
-                f"✅ *{input_type} Received:* `{text}`\nIRCTC me enter karke submit kiya ja raha hai...",
-                chat_id=chat_id
-            )
+            if lang == "hi":
+                rec_msg = f"✅ *{input_type} प्राप्त हुआ:* `{text}`\nIRCTC में दर्ज करके आगे बढ़ा जा रहा है..."
+            elif lang == "en":
+                rec_msg = f"✅ *{input_type} Received:* `{text}`\nSubmitting into IRCTC..."
+            else:
+                rec_msg = f"✅ *{input_type} Received:* `{text}`\nIRCTC me enter karke submit kiya ja raha hai..."
+            await send_telegram_message(rec_msg, chat_id=chat_id)
             return
 
         clean = text.strip().lower()
 
-        # 2. Main menu commands
-        if clean in ["/start", "/help", "hi", "hello", "namaste", "menu", "/menu"]:
+        # Check for Language selection command
+        if clean in ["/language", "/lang", "language", "bhasha", "भाषा"]:
+            await self._send_irctc_greeting_and_language_selection(chat_id)
+            return
+
+        # 2. If user is opening the bot for the first time or sending /start without language set
+        if chat_id not in user_languages or clean in ["/start", "/help"]:
+            await self._send_irctc_greeting_and_language_selection(chat_id)
+            return
+
+        # Main menu commands
+        if clean in ["hi", "hello", "namaste", "menu", "/menu", "नमस्ते"]:
             await self._send_welcome_menu(chat_id)
             return
 
-        if clean.startswith("/cancel") or clean == "cancel":
+        if clean.startswith("/cancel") or clean in ["cancel", "radd"]:
             await self._handle_cancel(chat_id)
             return
 
-        if clean.startswith("/status") or clean == "status":
+        if clean.startswith("/status") or clean in ["status", "sthiti"]:
             await self._send_status(chat_id)
             return
 
-        if clean.startswith("/passengers") or clean in ["passengers", "passenger", "travelers"]:
+        if clean.startswith("/passengers") or clean in ["passengers", "passenger", "travelers", "yatri"]:
             await self._send_passengers(chat_id)
             return
 
@@ -520,40 +609,54 @@ class TelegramBotService:
             # Check for missing details step-by-step
             if not current_data.get("journey_date"):
                 user_chat_states[chat_id] = {"step": "ASK_DATE", "data": current_data}
-                await send_telegram_message(f"🚆 Route Set: *{current_data['from_station']} ➔ {current_data['to_station']}*", chat_id=chat_id)
+                route_ack = f"🚆 मार्ग तय हुआ: *{current_data['from_station']} ➔ {current_data['to_station']}*" if lang == "hi" else f"🚆 Route Set: *{current_data['from_station']} ➔ {current_data['to_station']}*"
+                await send_telegram_message(route_ack, chat_id=chat_id)
                 await self._ask_date(chat_id)
                 return
 
             if not current_data.get("passengers"):
                 user_chat_states[chat_id] = {"step": "ASK_PASSENGER", "data": current_data}
-                await send_telegram_message(
-                    f"🚆 Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 Date: *{current_data['journey_date']}*",
-                    chat_id=chat_id
-                )
+                r_line = f"🚆 मार्ग: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 तारीख: *{current_data['journey_date']}*" if lang == "hi" else f"🚆 Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 Date: *{current_data['journey_date']}*"
+                await send_telegram_message(r_line, chat_id=chat_id)
                 await self._ask_passenger(chat_id)
                 return
 
             if not current_data.get("journey_class"):
                 user_chat_states[chat_id] = {"step": "ASK_CLASS", "data": current_data}
                 pax_name = current_data['passengers'][0]['name']
-                await send_telegram_message(
-                    f"🚆 Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 Date: *{current_data['journey_date']}*\n👤 Passenger: *{pax_name}*",
-                    chat_id=chat_id
-                )
+                r_line = f"🚆 मार्ग: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 तारीख: *{current_data['journey_date']}*\n👤 यात्री: *{pax_name}*" if lang == "hi" else f"🚆 Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 Date: *{current_data['journey_date']}*\n👤 Passenger: *{pax_name}*"
+                await send_telegram_message(r_line, chat_id=chat_id)
                 await self._ask_class(chat_id)
                 return
 
             # All 4 items are present (Route, Date, Passengers, Class)
             user_chat_states[chat_id] = {"step": "CONFIRM_SUMMARY", "data": current_data}
             pax = current_data["passengers"][0]
-            await send_telegram_message(
-                f"⚡ *One-Shot Booking Request Samjhi Gayi!*\n"
-                f"• Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n"
-                f"• Date: *{current_data['journey_date']}*\n"
-                f"• Class: *{current_data['journey_class']}*\n"
-                f"• Passenger: *{pax['name']}* ({pax['age']}/{pax['gender']})",
-                chat_id=chat_id
-            )
+            if lang == "hi":
+                os_msg = (
+                    f"⚡ *त्वरित बुकिंग अनुरोध प्राप्त हुआ!*\n"
+                    f"• मार्ग: *{current_data['from_station']} ➔ {current_data['to_station']}*\n"
+                    f"• तारीख: *{current_data['journey_date']}*\n"
+                    f"• श्रेणी: *{current_data['journey_class']}*\n"
+                    f"• यात्री: *{pax['name']}* ({pax['age']}/{pax['gender']})"
+                )
+            elif lang == "en":
+                os_msg = (
+                    f"⚡ *One-Shot Booking Request Recognized!*\n"
+                    f"• Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n"
+                    f"• Date: *{current_data['journey_date']}*\n"
+                    f"• Class: *{current_data['journey_class']}*\n"
+                    f"• Traveler: *{pax['name']}* ({pax['age']}/{pax['gender']})"
+                )
+            else:
+                os_msg = (
+                    f"⚡ *One-Shot Booking Request Samjhi Gayi!*\n"
+                    f"• Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n"
+                    f"• Date: *{current_data['journey_date']}*\n"
+                    f"• Class: *{current_data['journey_class']}*\n"
+                    f"• Passenger: *{pax['name']}* ({pax['age']}/{pax['gender']})"
+                )
+            await send_telegram_message(os_msg, chat_id=chat_id)
             await self._show_summary_and_confirm(chat_id)
             return
 
@@ -571,20 +674,23 @@ class TelegramBotService:
                     state["data"]["to_station"] = to_code
                     state["step"] = "ASK_DATE"
                     user_chat_states[chat_id] = state
-                    await send_telegram_message(f"✅ Route Set: *{from_code} ➔ {to_code}*", chat_id=chat_id)
+                    r_set = f"✅ मार्ग तय हुआ: *{from_code} ➔ {to_code}*" if lang == "hi" else f"✅ Route Set: *{from_code} ➔ {to_code}*"
+                    await send_telegram_message(r_set, chat_id=chat_id)
                     await self._ask_date(chat_id)
                     return
-            # Could not resolve route
+            cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
             buttons = {"inline_keyboard": [
                 [{"text": "📍 Delhi ➔ Mumbai", "callback_data": "route_NDLS_MMCT"}, {"text": "📍 Delhi ➔ Kolkata", "callback_data": "route_NDLS_HWH"}],
                 [{"text": "📍 Delhi ➔ Varanasi", "callback_data": "route_NDLS_BSB"}, {"text": "📍 Delhi ➔ Bengaluru", "callback_data": "route_NDLS_SBC"}],
-                [{"text": "❌ Cancel", "callback_data": "cancel_book"}]
+                [{"text": cancel_txt, "callback_data": "cancel_book"}]
             ]}
-            await send_telegram_message(
-                "⚠️ Station samajh nahi aaya. Please aise likhein: `Delhi to Mumbai` ya `NDLS to BSB`\nYa neeche diye gaye popular route par tap karein:",
-                chat_id=chat_id,
-                reply_markup=buttons
-            )
+            if lang == "hi":
+                not_rec = "⚠️ स्टेशन समझ नहीं आया। कृपया ऐसे लिखें: `Delhi to Mumbai` या `NDLS to BSB`\nया नीचे दिए गए लोकप्रिय मार्ग पर टैप करें:"
+            elif lang == "en":
+                not_rec = "⚠️ Station not recognized. Please write e.g.: `Delhi to Mumbai` or `NDLS to BSB`\nOr tap a popular route below:"
+            else:
+                not_rec = "⚠️ Station samajh nahi aaya. Please aise likhein: `Delhi to Mumbai` ya `NDLS to BSB`\nYa neeche diye gaye popular route par tap karein:"
+            await send_telegram_message(not_rec, chat_id=chat_id, reply_markup=buttons)
             return
 
         # B) If user is in ASK_DATE step
@@ -592,37 +698,47 @@ class TelegramBotService:
             parsed_d = parse_date_natural(text)
             if parsed_d:
                 state["data"]["journey_date"] = parsed_d
+                d_msg = f"✅ यात्रा की तारीख: *{parsed_d}*" if lang == "hi" else f"✅ Journey Date: *{parsed_d}*"
                 if state["data"].get("passengers"):
                     if state["data"].get("journey_class"):
                         state["step"] = "CONFIRM_SUMMARY"
                         user_chat_states[chat_id] = state
-                        await send_telegram_message(f"✅ Journey Date: *{parsed_d}*", chat_id=chat_id)
+                        await send_telegram_message(d_msg, chat_id=chat_id)
                         await self._show_summary_and_confirm(chat_id)
                         return
                     else:
                         state["step"] = "ASK_CLASS"
                         user_chat_states[chat_id] = state
-                        await send_telegram_message(f"✅ Journey Date: *{parsed_d}*", chat_id=chat_id)
+                        await send_telegram_message(d_msg, chat_id=chat_id)
                         await self._ask_class(chat_id)
                         return
                 else:
                     state["step"] = "ASK_PASSENGER"
                     user_chat_states[chat_id] = state
-                    await send_telegram_message(f"✅ Journey Date: *{parsed_d}*", chat_id=chat_id)
+                    await send_telegram_message(d_msg, chat_id=chat_id)
                     await self._ask_passenger(chat_id)
                     return
             else:
+                today = date.today()
+                d1 = (today + timedelta(days=1)).strftime("%d/%m")
+                d2 = (today + timedelta(days=2)).strftime("%d/%m")
+                d7 = (today + timedelta(days=7)).strftime("%d/%m")
+                if lang == "hi":
+                    t_d1, t_d2, t_d7, cancel_txt = f"कल ({d1})", f"परसों ({d2})", f"अगले हफ्ते ({d7})", "❌ रद्द करें"
+                    d_err = "⚠️ तारीख समझ नहीं आई। कृपया ऐसे लिखें: `15 Oct` या `25/10/2026` या `कल`, या नीचे बटन चुनें:"
+                elif lang == "en":
+                    t_d1, t_d2, t_d7, cancel_txt = f"Tomorrow ({d1})", f"Day After ({d2})", f"Next Week ({d7})", "❌ Cancel"
+                    d_err = "⚠️ Date not recognized. Please write e.g.: `15 Oct` or `25/10/2026` or `Tomorrow`, or tap a button below:"
+                else:
+                    t_d1, t_d2, t_d7, cancel_txt = f"Kal ({d1})", f"Parso ({d2})", f"Next Week ({d7})", "❌ Cancel"
+                    d_err = "⚠️ Date samajh nahi aayi. Please aise likhein: `15 Oct` ya `25/10/2026` ya `Kal`, ya neeche button select karein:"
                 date_keyboard = {
                     "inline_keyboard": [
-                        [{"text": "Kal (Tomorrow)", "callback_data": "date_1"}, {"text": "Parso (Day After)", "callback_data": "date_2"}],
-                        [{"text": "Next Week", "callback_data": "date_7"}, {"text": "❌ Cancel", "callback_data": "cancel_book"}]
+                        [{"text": t_d1, "callback_data": "date_1"}, {"text": t_d2, "callback_data": "date_2"}],
+                        [{"text": t_d7, "callback_data": "date_7"}, {"text": cancel_txt, "callback_data": "cancel_book"}]
                     ]
                 }
-                await send_telegram_message(
-                    "⚠️ Date samajh nahi aayi. Please aise likhein: `15 Oct` ya `25/10/2026` ya `Kal`, ya neeche button select karein:",
-                    chat_id=chat_id,
-                    reply_markup=date_keyboard
-                )
+                await send_telegram_message(d_err, chat_id=chat_id, reply_markup=date_keyboard)
                 return
 
         # C) If user is in ASK_PASSENGER step
@@ -630,22 +746,22 @@ class TelegramBotService:
             pax = parse_passenger_info(text)
             auto_save_passenger_to_db(pax)
             state["data"]["passengers"] = [pax]
+            if lang == "hi":
+                pax_ack = f"✅ यात्री जोड़ा और सहेजा गया: *{pax['name']}* ({pax['age']}/{pax['gender']})"
+            elif lang == "en":
+                pax_ack = f"✅ Traveler Added & Saved: *{pax['name']}* ({pax['age']}/{pax['gender']})"
+            else:
+                pax_ack = f"✅ Traveler Added & Saved: *{pax['name']}* ({pax['age']}/{pax['gender']})"
             if state["data"].get("journey_class"):
                 state["step"] = "CONFIRM_SUMMARY"
                 user_chat_states[chat_id] = state
-                await send_telegram_message(
-                    f"✅ Traveler Added & Saved: *{pax['name']}* ({pax['age']}/{pax['gender']})",
-                    chat_id=chat_id
-                )
+                await send_telegram_message(pax_ack, chat_id=chat_id)
                 await self._show_summary_and_confirm(chat_id)
                 return
             else:
                 state["step"] = "ASK_CLASS"
                 user_chat_states[chat_id] = state
-                await send_telegram_message(
-                    f"✅ Traveler Added & Saved: *{pax['name']}* ({pax['age']}/{pax['gender']})",
-                    chat_id=chat_id
-                )
+                await send_telegram_message(pax_ack, chat_id=chat_id)
                 await self._ask_class(chat_id)
                 return
 
@@ -656,93 +772,145 @@ class TelegramBotService:
                 state["data"]["journey_class"] = cls
                 state["step"] = "CONFIRM_SUMMARY"
                 user_chat_states[chat_id] = state
-                await send_telegram_message(f"✅ Class Selected: *{cls}*", chat_id=chat_id)
+                cls_ack = f"✅ श्रेणी चुनी गई: *{cls}*" if lang == "hi" else f"✅ Class Selected: *{cls}*"
+                await send_telegram_message(cls_ack, chat_id=chat_id)
                 await self._show_summary_and_confirm(chat_id)
                 return
             else:
+                cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
                 cls_keyboard = {
                     "inline_keyboard": [
                         [{"text": "AC 3 Tier (3A)", "callback_data": "class_3A"}, {"text": "AC 2 Tier (2A)", "callback_data": "class_2A"}],
                         [{"text": "Sleeper (SL)", "callback_data": "class_SL"}, {"text": "Chair Car (CC)", "callback_data": "class_CC"}],
-                        [{"text": "❌ Cancel", "callback_data": "cancel_book"}]
+                        [{"text": cancel_txt, "callback_data": "cancel_book"}]
                     ]
                 }
-                await send_telegram_message(
-                    "⚠️ Class samajh nahi aayi. `3A`, `2A`, `SL`, ya `CC` likhein ya button dabayein:",
-                    chat_id=chat_id,
-                    reply_markup=cls_keyboard
-                )
+                if lang == "hi":
+                    cls_err = "⚠️ श्रेणी समझ नहीं आई। `3A`, `2A`, `SL`, या `CC` लिखें या नीचे बटन दबाएं:"
+                elif lang == "en":
+                    cls_err = "⚠️ Class not recognized. Please type `3A`, `2A`, `SL`, or `CC`, or tap a button below:"
+                else:
+                    cls_err = "⚠️ Class samajh nahi aayi. `3A`, `2A`, `SL`, ya `CC` likhein ya button dabayein:"
+                await send_telegram_message(cls_err, chat_id=chat_id, reply_markup=cls_keyboard)
                 return
 
         # If passenger is added from outside /passengers mode
         if len(text.split()) <= 4 and any(c.isalpha() for c in text):
             pax = parse_passenger_info(text)
-            if pax["name"] and len(pax["name"]) >= 2 and pax["name"].lower() not in ["hi", "hello", "ok", "yes", "no", "book", "cancel", "status"]:
+            if pax["name"] and len(pax["name"]) >= 2 and pax["name"].lower() not in ["hi", "hello", "ok", "yes", "no", "book", "cancel", "status", "namaste"]:
                 auto_save_passenger_to_db(pax)
-                menu_btn = {"inline_keyboard": [[{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}], [{"text": "👥 Saved Passengers Dekhein", "callback_data": "cmd_passengers"}]]}
-                await send_telegram_message(
-                    f"✅ Naya passenger save ho gaya: *{pax['name']}* ({pax['age']}/{pax['gender']})!\nAb aap kabhi bhi inke naam par ticket book kar sakte hain.",
-                    chat_id=chat_id,
-                    reply_markup=menu_btn
-                )
+                btn_b = "🎫 नई टिकट बुक करें" if lang == "hi" else ("🎫 Book New Ticket" if lang == "en" else "🎫 Nayi Ticket Book Karein")
+                btn_p = "👥 सहेजे गए यात्री" if lang == "hi" else ("👥 Saved Passengers" if lang == "en" else "👥 Saved Passengers Dekhein")
+                menu_btn = {"inline_keyboard": [[{"text": btn_b, "callback_data": "cmd_book"}], [{"text": btn_p, "callback_data": "cmd_passengers"}]]}
+                if lang == "hi":
+                    pax_saved = f"✅ नया यात्री सहेज लिया गया: *{pax['name']}* ({pax['age']}/{pax['gender']})!\nअब आप कभी भी इनके नाम पर 1-टैप में टिकट बुक कर सकते हैं।"
+                elif lang == "en":
+                    pax_saved = f"✅ New passenger profile saved: *{pax['name']}* ({pax['age']}/{pax['gender']})!\nYou can now book tickets with 1-tap anytime."
+                else:
+                    pax_saved = f"✅ Naya passenger save ho gaya: *{pax['name']}* ({pax['age']}/{pax['gender']})!\nAb aap kabhi bhi inke naam par ticket book kar sakte hain."
+                await send_telegram_message(pax_saved, chat_id=chat_id, reply_markup=menu_btn)
                 return
 
         # Default fallback: Show interactive menu
         await self._send_welcome_menu(chat_id)
 
     async def _send_welcome_menu(self, chat_id: str):
-        buttons = {
-            "inline_keyboard": [
-                [
-                    {"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}
-                ],
-                [
-                    {"text": "🔄 Current Status", "callback_data": "cmd_status"},
-                    {"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}
-                ],
-                [
-                    {"text": "📍 Saved Routes", "callback_data": "cmd_routes"},
-                    {"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}
-                ]
+        lang = user_languages.get(chat_id, "hinglish")
+        if lang == "hi":
+            welcome = (
+                "🚆 *IRCTC (Indian Railway Catering and Tourism Corporation)*\n"
+                "═════════════════════════════════════\n"
+                "✨ *पर्सनल फास्ट-ट्रैक टिकट बुकिंग सहायक*\n\n"
+                "आप अपने मोबाइल से बटन दबाकर या चैट में लिखकर तुरंत टिकट बुक कर सकते हैं।\n"
+                "जब भी IRCTC में CAPTCHA आएगा, बॉट आपको उसकी फोटो भेजेगा और आप यहीं उत्तर लिख सकेंगे!\n\n"
+                "⚡ *एक ही संदेश में त्वरित बुकिंग (One-Shot Booking):*\n"
+                "आप एक ही मैसेज में पूरी यात्रा का विवरण लिखकर भेज सकते हैं, जैसे:\n"
+                "`Delhi to Varanasi 15 oct Deepak 28 M 3A`\n"
+                "या `NDLS se BSB kal Deepak 3A me book kardo`\n\n"
+                "👉 *नीचे दिए गए बटनों पर टैप करें या चैट में लिखें:*"
+            )
+            buttons = [
+                [{"text": "🎫 नई टिकट बुक करें", "callback_data": "cmd_book"}],
+                [{"text": "🔄 वर्तमान स्थिति", "callback_data": "cmd_status"}, {"text": "👥 सहेजे गए यात्री", "callback_data": "cmd_passengers"}],
+                [{"text": "📍 मुख्य मार्ग (Routes)", "callback_data": "cmd_routes"}, {"text": "🌐 भाषा बदलें (Language)", "callback_data": "cmd_lang"}],
+                [{"text": "❌ रद्द करें", "callback_data": "cmd_cancel"}]
             ]
-        }
-        welcome = (
-            "🚆 *Namaste! Personal IRCTC Booking Assistant me aapka swagat hai.*\n\n"
-            "Aap apne phone se button click karke ya text chat me likh kar ticket book kar sakte hain.\n"
-            "Jab bhi CAPTCHA aayega, bot aapko photo bhejega aur aap yahi text reply kar denge!\n\n"
-            "⚡ *One-Shot Direct Booking:*\n"
-            "Aap ek hi message me direct booking request bhej sakte hain, jaise:\n"
-            "`Delhi to Varanasi 15 oct Deepak 28 M 3A`\n"
-            "ya `NDLS se BSB kal Deepak 3A me book kardo`\n\n"
-            "👉 *Neeche diye gaye buttons par tap karein ya chat me likhein:*"
-        )
-        await send_telegram_message(welcome, chat_id=chat_id, reply_markup=buttons)
+        elif lang == "en":
+            welcome = (
+                "🚆 *IRCTC (Indian Railway Catering and Tourism Corporation)*\n"
+                "═════════════════════════════════════\n"
+                "✨ *Personal Fast-Track Ticket Booking Assistant*\n\n"
+                "You can book train tickets effortlessly using interactive buttons or natural chat.\n"
+                "When IRCTC asks for a CAPTCHA, the bot will send you the photo right here for a quick reply!\n\n"
+                "⚡ *One-Shot Direct Booking:*\n"
+                "You can send your entire booking request in a single message, e.g.:\n"
+                "`Delhi to Varanasi 15 oct Deepak 28 M 3A`\n"
+                "or `NDLS to BSB tomorrow Deepak 3A`\n\n"
+                "👉 *Tap the buttons below or chat directly:*"
+            )
+            buttons = [
+                [{"text": "🎫 Book New Ticket", "callback_data": "cmd_book"}],
+                [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
+                [{"text": "📍 Popular Routes", "callback_data": "cmd_routes"}, {"text": "🌐 Change Language", "callback_data": "cmd_lang"}],
+                [{"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
+            ]
+        else:  # Hinglish
+            welcome = (
+                "🚆 *IRCTC (Indian Railway Catering and Tourism Corporation)*\n"
+                "═════════════════════════════════════\n"
+                "✨ *Personal Fast-Track Ticket Booking Assistant*\n\n"
+                "Aap apne phone se button click karke ya text chat me likh kar ticket book kar sakte hain.\n"
+                "Jab bhi CAPTCHA aayega, bot aapko photo bhejega aur aap yahi text reply kar denge!\n\n"
+                "⚡ *One-Shot Direct Booking:*\n"
+                "Aap ek hi message me direct booking request bhej sakte hain, jaise:\n"
+                "`Delhi to Varanasi 15 oct Deepak 28 M 3A`\n"
+                "ya `NDLS se BSB kal Deepak 3A me book kardo`\n\n"
+                "👉 *Neeche diye gaye buttons par tap karein ya chat me likhein:*"
+            )
+            buttons = [
+                [{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}],
+                [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
+                [{"text": "📍 Saved Routes", "callback_data": "cmd_routes"}, {"text": "🌐 Bhasha Badlein (Language)", "callback_data": "cmd_lang"}],
+                [{"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
+            ]
+        await send_telegram_message(welcome, chat_id=chat_id, reply_markup={"inline_keyboard": buttons})
 
     async def _handle_cancel(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
         waiting_session = get_latest_waiting_session()
-        keyboard = {"inline_keyboard": [[{"text": "🎫 Nayi Booking Shuru Karein", "callback_data": "cmd_book"}]]}
+        btn_new = "🎫 नई बुकिंग शुरू करें" if lang == "hi" else ("🎫 Book New Ticket" if lang == "en" else "🎫 Nayi Booking Shuru Karein")
+        keyboard = {"inline_keyboard": [[{"text": btn_new, "callback_data": "cmd_book"}]]}
         if chat_id in user_chat_states:
             user_chat_states.pop(chat_id, None)
-            await send_telegram_message("❌ Current booking request cancel ho gayi.", chat_id=chat_id, reply_markup=keyboard)
+            msg = "❌ वर्तमान बुकिंग अनुरोध रद्द कर दिया गया है।" if lang == "hi" else ("❌ Current booking request has been cancelled." if lang == "en" else "❌ Current booking request cancel ho gayi.")
+            await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
         elif waiting_session:
             waiting_session.user_cancelled()
-            await send_telegram_message("❌ Active booking session cancel ho gaya.", chat_id=chat_id, reply_markup=keyboard)
+            msg = "❌ सक्रिय बुकिंग सत्र रद्द कर दिया गया है।" if lang == "hi" else ("❌ Active booking session has been cancelled." if lang == "en" else "❌ Active booking session cancel ho gaya.")
+            await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
         else:
-            await send_telegram_message("Koi active booking ya conversation nahi hai.", chat_id=chat_id, reply_markup=keyboard)
+            msg = "कोई सक्रिय बुकिंग या वार्तालाप नहीं है।" if lang == "hi" else ("No active booking or conversation found." if lang == "en" else "Koi active booking ya conversation nahi hai.")
+            await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
     async def _send_status(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
         waiting_session = get_latest_waiting_session()
+        btn_refresh = "🔄 स्थिति ताज़ा करें" if lang == "hi" else ("🔄 Refresh Status" if lang == "en" else "🔄 Refresh Status")
+        btn_cancel = "❌ बुकिंग रद्द करें" if lang == "hi" else ("❌ Cancel Booking" if lang == "en" else "❌ Cancel Booking")
+        btn_new = "🎫 नई टिकट बुक करें" if lang == "hi" else ("🎫 Book New Ticket" if lang == "en" else "🎫 Nayi Ticket Book Karein")
+
         if waiting_session:
             keyboard = {
                 "inline_keyboard": [
                     [
-                        {"text": "🔄 Refresh Status", "callback_data": "cmd_status"},
-                        {"text": "❌ Cancel Booking", "callback_data": "action_cancel"}
+                        {"text": btn_refresh, "callback_data": "cmd_status"},
+                        {"text": btn_cancel, "callback_data": "action_cancel"}
                     ]
                 ]
             }
+            title = "🔄 *सक्रिय बुकिंग:*" if lang == "hi" else ("🔄 *Active Booking:*" if lang == "en" else "🔄 *Active Booking:*")
             await send_telegram_message(
-                f"🔄 *Active Booking:* `{waiting_session.booking_ref}`\n"
+                f"{title} `{waiting_session.booking_ref}`\n"
                 f"*Status:* `{waiting_session.status}`\n"
                 f"*Stage:* `{waiting_session.stage}`\n"
                 f"*Prompt:* {waiting_session.manual_prompt or 'Processing...'}",
@@ -750,60 +918,78 @@ class TelegramBotService:
                 reply_markup=keyboard
             )
         else:
-            keyboard = {
-                "inline_keyboard": [
-                    [{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}]
-                ]
-            }
-            await send_telegram_message("✅ *Koi active booking in-progress nahi hai.*", chat_id=chat_id, reply_markup=keyboard)
+            keyboard = {"inline_keyboard": [[{"text": btn_new, "callback_data": "cmd_book"}]]}
+            no_active = "✅ *कोई सक्रिय बुकिंग प्रगति पर नहीं है।*" if lang == "hi" else ("✅ *No active booking in progress.*" if lang == "en" else "✅ *Koi active booking in-progress nahi hai.*")
+            await send_telegram_message(no_active, chat_id=chat_id, reply_markup=keyboard)
 
     async def _send_passengers(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
         db = SessionLocal()
         pax_list = db.query(Passenger).all()
         db.close()
+
+        btn_book = "🎫 इन यात्रियों के साथ बुक करें" if lang == "hi" else ("🎫 Book With Travelers" if lang == "en" else "🎫 In Travelers Ke Saath Book Karein")
+        btn_menu = "🏠 मुख्य मेनू" if lang == "hi" else ("🏠 Main Menu" if lang == "en" else "🏠 Main Menu")
+        btn_start = "🎫 नई बुकिंग शुरू करें" if lang == "hi" else ("🎫 Start New Booking" if lang == "en" else "🎫 Nayi Booking Shuru Karein")
+
         if not pax_list:
             keyboard = {
                 "inline_keyboard": [
-                    [{"text": "🎫 Nayi Booking Shuru Karein", "callback_data": "cmd_book"}],
-                    [{"text": "🏠 Main Menu", "callback_data": "cmd_menu"}]
+                    [{"text": btn_start, "callback_data": "cmd_book"}],
+                    [{"text": btn_menu, "callback_data": "cmd_menu"}]
                 ]
             }
-            msg = (
-                "👥 *Saved Passengers:*\n"
-                "Abhi koi saved traveler nahi hai.\n\n"
-                "💡 *Kaise add karein?*\n"
-                "Aap chat me seedha naam likh kar bhej sakte hain (jaise: `Deepak 28 M`), wo automatically save ho jayega!"
-            )
+            if lang == "hi":
+                msg = (
+                    "👥 *सहेजे गए यात्री:*\nअभी कोई सहेजा गया यात्री नहीं है।\n\n"
+                    "💡 *नया यात्री कैसे जोड़ें?*\nचैट में सीधे नाम लिखें (जैसे: `Deepak 28 M`), वह स्वतः सहेज लिया जाएगा!"
+                )
+            elif lang == "en":
+                msg = (
+                    "👥 *Saved Travelers:*\nNo saved travelers found yet.\n\n"
+                    "💡 *How to add?*\nDirectly send a message with details (e.g.: `Deepak 28 M`) and it will be auto-saved!"
+                )
+            else:
+                msg = (
+                    "👥 *Saved Passengers:*\nAbhi koi saved traveler nahi hai.\n\n"
+                    "💡 *Kaise add karein?*\nAap chat me seedha naam likh kar bhej sakte hain (jaise: `Deepak 28 M`), wo automatically save ho jayega!"
+                )
             await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
         else:
             lines = [f"• *{p.name}* ({p.age}/{p.gender}) - Pref: {p.berth_preference}" for p in pax_list]
             keyboard = {
                 "inline_keyboard": [
-                    [{"text": "🎫 In Travelers Ke Saath Book Karein", "callback_data": "cmd_book"}],
-                    [{"text": "🏠 Main Menu", "callback_data": "cmd_menu"}]
+                    [{"text": btn_book, "callback_data": "cmd_book"}],
+                    [{"text": btn_menu, "callback_data": "cmd_menu"}]
                 ]
             }
-            await send_telegram_message("👥 *Saved Passenger Profiles:*\n" + "\n".join(lines), chat_id=chat_id, reply_markup=keyboard)
+            title = "👥 *सहेजे गए यात्री प्रोफाइल:*" if lang == "hi" else ("👥 *Saved Passenger Profiles:*" if lang == "en" else "👥 *Saved Passenger Profiles:*")
+            await send_telegram_message(f"{title}\n" + "\n".join(lines), chat_id=chat_id, reply_markup=keyboard)
 
     async def _send_routes(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
         db = SessionLocal()
         routes = db.query(SavedJourney).all()
         db.close()
+        btn_menu = "🏠 मुख्य मेनू" if lang == "hi" else ("🏠 Main Menu" if lang == "en" else "🏠 Main Menu")
         if not routes:
-            keyboard = {"inline_keyboard": [[{"text": "🏠 Main Menu", "callback_data": "cmd_menu"}]]}
+            keyboard = {"inline_keyboard": [[{"text": btn_menu, "callback_data": "cmd_menu"}]]}
             await send_telegram_message("Koi saved route nahi hai.", chat_id=chat_id, reply_markup=keyboard)
         else:
             buttons = []
             for r in routes:
                 buttons.append([{"text": f"🚀 {r.label} ({r.from_station} ➔ {r.to_station})", "callback_data": f"route_{r.from_station}_{r.to_station}"}])
-            buttons.append([{"text": "🏠 Main Menu", "callback_data": "cmd_menu"}])
-            await send_telegram_message(
-                "📍 *Top Popular Routes of India:*\nNeeche kisi bhi route par tap karein ya chat me naya route likhein:",
-                chat_id=chat_id,
-                reply_markup={"inline_keyboard": buttons}
-            )
+            buttons.append([{"text": btn_menu, "callback_data": "cmd_menu"}])
+            if lang == "hi":
+                title = "📍 *भारत के मुख्य लोकप्रिय रेल मार्ग:*\nनीचे किसी भी मार्ग पर टैप करें या चैट में नया मार्ग लिखें:"
+            elif lang == "en":
+                title = "📍 *Top Popular Train Routes of India:*\nTap any route below or type a custom route in chat:"
+            else:
+                title = "📍 *Top Popular Routes of India:*\nNeeche kisi bhi route par tap karein ya chat me naya route likhein:"
+            await send_telegram_message(title, chat_id=chat_id, reply_markup={"inline_keyboard": buttons})
 
     async def _ask_route(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
         db = SessionLocal()
         saved = db.query(SavedJourney).limit(4).all()
         db.close()
@@ -811,46 +997,81 @@ class TelegramBotService:
         buttons = []
         for r in saved:
             buttons.append([{"text": f"📍 {r.label} ({r.from_station} ➔ {r.to_station})", "callback_data": f"route_{r.from_station}_{r.to_station}"}])
-        buttons.append([{"text": "❌ Cancel", "callback_data": "cancel_book"}])
+        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
+        buttons.append([{"text": cancel_txt, "callback_data": "cancel_book"}])
 
         keyboard = {"inline_keyboard": buttons}
         user_chat_states[chat_id] = {"step": "ASK_ROUTE_MANUAL", "data": {}}
 
-        msg = (
-            "🚆 *Kahan se kahan travel karna hai?*\n\n"
-            "👉 *Option 1 (Button):* Neeche popular route select karein.\n"
-            "💬 *Option 2 (Manual Chat):* Seedha likhein, jaise:\n"
-            "`Delhi to Varanasi` ya `NDLS to BSB`"
-        )
+        if lang == "hi":
+            msg = (
+                "🚆 *कहाँ से कहाँ यात्रा करनी है?*\n\n"
+                "👉 *विकल्प 1 (बटन):* नीचे दिया गया मुख्य मार्ग चुनें।\n"
+                "💬 *विकल्प 2 (चैट):* सीधे लिखें, जैसे:\n"
+                "`Delhi to Varanasi` या `NDLS to BSB`"
+            )
+        elif lang == "en":
+            msg = (
+                "🚆 *Where would you like to travel?*\n\n"
+                "👉 *Option 1 (Buttons):* Select a popular route below.\n"
+                "💬 *Option 2 (Chat):* Type origin and destination, e.g.:\n"
+                "`Delhi to Varanasi` or `NDLS to BSB`"
+            )
+        else:
+            msg = (
+                "🚆 *Kahan se kahan travel karna hai?*\n\n"
+                "👉 *Option 1 (Button):* Neeche popular route select karein.\n"
+                "💬 *Option 2 (Manual Chat):* Seedha likhein, jaise:\n"
+                "`Delhi to Varanasi` ya `NDLS to BSB`"
+            )
         await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
     async def _ask_date(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
         today = date.today()
         d1 = (today + timedelta(days=1)).strftime("%d/%m")
         d2 = (today + timedelta(days=2)).strftime("%d/%m")
         d7 = (today + timedelta(days=7)).strftime("%d/%m")
 
+        if lang == "hi":
+            t_d1, t_d2, t_d7, cancel_txt = f"कल ({d1})", f"परसों ({d2})", f"अगले हफ्ते ({d7})", "❌ रद्द करें"
+            msg = (
+                "📅 *यात्रा की तारीख क्या है?*\n\n"
+                "👉 *विकल्प 1 (बटन):* त्वरित तारीख चुनें।\n"
+                "💬 *विकल्प 2 (चैट):* तारीख लिखें जैसे: `15 Oct`, `25/10/2026`, या `कल`"
+            )
+        elif lang == "en":
+            t_d1, t_d2, t_d7, cancel_txt = f"Tomorrow ({d1})", f"Day After ({d2})", f"Next Week ({d7})", "❌ Cancel"
+            msg = (
+                "📅 *What is your journey date?*\n\n"
+                "👉 *Option 1 (Buttons):* Tap a quick date button.\n"
+                "💬 *Option 2 (Chat):* Type date, e.g.: `15 Oct`, `25/10/2026`, or `Tomorrow`"
+            )
+        else:
+            t_d1, t_d2, t_d7, cancel_txt = f"Kal ({d1})", f"Parso ({d2})", f"Next Week ({d7})", "❌ Cancel"
+            msg = (
+                "📅 *Journey Date kya hai?*\n\n"
+                "👉 *Option 1 (Button):* Quick date button dabayein.\n"
+                "💬 *Option 2 (Manual Chat):* Date likhein jaise: `15 Oct`, `25/10/2026`, ya `Kal`"
+            )
+
         keyboard = {
             "inline_keyboard": [
                 [
-                    {"text": f"Kal ({d1})", "callback_data": "date_1"},
-                    {"text": f"Parso ({d2})", "callback_data": "date_2"},
-                    {"text": f"Next Week ({d7})", "callback_data": "date_7"}
+                    {"text": t_d1, "callback_data": "date_1"},
+                    {"text": t_d2, "callback_data": "date_2"},
+                    {"text": t_d7, "callback_data": "date_7"}
                 ],
                 [
-                    {"text": "❌ Cancel", "callback_data": "cancel_book"}
+                    {"text": cancel_txt, "callback_data": "cancel_book"}
                 ]
             ]
         }
         user_chat_states[chat_id]["step"] = "ASK_DATE_MANUAL"
-        msg = (
-            "📅 *Journey Date kya hai?*\n\n"
-            "👉 *Option 1 (Button):* Quick date button dabayein.\n"
-            "💬 *Option 2 (Manual Chat):* Date likhein jaise: `15 Oct`, `25/10/2026`, ya `Kal`"
-        )
         await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
     async def _ask_passenger(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
         db = SessionLocal()
         saved_pax = db.query(Passenger).limit(6).all()
         db.close()
@@ -858,71 +1079,153 @@ class TelegramBotService:
         buttons = []
         for p in saved_pax:
             buttons.append([{"text": f"👤 {p.name} ({p.age}/{p.gender})", "callback_data": f"pax_{p.name}"}])
-        buttons.append([{"text": "❌ Cancel", "callback_data": "cancel_book"}])
+        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
+        buttons.append([{"text": cancel_txt, "callback_data": "cancel_book"}])
 
         keyboard = {"inline_keyboard": buttons}
         user_chat_states[chat_id]["step"] = "ASK_PASSENGER_MANUAL"
 
-        if saved_pax:
-            msg = (
-                "👥 *Passenger kaun travel karega?*\n\n"
-                "👉 *Option 1 (Button):* Saved traveler par tap karein.\n"
-                "💬 *Option 2 (Manual Chat):* Naya naam likhein jaise:\n"
-                "`Deepak 28 M` (ye automatically save ho jayega)"
-            )
+        if lang == "hi":
+            if saved_pax:
+                msg = (
+                    "👥 *यात्री विवरण (Traveler Details):*\n\n"
+                    "👉 *विकल्प 1 (बटन):* नीचे सहेजे गए यात्री पर टैप करें।\n"
+                    "💬 *विकल्प 2 (चैट):* नया यात्री विवरण लिखें जैसे:\n"
+                    "`Deepak 28 M` (यह स्वतः सहेज लिया जाएगा)"
+                )
+            else:
+                msg = (
+                    "👥 *यात्री विवरण (Traveler Details):*\n\n"
+                    "💬 चैट में यात्री का नाम और उम्र लिखें:\n"
+                    "जैसे: `Deepak 28 M` या `Priya 25 F`\n"
+                    "(यह स्वतः आपके खाते में सहेज लिया जाएगा!)"
+                )
+        elif lang == "en":
+            if saved_pax:
+                msg = (
+                    "👥 *Who is traveling? (Traveler Details)*\n\n"
+                    "👉 *Option 1 (Buttons):* Tap a saved traveler below.\n"
+                    "💬 *Option 2 (Chat):* Type traveler name and age, e.g.:\n"
+                    "`Deepak 28 M` (will be auto-saved)"
+                )
+            else:
+                msg = (
+                    "👥 *Who is traveling? (Traveler Details)*\n\n"
+                    "💬 Type traveler details in chat:\n"
+                    "e.g.: `Deepak 28 M` or `Priya 25 F`\n"
+                    "(This traveler will be automatically saved!)"
+                )
         else:
-            msg = (
-                "👥 *Passenger kaun travel karega?*\n\n"
-                "💬 Chat me traveler ka naam aur age likhein:\n"
-                "Jaise: `Deepak 28 M` ya `Priya 25 F`\n"
-                "(Ye automatically aapke account me save ho jayega!)"
-            )
+            if saved_pax:
+                msg = (
+                    "👥 *Passenger kaun travel karega?*\n\n"
+                    "👉 *Option 1 (Button):* Saved traveler par tap karein.\n"
+                    "💬 *Option 2 (Manual Chat):* Naya naam likhein jaise:\n"
+                    "`Deepak 28 M` (ye automatically save ho jayega)"
+                )
+            else:
+                msg = (
+                    "👥 *Passenger kaun travel karega?*\n\n"
+                    "💬 Chat me traveler ka naam aur age likhein:\n"
+                    "Jaise: `Deepak 28 M` ya `Priya 25 F`\n"
+                    "(Ye automatically aapke account me save ho jayega!)"
+                )
         await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
     async def _ask_class(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
+        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
         keyboard = {
             "inline_keyboard": [
                 [{"text": "AC 3 Tier (3A)", "callback_data": "class_3A"}, {"text": "AC 2 Tier (2A)", "callback_data": "class_2A"}],
                 [{"text": "Sleeper (SL)", "callback_data": "class_SL"}, {"text": "Chair Car (CC)", "callback_data": "class_CC"}],
-                [{"text": "❌ Cancel", "callback_data": "cancel_book"}]
+                [{"text": cancel_txt, "callback_data": "cancel_book"}]
             ]
         }
-        msg = (
-            "💺 *Preferred Class select karein:*\n\n"
-            "👉 *Option 1 (Button):* Button par tap karein.\n"
-            "💬 *Option 2 (Manual Chat):* Type karein: `3A`, `2A`, `SL`, ya `Sleeper`"
-        )
+        if lang == "hi":
+            msg = (
+                "💺 *यात्रा श्रेणी (Travel Class) चुनें:*\n\n"
+                "👉 *विकल्प 1 (बटन):* नीचे श्रेणी बटन दबाएं।\n"
+                "💬 *विकल्प 2 (चैट):* लिखें: `3A`, `2A`, `SL`, या `CC`"
+            )
+        elif lang == "en":
+            msg = (
+                "💺 *Select your preferred travel class:*\n\n"
+                "👉 *Option 1 (Buttons):* Tap a class button below.\n"
+                "💬 *Option 2 (Chat):* Type: `3A`, `2A`, `SL`, or `CC`"
+            )
+        else:
+            msg = (
+                "💺 *Preferred Class select karein:*\n\n"
+                "👉 *Option 1 (Button):* Button par tap karein.\n"
+                "💬 *Option 2 (Manual Chat):* Type karein: `3A`, `2A`, `SL`, ya `Sleeper`"
+            )
         await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
     async def _show_summary_and_confirm(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
         data = user_chat_states.get(chat_id, {}).get("data", {})
         pax_list = data.get("passengers", [{}])
         pax_name = pax_list[0].get("name", "Traveler") if pax_list else "Traveler"
         pax_age = pax_list[0].get("age", 30) if pax_list else 30
         pax_gender = pax_list[0].get("gender", "M") if pax_list else "M"
+        from_st = data.get('from_station', 'NDLS')
+        to_st = data.get('to_station', 'BSB')
+        j_date = data.get('journey_date', '')
+        j_cls = data.get('journey_class', '3A')
+
+        if lang == "hi":
+            btn_confirm = "✅ पुष्टि करें और बुक करें"
+            btn_cancel = "❌ रद्द करें"
+            summary = (
+                "📋 *IRCTC टिकट बुकिंग सारांश:*\n\n"
+                f"• *मार्ग (Route):* `{from_st}` ➔ `{to_st}`\n"
+                f"• *तारीख (Date):* {j_date}\n"
+                f"• *श्रेणी (Class):* {j_cls} | कोटा: सामान्य (GN)\n"
+                f"• *यात्री (Passenger):* {pax_name} ({pax_age}/{pax_gender})\n"
+                f"• *अनुमानित किराया:* ₹1,450.00\n\n"
+                "क्या मैं IRCTC ऑटोमेशन बुकिंग शुरू करूँ?\n"
+                "नीचे *'✅ पुष्टि करें और बुक करें'* बटन दबाएं:"
+            )
+        elif lang == "en":
+            btn_confirm = "✅ Confirm & Book"
+            btn_cancel = "❌ Cancel"
+            summary = (
+                "📋 *IRCTC Ticket Booking Summary:*\n\n"
+                f"• *Route:* `{from_st}` ➔ `{to_st}`\n"
+                f"• *Date:* {j_date}\n"
+                f"• *Class:* {j_cls} | Quota: General (GN)\n"
+                f"• *Passenger:* {pax_name} ({pax_age}/{pax_gender})\n"
+                f"• *Est. Fare:* ₹1,450.00\n\n"
+                "Should I start automated booking in IRCTC?\n"
+                "Tap *'✅ Confirm & Book'* below:"
+            )
+        else:
+            btn_confirm = "✅ Confirm & Book"
+            btn_cancel = "❌ Cancel"
+            summary = (
+                "📋 *Ticket Booking Summary:*\n\n"
+                f"• *Route:* `{from_st}` ➔ `{to_st}`\n"
+                f"• *Date:* {j_date}\n"
+                f"• *Class:* {j_cls} | Quota: General (GN)\n"
+                f"• *Passenger:* {pax_name} ({pax_age}/{pax_gender})\n"
+                f"• *Est. Fare:* ₹1,450.00\n\n"
+                "Kya main browser me booking automation shuru karun?\n"
+                "Neeche *'✅ Confirm & Book'* button dabayein:"
+            )
 
         keyboard = {
             "inline_keyboard": [
                 [
-                    {"text": "✅ Confirm & Book", "callback_data": "confirm_book"},
-                    {"text": "❌ Cancel", "callback_data": "cancel_book"}
+                    {"text": btn_confirm, "callback_data": "confirm_book"},
+                    {"text": btn_cancel, "callback_data": "cancel_book"}
                 ]
             ]
         }
-
-        summary = (
-            "📋 *Ticket Booking Summary:*\n\n"
-            f"• *Route:* `{data.get('from_station')}` ➔ `{data.get('to_station')}`\n"
-            f"• *Date:* {data.get('journey_date')}\n"
-            f"• *Class:* {data.get('journey_class', '3A')} | Quota: General (GN)\n"
-            f"• *Passenger:* {pax_name} ({pax_age}/{pax_gender})\n"
-            f"• *Est. Fare:* ₹1,450.00\n\n"
-            "Kya main browser me booking automation shuru karun?\n"
-            "Neeche *'✅ Confirm & Book'* button dabayein:"
-        )
         await send_telegram_message(summary, chat_id=chat_id, reply_markup=keyboard)
 
     async def _execute_telegram_booking(self, chat_id: str, data: Dict[str, Any]):
+        lang = user_languages.get(chat_id, "hinglish")
         db = SessionLocal()
         import uuid
         ref = f"BK-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
@@ -990,10 +1293,21 @@ class TelegramBotService:
 
         asyncio.create_task(runner())
 
-        await send_telegram_message(
-            f"🚀 *Booking Initiated!*\nRef: `{ref}`\n"
-            f"Browser automation shuru ho gayi hai. CAPTCHA aate hi main photo bhejunga.",
-            chat_id=chat_id
-        )
+        if lang == "hi":
+            exec_msg = (
+                f"🚀 *IRCTC बुकिंग शुरू कर दी गई है!*\nसंदर्भ संख्या (Ref): `{ref}`\n"
+                f"IRCTC ब्राउज़र ऑटोमेशन प्रारंभ हो गया है। CAPTCHA आते ही आपको फोटो भेजी जाएगी।"
+            )
+        elif lang == "en":
+            exec_msg = (
+                f"🚀 *IRCTC Booking Initiated!*\nRef: `{ref}`\n"
+                f"Browser automation has started. A photo will be sent as soon as CAPTCHA appears."
+            )
+        else:
+            exec_msg = (
+                f"🚀 *IRCTC Booking Initiated!*\nRef: `{ref}`\n"
+                f"Browser automation shuru ho gayi hai. CAPTCHA aate hi main photo bhejunga."
+            )
+        await send_telegram_message(exec_msg, chat_id=chat_id)
 
 telegram_bot_service = TelegramBotService.get_instance()

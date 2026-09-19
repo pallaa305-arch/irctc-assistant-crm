@@ -2,6 +2,17 @@ import httpx
 from typing import Optional, Dict, Any
 from app.config import settings
 
+_telegram_client: Optional[httpx.AsyncClient] = None
+
+def get_telegram_client() -> httpx.AsyncClient:
+    global _telegram_client
+    if _telegram_client is None or _telegram_client.is_closed:
+        _telegram_client = httpx.AsyncClient(
+            timeout=15.0,
+            limits=httpx.Limits(max_keepalive_connections=20, max_connections=50)
+        )
+    return _telegram_client
+
 async def send_telegram_message_detailed(
     text: str, 
     chat_id: Optional[str] = None, 
@@ -26,18 +37,18 @@ async def send_telegram_message_detailed(
         payload["reply_markup"] = reply_markup
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
-            response = await client.post(url, json=payload)
-            if response.status_code == 200:
-                return True, None
-            else:
-                try:
-                    data = response.json()
-                    desc = data.get("description", response.text)
-                except Exception:
-                    desc = response.text
-                print(f"[TELEGRAM ERROR] status={response.status_code} error={desc}")
-                return False, desc
+        client = get_telegram_client()
+        response = await client.post(url, json=payload)
+        if response.status_code == 200:
+            return True, None
+        else:
+            try:
+                data = response.json()
+                desc = data.get("description", response.text)
+            except Exception:
+                desc = response.text
+            print(f"[TELEGRAM ERROR] status={response.status_code} error={desc}")
+            return False, desc
     except Exception as e:
         print(f"[TELEGRAM EXCEPTION] {str(e)}")
         return False, str(e)
@@ -82,9 +93,9 @@ async def send_telegram_photo(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=15.0) as client:
-            response = await client.post(url, data=data, files=files)
-            return response.status_code == 200
+        client = get_telegram_client()
+        response = await client.post(url, data=data, files=files)
+        return response.status_code == 200
     except Exception:
         return False
 
@@ -103,9 +114,9 @@ async def answer_callback_query(
         payload["text"] = text
 
     try:
-        async with httpx.AsyncClient(timeout=5.0) as client:
-            response = await client.post(url, json=payload)
-            return response.status_code == 200
+        client = get_telegram_client()
+        response = await client.post(url, json=payload)
+        return response.status_code == 200
     except Exception:
         return False
 
