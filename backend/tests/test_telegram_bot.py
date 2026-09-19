@@ -41,3 +41,39 @@ async def test_telegram_callback_continue_and_cancel():
 
         assert session.is_paused is False
         assert session.status == "IN_PROGRESS"
+
+@pytest.mark.asyncio
+async def test_natural_language_and_auto_save():
+    from app.notifications.telegram_bot_service import (
+        resolve_station,
+        parse_date_natural,
+        parse_passenger_info,
+        auto_save_passenger_to_db
+    )
+    from app.database.connection import SessionLocal
+    from app.database.models import Passenger
+
+    # 1. Station resolution
+    assert resolve_station("Delhi") == "NDLS"
+    assert resolve_station("Varanasi") == "BSB"
+    assert resolve_station("Mumbai") == "MMCT"
+
+    # 2. Date parsing
+    assert parse_date_natural("kal") is not None
+    assert parse_date_natural("parso") is not None
+
+    # 3. Passenger parsing & auto-save
+    pax = parse_passenger_info("Deepak Kataria 28 M")
+    assert pax["name"] == "Deepak Kataria"
+    assert pax["age"] == 28
+    assert pax["gender"] == "M"
+
+    auto_save_passenger_to_db(pax)
+    db = SessionLocal()
+    saved = db.query(Passenger).filter(Passenger.name == "Deepak Kataria").first()
+    assert saved is not None
+    assert saved.age == 28
+    # Clean up test pax
+    db.delete(saved)
+    db.commit()
+    db.close()
