@@ -41,14 +41,23 @@ async def send_telegram_message_detailed(
         response = await client.post(url, json=payload)
         if response.status_code == 200:
             return True, None
-        else:
-            try:
-                data = response.json()
-                desc = data.get("description", response.text)
-            except Exception:
-                desc = response.text
-            print(f"[TELEGRAM ERROR] status={response.status_code} error={desc}")
-            return False, desc
+        
+        # If Telegram fails due to markdown entity parsing, retry as plain text
+        if "can't parse entities" in response.text.lower():
+            payload_plain = dict(payload)
+            payload_plain.pop("parse_mode", None)
+            retry_res = await client.post(url, json=payload_plain)
+            if retry_res.status_code == 200:
+                return True, None
+            response = retry_res
+
+        try:
+            data = response.json()
+            desc = data.get("description", response.text)
+        except Exception:
+            desc = response.text
+        print(f"[TELEGRAM ERROR] status={response.status_code} error={desc}")
+        return False, desc
     except Exception as e:
         print(f"[TELEGRAM EXCEPTION] {str(e)}")
         return False, str(e)
@@ -95,8 +104,16 @@ async def send_telegram_photo(
     try:
         client = get_telegram_client()
         response = await client.post(url, data=data, files=files)
-        return response.status_code == 200
-    except Exception:
+        if response.status_code == 200:
+            return True
+        if "can't parse entities" in response.text.lower():
+            data_plain = dict(data)
+            data_plain.pop("parse_mode", None)
+            retry_res = await client.post(url, data=data_plain, files=files)
+            return retry_res.status_code == 200
+        return False
+    except Exception as e:
+        print(f"[TELEGRAM PHOTO EXCEPTION] {e}")
         return False
 
 async def send_telegram_document(
