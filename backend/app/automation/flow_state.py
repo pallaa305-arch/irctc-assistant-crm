@@ -72,9 +72,19 @@ def get_or_create_session(booking_ref: str) -> BookingSessionState:
 def get_session(booking_ref: str) -> Optional[BookingSessionState]:
     return active_sessions.get(booking_ref)
 
-def get_latest_waiting_session() -> Optional[BookingSessionState]:
-    """Finds the active session currently waiting for manual input/payment"""
+def get_latest_waiting_session(max_age_seconds: int = 600) -> Optional[BookingSessionState]:
+    """Finds the active session currently waiting for manual input/payment that hasn't timed out"""
+    now = datetime.now(timezone.utc)
     for session in reversed(list(active_sessions.values())):
-        if session.is_paused or session.waiting_input_type != "NONE":
-            return session
+        if (session.is_paused or session.waiting_input_type != "NONE") and session.status in ["WAITING_MANUAL", "PAYMENT_PENDING"]:
+            age = (now - session.last_updated).total_seconds()
+            if age <= max_age_seconds:
+                return session
     return None
+
+def clear_all_waiting_sessions():
+    """Cancels and clears any active or stale waiting sessions"""
+    for session in list(active_sessions.values()):
+        if session.status in ["WAITING_MANUAL", "PAYMENT_PENDING"] or session.is_paused or session.waiting_input_type != "NONE":
+            session.user_cancelled("Cleared by user request")
+

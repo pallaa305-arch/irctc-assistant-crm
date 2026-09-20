@@ -77,3 +77,34 @@ async def test_natural_language_and_auto_save():
     db.delete(saved)
     db.commit()
     db.close()
+
+@pytest.mark.asyncio
+async def test_telegram_greeting_does_not_consume_captcha():
+    from app.notifications.telegram_bot_service import user_languages
+    user_languages["999999"] = "hinglish"
+    ref = "BK-TEST-TG-003"
+    session = get_or_create_session(ref)
+    session.pause_for_user("Please solve visual CAPTCHA", is_payment=False, input_type="CAPTCHA")
+
+    with patch("app.notifications.telegram_bot_service.send_telegram_message", new_callable=AsyncMock) as mock_send:
+        # Send "hii" while waiting for CAPTCHA
+        await telegram_bot_service._handle_text_message("999999", "hii")
+
+        # Session should still be paused, "hii" must NOT be treated as CAPTCHA!
+        assert session.is_paused is True
+        assert session.user_input_value != "hii"
+        assert not session.input_event.is_set()
+        mock_send.assert_called_once()
+        assert "ruki hui hai" in mock_send.call_args[0][0] or "verification" in mock_send.call_args[0][0]
+
+@pytest.mark.asyncio
+async def test_telegram_cancellation():
+    ref = "BK-TEST-TG-004"
+    session = get_or_create_session(ref)
+    session.pause_for_user("Please solve visual CAPTCHA", is_payment=False, input_type="CAPTCHA")
+
+    with patch("app.notifications.telegram_bot_service.send_telegram_message", new_callable=AsyncMock) as mock_send:
+        await telegram_bot_service._handle_text_message("999999", "cancel")
+        assert session.status == "CANCELLED"
+        mock_send.assert_called_once()
+
