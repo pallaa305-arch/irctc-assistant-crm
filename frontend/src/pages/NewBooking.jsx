@@ -30,7 +30,7 @@ export default function NewBooking({ onBookingStarted }) {
   const [trainPreference, setTrainPreference] = useState('12002');
   const [contactMobile, setContactMobile] = useState('9876543210');
   const [contactEmail, setContactEmail] = useState('user@example.com');
-  const [demoMode, setDemoMode] = useState(true);
+  const [demoMode, setDemoMode] = useState(false);
 
   // Passengers list
   const [passengers, setPassengers] = useState([

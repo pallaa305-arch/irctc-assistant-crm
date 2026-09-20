@@ -10,7 +10,9 @@ BACKUPS_DIR = DATA_DIR / "backups"
 TICKETS_DIR = DATA_DIR / "tickets"
 INVOICES_DIR = DATA_DIR / "invoices"
 
-for directory in (DATA_DIR, BOOKINGS_DIR, EXPORTS_DIR, BACKUPS_DIR, TICKETS_DIR, INVOICES_DIR):
+BROWSER_PROFILE_DIR = DATA_DIR / "browser_profile"
+
+for directory in (DATA_DIR, BOOKINGS_DIR, EXPORTS_DIR, BACKUPS_DIR, TICKETS_DIR, INVOICES_DIR, BROWSER_PROFILE_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 class Settings(BaseSettings):
@@ -38,8 +40,9 @@ class Settings(BaseSettings):
     # Browser Automation Settings
     BROWSER_HEADLESS: bool = False  # Visible browser by default as requested
     BROWSER_SLOW_MO: int = 150      # Slower pace for visual inspection
-    DEMO_MODE: bool = True          # Default to DEMO mode for safety
+    DEMO_MODE: bool = False         # Live Official IRCTC Mode by default
     IRCTC_USERNAME: str = ""
+    IRCTC_PASSWORD: str = ""
     
     # Low-spec optimization
     MAX_BROWSER_INSTANCES: int = 1

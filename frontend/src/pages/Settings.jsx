@@ -15,7 +15,8 @@ import { fetchSettings, updateSettings, deleteAllData } from '../services/api';
 export default function Settings() {
   const [settings, setSettings] = useState(null);
   const [irctcUser, setIrctcUser] = useState('');
-  const [demoMode, setDemoMode] = useState(true);
+  const [irctcPassword, setIrctcPassword] = useState('');
+  const [demoMode, setDemoMode] = useState(false);
   const [browserHeadless, setBrowserHeadless] = useState(false);
   const [slowMo, setSlowMo] = useState(150);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -25,7 +26,8 @@ export default function Settings() {
     fetchSettings().then((d) => {
       setSettings(d);
       setIrctcUser(d.irctc_username || '');
-      setDemoMode(d.demo_mode ?? true);
+      setIrctcPassword(d.irctc_password_masked || '');
+      setDemoMode(d.demo_mode ?? false);
       setBrowserHeadless(d.browser_headless ?? false);
       setSlowMo(d.browser_slow_mo ?? 150);
     });
@@ -36,6 +38,7 @@ export default function Settings() {
     try {
       await updateSettings({
         irctc_username: irctcUser,
+        irctc_password: irctcPassword,
         demo_mode: demoMode,
         browser_headless: browserHeadless,
         browser_slow_mo: parseInt(slowMo) || 150,
@@ -90,16 +93,30 @@ export default function Settings() {
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
               <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
-                IRCTC Username (Pre-fill helper)
+                IRCTC Username (User ID)
               </label>
               <input
                 type="text"
                 value={irctcUser}
                 onChange={(e) => setIrctcUser(e.target.value)}
-                placeholder="Optional IRCTC User ID"
+                placeholder="IRCTC User ID"
                 className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-emerald-500"
               />
-              <p className="text-[10px] text-zinc-400 mt-1">Passwords are never saved in plain text or logged.</p>
+              <p className="text-[10px] text-zinc-400 mt-1">Saved in local .env for login auto-fill.</p>
+            </div>
+
+            <div>
+              <label className="block font-semibold text-zinc-700 dark:text-zinc-300 mb-1">
+                IRCTC Password (Saved safely in .env)
+              </label>
+              <input
+                type="password"
+                value={irctcPassword}
+                onChange={(e) => setIrctcPassword(e.target.value)}
+                placeholder="IRCTC Account Password"
+                className="w-full px-3 py-2 rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-emerald-500"
+              />
+              <p className="text-[10px] text-zinc-400 mt-1">Auto-fills password during IRCTC login.</p>
             </div>
 
             <div>

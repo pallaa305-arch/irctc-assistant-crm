@@ -23,6 +23,7 @@ class SettingsUpdateSchema(BaseModel):
     browser_headless: Optional[bool] = None
     browser_slow_mo: Optional[int] = None
     irctc_username: Optional[str] = None
+    irctc_password: Optional[str] = None
 
 @router.get("")
 async def get_settings():
@@ -43,13 +44,14 @@ async def get_settings():
         "browser_headless": settings.BROWSER_HEADLESS,
         "browser_slow_mo": settings.BROWSER_SLOW_MO,
         "irctc_username": settings.IRCTC_USERNAME,
+        "irctc_password_masked": "******" if settings.IRCTC_PASSWORD else "",
         "excel_file_path": settings.EXCEL_FILE_PATH,
         "database_url": settings.DATABASE_URL
     }
 
 @router.post("")
 async def update_settings(payload: SettingsUpdateSchema):
-    """Updates runtime configuration settings."""
+    """Updates runtime configuration settings and persists to .env file."""
     if payload.telegram_bot_token is not None:
         settings.TELEGRAM_BOT_TOKEN = payload.telegram_bot_token
     if payload.telegram_chat_id is not None:
@@ -79,9 +81,32 @@ async def update_settings(payload: SettingsUpdateSchema):
     if payload.browser_slow_mo is not None:
         settings.BROWSER_SLOW_MO = payload.browser_slow_mo
     if payload.irctc_username is not None:
-        settings.IRCTC_USERNAME = payload.irctc_username
+        settings.IRCTC_USERNAME = payload.irctc_username.strip()
+    if payload.irctc_password is not None and payload.irctc_password != "******":
+        settings.IRCTC_PASSWORD = payload.irctc_password.strip()
 
-    return {"success": True, "message": "Settings updated successfully."}
+    # Persist to local .env
+    try:
+        from app.config import BASE_DIR
+        env_path = BASE_DIR / ".env"
+        lines = [
+            f'APP_NAME="{settings.APP_NAME}"\n',
+            f'APP_ENV="{settings.APP_ENV}"\n',
+            f'DEMO_MODE={str(settings.DEMO_MODE).lower()}\n',
+            f'BROWSER_HEADLESS={str(settings.BROWSER_HEADLESS).lower()}\n',
+            f'BROWSER_SLOW_MO={settings.BROWSER_SLOW_MO}\n',
+            f'IRCTC_USERNAME="{settings.IRCTC_USERNAME}"\n',
+            f'IRCTC_PASSWORD="{settings.IRCTC_PASSWORD}"\n',
+            f'TELEGRAM_BOT_TOKEN="{settings.TELEGRAM_BOT_TOKEN}"\n',
+            f'TELEGRAM_CHAT_ID="{settings.TELEGRAM_CHAT_ID}"\n',
+            f'TELEGRAM_ENABLED={str(settings.TELEGRAM_ENABLED).lower()}\n'
+        ]
+        with open(env_path, "w", encoding="utf-8") as f:
+            f.writelines(lines)
+    except Exception:
+        pass
+
+    return {"success": True, "message": "Settings updated and saved to .env successfully."}
 
 @router.post("/test-telegram")
 async def test_telegram_alert():

@@ -33,6 +33,7 @@ data/invoices/
 # Playwright
 .playwright/
 test-results/
+data/browser_profile/
 
 # OS files
 .DS_Store

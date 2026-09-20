@@ -47,24 +47,78 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             pass
 
         # Step 3: Check if user needs to log in
-        login_btn = page.locator("a:has-text('LOGIN'), button:has-text('LOGIN')")
-        if await login_btn.count() > 0:
-            session_state.set_stage("WAITING_MANUAL")
-            login_prompt = "IRCTC Login Required: Please log in with your credentials and complete CAPTCHA/OTP in the browser window."
-            session_state.pause_for_user(login_prompt, is_payment=False)
-            booking.status = "WAITING_MANUAL"
-            db.commit()
-            log_event(db, "WARNING", "AUTOMATION", login_prompt, ref)
+        is_already_logged_in = False
+        try:
+            logged_in_indicator = page.locator("a:has-text('LOGOUT'), span:has-text('Welcome'), span.user-name")
+            if await logged_in_indicator.count() > 0:
+                is_already_logged_in = True
+                log_event(db, "INFO", "AUTOMATION", "Active IRCTC login session detected via persistent profile.", ref)
+        except Exception:
+            pass
 
-            if settings.TELEGRAM_ENABLED:
-                await send_telegram_message(format_action_required_telegram(booking, "IRCTC Login & CAPTCHA"))
+        if not is_already_logged_in:
+            login_btn = page.locator("a:has-text('LOGIN'), button:has-text('LOGIN')")
+            if await login_btn.count() > 0:
+                log_event(db, "INFO", "AUTOMATION", "Opening IRCTC login dialog...", ref)
+                try:
+                    await login_btn.first.click()
+                    await asyncio.sleep(1.5)
+                except Exception:
+                    pass
 
-            await session_state.continue_event.wait()
-            if session_state.cancel_event.is_set():
-                booking.status = "CANCELLED"
+                # Auto-fill credentials from settings/.env if configured
+                credentials_auto_filled = False
+                if settings.IRCTC_USERNAME:
+                    try:
+                        u_input = page.locator("input[placeholder*='User Name' i], #userId, input[formcontrolname='userid'], input[name='userId']").first
+                        if await u_input.count() > 0:
+                            await u_input.fill(settings.IRCTC_USERNAME)
+                            credentials_auto_filled = True
+                    except Exception as e:
+                        log_event(db, "WARNING", "AUTOMATION", f"Could not auto-fill username: {e}", ref)
+
+                if settings.IRCTC_PASSWORD:
+                    try:
+                        p_input = page.locator("input[placeholder*='Password' i], #pwd, input[formcontrolname='password'], input[name='pwd']").first
+                        if await p_input.count() > 0:
+                            await p_input.fill(settings.IRCTC_PASSWORD)
+                    except Exception as e:
+                        log_event(db, "WARNING", "AUTOMATION", f"Could not auto-fill password: {e}", ref)
+
+                # Auto-tick the Login checkbox (Booking with OTP / Remember / Auto login)
+                try:
+                    otp_checkbox = page.locator("input[type='checkbox'], #otpLogin, p-checkbox, label:has-text('OTP'), label:has-text('Booking with OTP')").first
+                    if await otp_checkbox.count() > 0:
+                        is_checked = False
+                        try:
+                            is_checked = await otp_checkbox.is_checked()
+                        except Exception:
+                            pass
+                        if not is_checked:
+                            await otp_checkbox.click()
+                            log_event(db, "INFO", "AUTOMATION", "Auto-ticked 'Login with OTP / Remember' checkbox on IRCTC.", ref)
+                except Exception as e:
+                    log_event(db, "WARNING", "AUTOMATION", f"Checkbox auto-tick note: {e}", ref)
+
+                if credentials_auto_filled:
+                    log_event(db, "INFO", "AUTOMATION", f"Saved credentials for '{settings.IRCTC_USERNAME}' auto-filled with checkbox active.", ref)
+
+                session_state.set_stage("WAITING_MANUAL")
+                login_prompt = "IRCTC Login: Credentials auto-filled with OTP checkbox ticked. Please confirm/solve login in browser if needed."
+                session_state.pause_for_user(login_prompt, is_payment=False)
+                booking.status = "WAITING_MANUAL"
                 db.commit()
-                log_event(db, "INFO", "AUTOMATION", "Booking cancelled during login.", ref)
-                return
+                log_event(db, "WARNING", "AUTOMATION", login_prompt, ref)
+
+                if settings.TELEGRAM_ENABLED:
+                    await send_telegram_message(format_action_required_telegram(booking, "IRCTC Login Check"))
+
+                await session_state.continue_event.wait()
+                if session_state.cancel_event.is_set():
+                    booking.status = "CANCELLED"
+                    db.commit()
+                    log_event(db, "INFO", "AUTOMATION", "Booking cancelled during login.", ref)
+                    return
 
         # Step 4: Search Trains
         session_state.set_stage("SEARCHING_TRAINS")
@@ -155,75 +209,103 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 pass
 
         # Step 7: Security challenge check (CAPTCHA / OTP before payment)
-        session_state.set_stage("WAITING_MANUAL")
-        review_prompt = "Review & CAPTCHA: Please review details and enter the visual CAPTCHA in the browser window, or reply with text in Telegram."
-        session_state.pause_for_user(review_prompt, is_payment=False, input_type="CAPTCHA")
-        booking.status = "WAITING_MANUAL"
-        db.commit()
-        log_event(db, "WARNING", "AUTOMATION", review_prompt, ref)
+        await asyncio.sleep(2)
+        captcha_img_loc = page.locator("img.captcha-img, app-captcha img, #captchaImg, img[alt*='captcha' i]").first
+        captcha_input = page.locator("input[placeholder*='captcha' i], #nlpAnswer, #captcha").first
+        is_payment_page = (await page.locator("app-payment, div:has-text('Payment Option'), div:has-text('Payment Method'), #bank-type").count() > 0)
 
-        from app.notifications.telegram import send_telegram_photo
+        has_captcha = False
+        if not is_payment_page:
+            has_captcha = (await captcha_img_loc.count() > 0) or (await captcha_input.count() > 0)
 
-        if settings.TELEGRAM_ENABLED:
-            try:
-                captcha_img_loc = page.locator("img.captcha-img, app-captcha img, #captchaImg, img[alt*='captcha' i]").first
-                captcha_bytes = None
-                if await captcha_img_loc.count() > 0:
-                    captcha_bytes = await captcha_img_loc.screenshot()
-                else:
-                    captcha_bytes = await page.screenshot()
-
-                if captcha_bytes:
-                    await send_telegram_photo(
-                        photo_bytes=captcha_bytes,
-                        caption=(
-                            f"📸 *IRCTC CAPTCHA Check* (Ref: `{ref}`)\n\n"
-                            f"Kripya ye photo dekh kar CAPTCHA text ka reply karein. Hum automatically ise browser me fill kar denge!"
-                        )
-                    )
-            except Exception as e:
-                log_event(db, "WARNING", "AUTOMATION", f"Could not capture CAPTCHA screenshot for Telegram: {e}", ref)
-
-        # Wait for user input from Telegram text reply or Web dashboard
-        done, pending = await asyncio.wait(
-            [
-                asyncio.create_task(session_state.continue_event.wait()),
-                asyncio.create_task(session_state.input_event.wait())
-            ],
-            return_when=asyncio.FIRST_COMPLETED
-        )
-        for task in pending:
-            task.cancel()
-
-        if session_state.cancel_event.is_set():
-            booking.status = "CANCELLED"
+        if has_captcha:
+            session_state.set_stage("WAITING_MANUAL")
+            review_prompt = "Review & CAPTCHA: Please review details and enter the visual CAPTCHA in the browser window, or reply with text in Telegram."
+            session_state.pause_for_user(review_prompt, is_payment=False, input_type="CAPTCHA")
+            booking.status = "WAITING_MANUAL"
             db.commit()
-            return
+            log_event(db, "WARNING", "AUTOMATION", review_prompt, ref)
 
-        # If user supplied CAPTCHA via Telegram, type it into the form
-        if session_state.user_input_value:
+            from app.notifications.telegram import send_telegram_photo
+
+            if settings.TELEGRAM_ENABLED:
+                try:
+                    captcha_bytes = None
+                    if await captcha_img_loc.count() > 0:
+                        captcha_bytes = await captcha_img_loc.screenshot()
+                    else:
+                        captcha_bytes = await page.screenshot()
+
+                    if captcha_bytes:
+                        await send_telegram_photo(
+                            photo_bytes=captcha_bytes,
+                            caption=(
+                                f"📸 *IRCTC CAPTCHA Check* (Ref: `{ref}`)\n\n"
+                                f"Kripya ye photo dekh kar CAPTCHA text ka reply karein. Hum automatically ise browser me fill kar denge!"
+                            )
+                        )
+                except Exception as e:
+                    log_event(db, "WARNING", "AUTOMATION", f"Could not capture CAPTCHA screenshot for Telegram: {e}", ref)
+
+            # Wait for user input from Telegram text reply or Web dashboard
+            done, pending = await asyncio.wait(
+                [
+                    asyncio.create_task(session_state.continue_event.wait()),
+                    asyncio.create_task(session_state.input_event.wait())
+                ],
+                return_when=asyncio.FIRST_COMPLETED
+            )
+            for task in pending:
+                task.cancel()
+
+            if session_state.cancel_event.is_set():
+                booking.status = "CANCELLED"
+                db.commit()
+                return
+
+            # If user supplied CAPTCHA via Telegram, type it into the form
+            if session_state.user_input_value:
+                try:
+                    if await captcha_input.count() > 0:
+                        await captcha_input.fill(session_state.user_input_value)
+                        log_event(db, "INFO", "AUTOMATION", f"Auto-filled CAPTCHA received from Telegram.", ref)
+                        submit_btn = page.locator("button:has-text('Continue'), button[type='submit']").first
+                        if await submit_btn.count() > 0:
+                            await submit_btn.click()
+                except Exception as e:
+                    log_event(db, "WARNING", "AUTOMATION", f"Could not auto-fill CAPTCHA into page: {e}", ref)
+        else:
+            log_event(db, "INFO", "AUTOMATION", "Review CAPTCHA bypassed or not required by login session. Proceeding directly to Payment Gateway.", ref)
             try:
-                captcha_input = page.locator("input[placeholder*='captcha' i], #nlpAnswer, #captcha").first
-                if await captcha_input.count() > 0:
-                    await captcha_input.fill(session_state.user_input_value)
-                    log_event(db, "INFO", "AUTOMATION", f"Auto-filled CAPTCHA received from Telegram.", ref)
-                    submit_btn = page.locator("button:has-text('Continue'), button[type='submit']").first
-                    if await submit_btn.count() > 0:
-                        await submit_btn.click()
-            except Exception as e:
-                log_event(db, "WARNING", "AUTOMATION", f"Could not auto-fill CAPTCHA into page: {e}", ref)
+                cont_btn = page.locator("button:has-text('Continue'), button[type='submit']:has-text('Continue')").first
+                if await cont_btn.count() > 0:
+                    await cont_btn.click()
+                    await asyncio.sleep(2)
+            except Exception:
+                pass
 
         # Step 8: Payment Gateway Handoff (MANDATORY HUMAN-IN-THE-LOOP)
         session_state.set_stage("PAYMENT_PENDING")
-        pay_prompt = "PAYMENT REQUIRED: Please choose your payment method (UPI / NetBanking / Cards) and authenticate securely. After successful payment, click 'Payment Done'."
+        pay_prompt = "PAYMENT REQUIRED: Please scan UPI QR code or pay via NetBanking/Cards. After successful payment, click 'Payment Done'."
         session_state.pause_for_user(pay_prompt, is_payment=True, input_type="PAYMENT")
         booking.status = "PAYMENT_PENDING"
         db.commit()
         log_event(db, "WARNING", "AUTOMATION", pay_prompt, ref)
 
+        # Attempt to auto-select UPI / BHIM QR option if visible
+        try:
+            upi_selector = page.locator("div:has-text('BHIM / UPI'), span:has-text('BHIM / UPI'), span:has-text('iPay'), input[value*='UPI' i]").first
+            if await upi_selector.count() > 0:
+                await upi_selector.click()
+                await asyncio.sleep(1)
+        except Exception:
+            pass
+
         if settings.TELEGRAM_ENABLED:
             try:
-                qr_bytes = await page.screenshot()
+                # Capture QR element or full screen
+                qr_elem = page.locator("app-bhim-upi-qr img, #qr-code, img[alt*='qr' i], div.qr-image").first
+                qr_bytes = await qr_elem.screenshot() if await qr_elem.count() > 0 else await page.screenshot()
                 qr_keyboard = {
                     "inline_keyboard": [
                         [

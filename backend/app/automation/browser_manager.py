@@ -28,24 +28,26 @@ class BrowserManager:
         if not self.playwright:
             self.playwright = await async_playwright().start()
 
-        if not self.browser or not self.browser.is_connected():
-            self.browser = await self.playwright.chromium.launch(
+        profile_dir = str(settings.DATA_DIR / "browser_profile")
+        if not self.context:
+            self.context = await self.playwright.chromium.launch_persistent_context(
+                user_data_dir=profile_dir,
                 headless=settings.BROWSER_HEADLESS,
                 slow_mo=settings.BROWSER_SLOW_MO,
+                no_viewport=True,
                 args=[
                     "--start-maximized",
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox"
-                ]
-            )
-
-        if not self.context:
-            self.context = await self.browser.new_context(
-                no_viewport=True,
+                ],
                 user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
             )
 
-        self.page = await self.context.new_page()
+        if self.context.pages:
+            self.page = self.context.pages[0]
+        else:
+            self.page = await self.context.new_page()
+
         return self.page
 
     async def close(self):
@@ -54,8 +56,6 @@ class BrowserManager:
                 await self.page.close()
             if self.context:
                 await self.context.close()
-            if self.browser:
-                await self.browser.close()
             if self.playwright:
                 await self.playwright.stop()
         except Exception:

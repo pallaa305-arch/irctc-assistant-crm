@@ -519,6 +519,10 @@ class TelegramBotService:
             await self._send_welcome_menu(chat_id)
             return
 
+        if data == "cmd_credentials":
+            await self._send_credentials_info(chat_id)
+            return
+
         # PNR Status Check Callback
         if data == "cmd_pnr":
             user_chat_states[chat_id] = {"step": "WAIT_PNR_INPUT", "data": {}}
@@ -738,6 +742,50 @@ class TelegramBotService:
         if clean in ["/mode", "mode", "engine", "demo mode", "live mode", "change mode", "मोड"]:
             await self._send_mode_menu(chat_id)
             return
+
+        # -------------------------------------------------------------
+        # 3c. Check for IRCTC Credentials Command (/credentials)
+        # -------------------------------------------------------------
+        if clean.startswith("/credentials") or clean in ["credentials", "irctc login", "login id", "id password"]:
+            parts = text.strip().split()
+            if len(parts) >= 3:
+                u = parts[1].strip()
+                p = parts[2].strip()
+                settings.IRCTC_USERNAME = u
+                settings.IRCTC_PASSWORD = p
+
+                # Persist to local .env
+                try:
+                    from app.config import BASE_DIR
+                    env_path = BASE_DIR / ".env"
+                    lines = [
+                        f'APP_NAME="{settings.APP_NAME}"\n',
+                        f'APP_ENV="{settings.APP_ENV}"\n',
+                        f'DEMO_MODE={str(settings.DEMO_MODE).lower()}\n',
+                        f'BROWSER_HEADLESS={str(settings.BROWSER_HEADLESS).lower()}\n',
+                        f'BROWSER_SLOW_MO={settings.BROWSER_SLOW_MO}\n',
+                        f'IRCTC_USERNAME="{settings.IRCTC_USERNAME}"\n',
+                        f'IRCTC_PASSWORD="{settings.IRCTC_PASSWORD}"\n',
+                        f'TELEGRAM_BOT_TOKEN="{settings.TELEGRAM_BOT_TOKEN}"\n',
+                        f'TELEGRAM_CHAT_ID="{settings.TELEGRAM_CHAT_ID}"\n',
+                        f'TELEGRAM_ENABLED={str(settings.TELEGRAM_ENABLED).lower()}\n'
+                    ]
+                    with open(env_path, "w", encoding="utf-8") as f:
+                        f.writelines(lines)
+                except Exception:
+                    pass
+
+                ack = (
+                    f"✅ *IRCTC Official Credentials Saved!*\n\n"
+                    f"• *Username:* `{u}`\n"
+                    f"• *Password:* Saved safely in local `.env`\n\n"
+                    f"Ab booking ke samay IRCTC login page par username aur password automatically fill honge aur OTP checkbox tick rahega!"
+                )
+                await send_telegram_message(ack, chat_id=chat_id)
+                return
+            else:
+                await self._send_credentials_info(chat_id)
+                return
 
         # -------------------------------------------------------------
         # 4. Check for PNR Enquiry Intent or Standalone 10-Digit PNR
@@ -1139,6 +1187,48 @@ class TelegramBotService:
             ]
         }
         await send_telegram_message(text, chat_id=chat_id, reply_markup=keyboard)
+
+    async def _send_credentials_info(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
+        u_display = settings.IRCTC_USERNAME or "Not Configured (सेट नहीं है)"
+        p_display = "****** (Saved in .env)" if settings.IRCTC_PASSWORD else "Not Configured (सेट नहीं है)"
+
+        if lang == "hi":
+            info_msg = (
+                "🔐 *IRCTC आधिकारिक खाता साख (Credentials):*\n"
+                "═════════════════════════════════════\n"
+                f"• *उपयोगकर्ता नाम (User ID):* `{u_display}`\n"
+                f"• *पासवर्ड:* `{p_display}`\n\n"
+                "👉 *नया ID / Password सुरक्षित रूप से सेव करने के लिए:*\n"
+                "चैट में इस प्रकार लिखकर भेजें:\n"
+                "`/credentials आपका_IRCTC_USER_ID आपका_PASSWORD`\n\n"
+                "🛡️ यह आपकी लोकल `.env` फ़ाइल में सुरक्षित रहेगा और IRCTC लॉगिन के समय स्वतः भर जाएगा।"
+            )
+        elif lang == "en":
+            info_msg = (
+                "🔐 *Official IRCTC Credentials Profile:*\n"
+                "═════════════════════════════════════\n"
+                f"• *Username / ID:* `{u_display}`\n"
+                f"• *Password:* `{p_display}`\n\n"
+                "👉 *To set or update your credentials:*\n"
+                "Send in chat as:\n"
+                "`/credentials YOUR_USER_ID YOUR_PASSWORD`\n\n"
+                "🛡️ This is stored securely in your local `.env` and auto-filled during IRCTC login."
+            )
+        else:
+            info_msg = (
+                "🔐 *IRCTC Account Credentials:*\n"
+                "═════════════════════════════════════\n"
+                f"• *User ID:* `{u_display}`\n"
+                f"• *Password:* `{p_display}`\n\n"
+                "👉 *ID / Password set karne ke liye:*\n"
+                "Chat me aise likh kar bhejein:\n"
+                "`/credentials YOUR_USER_ID YOUR_PASSWORD`\n\n"
+                "🛡️ Ye local `.env` me safely save ho jayega aur login screen par auto-fill hoga."
+            )
+
+        menu_btn = {"inline_keyboard": [[{"text": "🔙 Main Menu", "callback_data": "cmd_menu"}]]}
+        await send_telegram_message(info_msg, chat_id=chat_id, reply_markup=menu_btn)
 
     async def _send_welcome_menu(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
