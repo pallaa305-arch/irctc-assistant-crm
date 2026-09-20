@@ -85,6 +85,6 @@ def get_latest_waiting_session(max_age_seconds: int = 600) -> Optional[BookingSe
 def clear_all_waiting_sessions():
     """Cancels and clears any active or stale waiting sessions"""
     for session in list(active_sessions.values()):
-        if session.status in ["WAITING_MANUAL", "PAYMENT_PENDING"] or session.is_paused or session.waiting_input_type != "NONE":
-            session.user_cancelled("Cleared by user request")
+        session.user_cancelled("Cleared by user request")
+    active_sessions.clear()
 

@@ -673,62 +673,16 @@ class TelegramBotService:
         is_greeting = clean in GREETING_WORDS or clean.startswith("/start") or clean.startswith("/help") or clean.startswith("/menu")
 
         if is_greeting:
-            # If user has not selected language yet or starts fresh
+            # 1. Clear any active or waiting booking sessions so greeting is completely clean
+            clear_all_waiting_sessions()
+            user_chat_states.pop(chat_id, None)
+
+            # 2. If user has not selected language yet or explicitly typed /start or /help
             if chat_id not in user_languages or clean in ["/start", "/help"]:
                 await self._send_irctc_greeting_and_language_selection(chat_id)
                 return
 
-            # Check if there is an active session waiting for CAPTCHA/OTP
-            waiting_session = get_latest_waiting_session()
-            if waiting_session:
-                if lang == "hi":
-                    p_msg = (
-                        f"🙏 *नमस्ते! स्वागत है।*\n\n"
-                        f"⚠️ आपकी एक टिकट बुकिंग (`{waiting_session.booking_ref}`) अभी IRCTC *{waiting_session.waiting_input_type}* सत्यापन पर रुकी हुई है।\n\n"
-                        f"👉 *अगर यह बुकिंग पूरी करनी है:* कृपया फ़ोटो में दिखाया गया कोड लिखकर भेजें।\n"
-                        f"👉 *अगर इसे रद्द करके नया काम शुरू करना है:* नीचे दिए गए *'रद्द करें'* बटन पर टैप करें।"
-                    )
-                    btn_c = "❌ यह बुकिंग रद्द करें"
-                    btn_menu = "🏠 मुख्य मेनू"
-                elif lang == "en":
-                    p_msg = (
-                        f"🙏 *Hello! Welcome.*\n\n"
-                        f"⚠️ You have an active booking (`{waiting_session.booking_ref}`) awaiting *{waiting_session.waiting_input_type}* verification.\n\n"
-                        f"👉 *To complete this booking:* Please type the code shown in the photo.\n"
-                        f"👉 *To cancel and start fresh:* Tap *'Cancel'* below."
-                    )
-                    btn_c = "❌ Cancel This Booking"
-                    btn_menu = "🏠 Main Menu"
-                else:
-                    p_msg = (
-                        f"🙏 *Namaste! Swagat hai.*\n\n"
-                        f"⚠️ Aapki ek ticket booking (`{waiting_session.booking_ref}`) abhi IRCTC *{waiting_session.waiting_input_type}* verification par ruki hui hai.\n\n"
-                        f"👉 *Agar ye ticket complete karni hai:* Photo me dekh kar code likhein.\n"
-                        f"👉 *Agar cancel karke nayi baat karni hai:* Neeche *'Cancel'* button dabayein."
-                    )
-                    btn_c = "❌ Ye Booking Cancel Karein"
-                    btn_menu = "🏠 Main Menu"
-                await send_telegram_message(
-                    p_msg, 
-                    chat_id=chat_id, 
-                    reply_markup={"inline_keyboard": [[{"text": btn_c, "callback_data": "cancel_book"}, {"text": btn_menu, "callback_data": "cmd_menu"}]]}
-                )
-                return
-
-            # Check if user is in an in-progress booking wizard step
-            curr_state = user_chat_states.get(chat_id)
-            if curr_state and curr_state.get("step") in ["ASK_ROUTE", "ASK_ROUTE_MANUAL", "ASK_DATE", "ASK_DATE_MANUAL", "ASK_PASSENGER", "ASK_PASSENGER_MANUAL", "ASK_CLASS", "CONFIRM_SUMMARY"]:
-                if lang == "hi":
-                    w_msg = "🙏 *नमस्ते!*\nआपकी टिकट बुकिंग अभी चल रही है। कृपया इस चरण का उत्तर दें या बुकिंग बंद करने के लिए नीचे *'रद्द करें'* बटन दबाएं:"
-                elif lang == "en":
-                    w_msg = "🙏 *Hello!*\nYour train ticket booking is currently in progress. Please complete this step or tap *'Cancel'* below:"
-                else:
-                    w_msg = "🙏 *Namaste!*\nAapki train ticket booking abhi in-progress hai. Kripya is step ka reply karein ya booking band karne ke liye *'Cancel'* dabayein:"
-                await send_telegram_message(w_msg, chat_id=chat_id)
-                await self._render_current_booking_step(chat_id, curr_state)
-                return
-
-            # Normal friendly greeting -> send official IRCTC welcome menu
+            # 3. Always send official friendly welcome menu with all options
             await self._send_welcome_menu(chat_id)
             return
 

@@ -90,12 +90,12 @@ async def test_telegram_greeting_does_not_consume_captcha():
         # Send "hii" while waiting for CAPTCHA
         await telegram_bot_service._handle_text_message("999999", "hii")
 
-        # Session should still be paused, "hii" must NOT be treated as CAPTCHA!
-        assert session.is_paused is True
+        # Session must NOT treat "hii" as CAPTCHA, and instead clears session and sends friendly welcome menu
         assert session.user_input_value != "hii"
-        assert not session.input_event.is_set()
+        assert session.status == "CANCELLED"
         mock_send.assert_called_once()
-        assert "ruki hui hai" in mock_send.call_args[0][0] or "verification" in mock_send.call_args[0][0]
+        # Verifies that a clean IRCTC welcome menu is sent without nagging about active bookings
+        assert "IRCTC" in mock_send.call_args[0][0] or "Welcome" in mock_send.call_args[0][0]
 
 @pytest.mark.asyncio
 async def test_telegram_cancellation():
