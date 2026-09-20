@@ -168,3 +168,24 @@ export async function triggerBackup() {
   const res = await fetch(`${API_BASE}/crm/backup`, { method: 'POST' });
   return res.json();
 }
+
+export async function checkPNRStatus(pnr) {
+  const res = await fetch(`${API_BASE}/railway/pnr/${pnr}`);
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.detail || 'PNR Status lookup failed');
+  return json;
+}
+
+export async function checkLiveTrainStatus(trainNo) {
+  const res = await fetch(`${API_BASE}/railway/live/${trainNo}`);
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.detail || 'Live train status lookup failed');
+  return json;
+}
+
+export async function searchTrains(fromStation, toStation) {
+  const res = await fetch(`${API_BASE}/railway/search?from_station=${encodeURIComponent(fromStation)}&to_station=${encodeURIComponent(toStation)}`);
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.detail || 'Train search failed');
+  return json;
+}

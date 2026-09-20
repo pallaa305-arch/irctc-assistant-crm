@@ -10,13 +10,15 @@ import {
   Settings, 
   Terminal, 
   Activity,
-  Train
+  Train,
+  Radio
 } from 'lucide-react';
 
 export default function Sidebar({ currentTab, setTab, isOpen, setIsOpen }) {
   const navigation = [
     { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
     { id: 'new-booking', name: 'New Booking', icon: Ticket, highlight: true },
+    { id: 'pnr-live-tracking', name: 'PNR & Live Train', icon: Radio },
     { id: 'booking-history', name: 'Booking History', icon: History },
     { id: 'crm', name: 'CRM', icon: Users },
     { id: 'passengers', name: 'Passengers', icon: UserCheck },

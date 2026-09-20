@@ -9,7 +9,9 @@ import {
   Train, 
   TrendingUp,
   RefreshCw,
-  PlusCircle
+  PlusCircle,
+  Radio,
+  Search
 } from 'lucide-react';
 import { fetchStats } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
@@ -153,6 +155,48 @@ export default function Dashboard({ setTab, onSelectBookingForTracking }) {
             <IndianRupee className="w-3 h-3" />
             <span>Confirmed fare</span>
           </div>
+        </div>
+      </div>
+
+      {/* Quick Live Enquiry Banner */}
+      <div className="bg-gradient-to-r from-emerald-800 via-teal-800 to-indigo-900 rounded-2xl p-5 text-white shadow-lg flex flex-col md:flex-row items-center justify-between gap-4 border border-emerald-700/30">
+        <div className="flex items-center gap-4">
+          <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center backdrop-blur-md shrink-0">
+            <Radio className="w-6 h-6 text-emerald-300 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] uppercase font-bold tracking-wider bg-emerald-500/30 text-emerald-200 px-2.5 py-0.5 rounded-full">
+                Live Indian Railways Enquiry
+              </span>
+              <span className="text-[10px] bg-white/20 px-2 py-0.5 rounded-full font-mono">
+                100% Real-Time
+              </span>
+            </div>
+            <h3 className="text-base font-bold text-white mt-1">
+              Check 10-Digit PNR Status & Live Train Running Status
+            </h3>
+            <p className="text-xs text-emerald-100/80 mt-0.5">
+              Instant coach & berth verification, live delay tracking, upcoming station ETA, and express route finder.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex items-center gap-2.5 w-full md:w-auto shrink-0">
+          <button
+            onClick={() => setTab('pnr-live-tracking')}
+            className="flex-1 md:flex-none px-4 py-2.5 bg-white text-zinc-900 hover:bg-emerald-50 text-xs font-bold rounded-xl shadow-sm transition-colors flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Search className="w-3.5 h-3.5 text-emerald-600" />
+            Check PNR Status
+          </button>
+          <button
+            onClick={() => setTab('pnr-live-tracking')}
+            className="flex-1 md:flex-none px-4 py-2.5 bg-emerald-500/20 hover:bg-emerald-500/30 border border-white/20 text-white text-xs font-semibold rounded-xl transition-colors flex items-center justify-center gap-2 cursor-pointer"
+          >
+            <Train className="w-3.5 h-3.5" />
+            Track Live Train
+          </button>
         </div>
       </div>
 

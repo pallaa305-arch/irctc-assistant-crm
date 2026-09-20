@@ -15,6 +15,7 @@ import Notifications from './pages/Notifications';
 import Settings from './pages/Settings';
 import Logs from './pages/Logs';
 import SystemStatus from './pages/SystemStatus';
+import PNRLiveTracking from './pages/PNRLiveTracking';
 
 import { getBookingState, sendBookingAction } from './services/api';
 import { ShieldCheck, AlertTriangle, ArrowRight, CheckCircle2, Clock } from 'lucide-react';
@@ -148,6 +149,7 @@ export default function App() {
           {currentTab === 'crm' && <CRMView />}
           {currentTab === 'passengers' && <Passengers />}
           {currentTab === 'saved-journeys' && <SavedJourneys setTab={setTab} />}
+          {currentTab === 'pnr-live-tracking' && <PNRLiveTracking setTab={setTab} />}
           {currentTab === 'notifications' && <Notifications />}
           {currentTab === 'settings' && <Settings />}
           {currentTab === 'logs' && <Logs />}

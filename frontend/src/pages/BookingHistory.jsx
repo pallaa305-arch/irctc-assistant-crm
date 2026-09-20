@@ -9,7 +9,9 @@ import {
   Edit3, 
   Eye, 
   Train,
-  Check
+  Check,
+  FileText,
+  Receipt
 } from 'lucide-react';
 import { fetchBookings, updateBookingCRM, deleteBookingCRM } from '../services/api';
 import StatusBadge from '../components/StatusBadge';
@@ -212,6 +214,28 @@ export default function BookingHistory({ onSelectBookingForTracking }) {
                     </td>
                     <td className="py-3.5 px-4 text-right">
                       <div className="flex items-center justify-end gap-1.5">
+                        {b.status === 'CONFIRMED' && (
+                          <>
+                            <a
+                              href={`/api/bookings/${b.id}/ticket-pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-1.5 text-emerald-600 hover:text-emerald-700 hover:bg-emerald-50 dark:hover:bg-emerald-950/40 rounded-lg transition-colors cursor-pointer"
+                              title="Download IRCTC ERS Ticket PDF"
+                            >
+                              <FileText className="w-3.5 h-3.5" />
+                            </a>
+                            <a
+                              href={`/api/bookings/${b.id}/invoice-pdf`}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="p-1.5 text-blue-600 hover:text-blue-700 hover:bg-blue-50 dark:hover:bg-blue-950/40 rounded-lg transition-colors cursor-pointer"
+                              title="Download Travel Agency Bill / Tax Invoice PDF"
+                            >
+                              <Receipt className="w-3.5 h-3.5" />
+                            </a>
+                          </>
+                        )}
                         <button
                           onClick={() => onSelectBookingForTracking(b.booking_ref)}
                           className="p-1.5 text-zinc-500 hover:text-zinc-900 dark:hover:text-white hover:bg-zinc-100 dark:hover:bg-zinc-800 rounded-lg transition-colors cursor-pointer"
