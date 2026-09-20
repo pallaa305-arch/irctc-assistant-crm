@@ -105,7 +105,7 @@ async def run_mock_booking_flow(db: Session, booking_id: int, session_state: Boo
         # Step 7: Payment Handoff -> Human-in-the-Loop PAUSE
         session_state.set_stage("PAYMENT_PENDING")
         fare_amt = booking.fare or (1450.00 * max(1, len(passengers)))
-        pay_prompt = f"PAYMENT REQUIRED: Fare ₹{fare_amt:.2f}. Please scan UPI QR code or complete payment."
+        pay_prompt = f"PAYMENT REQUIRED: Fare Rs. {fare_amt:,.2f} (₹{fare_amt:,.2f}). Please scan UPI QR code or complete payment."
         session_state.pause_for_user(pay_prompt, is_payment=True, input_type="PAYMENT")
         booking.status = "PAYMENT_PENDING"
         db.commit()
@@ -125,9 +125,9 @@ async def run_mock_booking_flow(db: Session, booking_id: int, session_state: Boo
                 photo_bytes=qr_png,
                 caption=(
                     f"💳 *IRCTC Payment Gateway — UPI QR*\n\n"
-                    f"• *Amount:* ₹{fare_amt:.2f}\n"
+                    f"• *Amount:* Rs. {fare_amt:,.2f} (₹{fare_amt:,.2f})\n"
                     f"• *Booking Ref:* `{ref}`\n\n"
-                    f"Apne kisi bhi UPI app (GPay / PhonePe / Paytm) se scan karke pay karein, phir neeche *'✅ Payment Ho Gayi'* par tap karein."
+                    f"Apne kisi bhi UPI app (GPay / PhonePe / Paytm / BHIM) se scan karke pay karein, phir neeche *'✅ Payment Ho Gayi'* par tap karein."
                 ),
                 reply_markup=qr_keyboard
             )

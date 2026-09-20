@@ -167,7 +167,7 @@ export default function CRMView() {
                   </h5>
                   <div className="flex justify-between text-zinc-500 dark:text-zinc-400">
                     <span>Total Fare:</span>
-                    <span className="font-bold text-zinc-900 dark:text-white">₹{selectedBooking.fare || 0}</span>
+                    <span className="font-bold text-zinc-900 dark:text-white">Rs. {selectedBooking.fare || 0}</span>
                   </div>
                   <div className="flex justify-between text-zinc-500 dark:text-zinc-400">
                     <span>Payment Status:</span>

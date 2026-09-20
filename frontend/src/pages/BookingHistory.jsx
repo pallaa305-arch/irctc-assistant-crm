@@ -172,7 +172,7 @@ export default function BookingHistory({ onSelectBookingForTracking }) {
                 <th className="py-3.5 px-4">Route & Date</th>
                 <th className="py-3.5 px-4">Train & Class</th>
                 <th className="py-3.5 px-4">Passengers</th>
-                <th className="py-3.5 px-4">Fare</th>
+                <th className="py-3.5 px-4">Fare (Rs.)</th>
                 <th className="py-3.5 px-4">Status</th>
                 <th className="py-3.5 px-4">Notes</th>
                 <th className="py-3.5 px-4 text-right">Actions</th>
@@ -204,7 +204,7 @@ export default function BookingHistory({ onSelectBookingForTracking }) {
                       </p>
                     </td>
                     <td className="py-3.5 px-4 font-semibold">
-                      ₹{b.fare ? b.fare.toLocaleString('en-IN') : '—'}
+                      Rs. {b.fare ? b.fare.toLocaleString('en-IN') : '—'}
                     </td>
                     <td className="py-3.5 px-4">
                       <StatusBadge status={b.status} />

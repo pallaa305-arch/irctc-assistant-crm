@@ -178,7 +178,7 @@ def format_booking_confirmation_telegram(booking, passengers) -> str:
 {passengers_text}
 
 *Status:* {booking.status}
-*Fare:* ₹{booking.fare or 0:.2f}
+*Fare:* Rs. {booking.fare or 0:,.2f} (₹{booking.fare or 0:,.2f})
 *Booking Ref:* `{booking.booking_ref}`
 *Time:* {booking.created_at.strftime('%d/%m/%Y %H:%M:%S')}
 """

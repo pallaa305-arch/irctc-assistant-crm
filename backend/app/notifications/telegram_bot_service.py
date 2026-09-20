@@ -1283,7 +1283,7 @@ class TelegramBotService:
                         f"• PNR: `{recent_b.pnr or 'N/A'}`\n"
                         f"• मार्ग: *{recent_b.from_station} ➔ {recent_b.to_station}*\n"
                         f"• यात्रा तारीख: *{j_date_str}* | श्रेणी: *{recent_b.journey_class}*\n"
-                        f"• कुल किराया: *₹{recent_b.fare or 0:.2f}*\n\n"
+                        f"• कुल किराया: *Rs. {recent_b.fare or 0:,.2f} (₹{recent_b.fare or 0:,.2f})*\n\n"
                         f"📥 आप नीचे दिए गए बटनों से अपना टिकट या बिल PDF डाउनलोड कर सकते हैं:"
                     )
                 elif lang == "en":
@@ -1295,7 +1295,7 @@ class TelegramBotService:
                         f"• PNR: `{recent_b.pnr or 'N/A'}`\n"
                         f"• Route: *{recent_b.from_station} ➔ {recent_b.to_station}*\n"
                         f"• Journey Date: *{j_date_str}* | Class: *{recent_b.journey_class}*\n"
-                        f"• Fare: *₹{recent_b.fare or 0:.2f}*\n\n"
+                        f"• Fare: *Rs. {recent_b.fare or 0:,.2f} (₹{recent_b.fare or 0:,.2f})*\n\n"
                         f"📥 You can download your Ticket PDF or Invoice Bill PDF below:"
                     )
                 else:
@@ -1307,7 +1307,7 @@ class TelegramBotService:
                         f"• PNR: `{recent_b.pnr or 'N/A'}`\n"
                         f"• Route: *{recent_b.from_station} ➔ {recent_b.to_station}*\n"
                         f"• Journey Date: *{j_date_str}* | Class: *{recent_b.journey_class}*\n"
-                        f"• Fare: *₹{recent_b.fare or 0:.2f}*\n\n"
+                        f"• Fare: *Rs. {recent_b.fare or 0:,.2f} (₹{recent_b.fare or 0:,.2f})*\n\n"
                         f"📥 Aap neeche diye gaye buttons se Ticket PDF ya Bill PDF download kar sakte hain:"
                     )
                 await send_telegram_message(stat_msg, chat_id=chat_id, reply_markup=keyboard)
@@ -1676,7 +1676,7 @@ class TelegramBotService:
                 f"• *तारीख (Date):* {j_date}\n"
                 f"• *श्रेणी (Class):* {j_cls} | कोटा: सामान्य (GN)\n"
                 f"• *यात्री (Passenger):* {pax_name} ({pax_age}/{pax_gender})\n"
-                f"• *अनुमानित किराया:* ₹1,450.00\n\n"
+                f"• *अनुमानित किराया:* Rs. 1,450.00 (₹1,450.00)\n\n"
                 "क्या मैं IRCTC ऑटोमेशन बुकिंग शुरू करूँ?\n"
                 "नीचे *'✅ पुष्टि करें और बुक करें'* बटन दबाएं:"
             )
@@ -1689,7 +1689,7 @@ class TelegramBotService:
                 f"• *Date:* {j_date}\n"
                 f"• *Class:* {j_cls} | Quota: General (GN)\n"
                 f"• *Passenger:* {pax_name} ({pax_age}/{pax_gender})\n"
-                f"• *Est. Fare:* ₹1,450.00\n\n"
+                f"• *Est. Fare:* Rs. 1,450.00 (₹1,450.00)\n\n"
                 "Should I start automated booking in IRCTC?\n"
                 "Tap *'✅ Confirm & Book'* below:"
             )
@@ -1702,7 +1702,7 @@ class TelegramBotService:
                 f"• *Date:* {j_date}\n"
                 f"• *Class:* {j_cls} | Quota: General (GN)\n"
                 f"• *Passenger:* {pax_name} ({pax_age}/{pax_gender})\n"
-                f"• *Est. Fare:* ₹1,450.00\n\n"
+                f"• *Est. Fare:* Rs. 1,450.00 (₹1,450.00)\n\n"
                 "Kya main browser me booking automation shuru karun?\n"
                 "Neeche *'✅ Confirm & Book'* button dabayein:"
             )

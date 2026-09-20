@@ -307,10 +307,10 @@ class PDFService:
         ]))
 
         fare_table_data = [
-            [Paragraph("Ticket Base Fare:", self.cell_normal), Paragraph(f"₹ {fare_base:,.2f}", self.cell_bold)],
-            [Paragraph("IRCTC Convenience Fee (Incl. of GST):", self.cell_normal), Paragraph(f"₹ {convenience_fee:,.2f}", self.cell_normal)],
-            [Paragraph("Travel Insurance (Optional):", self.cell_normal), Paragraph(f"₹ {insurance:,.2f}", self.cell_normal)],
-            [Paragraph("<b>Total Fare (Rupees):</b>", self.cell_bold), Paragraph(f"<b>₹ {total_fare:,.2f}</b>", self.cell_bold)],
+            [Paragraph("Ticket Base Fare:", self.cell_normal), Paragraph(f"Rs. {fare_base:,.2f}", self.cell_bold)],
+            [Paragraph("IRCTC Convenience Fee (Incl. of GST):", self.cell_normal), Paragraph(f"Rs. {convenience_fee:,.2f}", self.cell_normal)],
+            [Paragraph("Travel Insurance (Optional):", self.cell_normal), Paragraph(f"Rs. {insurance:,.2f}", self.cell_normal)],
+            [Paragraph("<b>Total Fare (Rupees):</b>", self.cell_bold), Paragraph(f"<b>Rs. {total_fare:,.2f}</b>", self.cell_bold)],
             [Paragraph("Payment Mode / Status:", self.cell_normal), Paragraph("<font color='#15803D'><b>PAID (Online / UPI Verified)</b></font>", self.cell_bold)]
         ]
         t_fare = Table(fare_table_data, colWidths=[360, 160])
@@ -461,8 +461,8 @@ class PDFService:
                 Paragraph("<b>Item Description</b>", self.header_style),
                 Paragraph("<b>SAC/HSN</b>", self.header_style),
                 Paragraph("<b>Qty</b>", self.header_style),
-                Paragraph("<b>Rate (₹)</b>", self.header_style),
-                Paragraph("<b>Total (₹)</b>", self.header_style)
+                Paragraph("<b>Rate (Rs.)</b>", self.header_style),
+                Paragraph("<b>Total (Rs.)</b>", self.header_style)
             ],
             [
                 Paragraph("1", self.cell_center),
@@ -505,9 +505,9 @@ class PDFService:
 
         # 4. Total Summary Block
         total_data = [
-            [Paragraph("Subtotal Amount:", self.cell_normal), Paragraph(f"₹ {fare_base + agency_fee:,.2f}", self.cell_normal)],
-            [Paragraph("Total Taxes (GST):", self.cell_normal), Paragraph(f"₹ {gst_fee:,.2f}", self.cell_normal)],
-            [Paragraph("<b>GRAND TOTAL (INCL. TAXES):</b>", self.cell_bold), Paragraph(f"<font color='#0B3C68' size=11><b>₹ {total_bill:,.2f}</b></font>", self.cell_bold)],
+            [Paragraph("Subtotal Amount:", self.cell_normal), Paragraph(f"Rs. {fare_base + agency_fee:,.2f}", self.cell_normal)],
+            [Paragraph("Total Taxes (GST):", self.cell_normal), Paragraph(f"Rs. {gst_fee:,.2f}", self.cell_normal)],
+            [Paragraph("<b>GRAND TOTAL (INCL. TAXES):</b>", self.cell_bold), Paragraph(f"<font color='#0B3C68' size=11><b>Rs. {total_bill:,.2f}</b></font>", self.cell_bold)],
             [Paragraph("Amount Paid in Words:", self.cell_normal), Paragraph("<b>Two Thousand Two Hundred Nine Rupees Only</b>", self.cell_normal)]
         ]
 

@@ -147,9 +147,9 @@ export default function Dashboard({ setTab, onSelectBookingForTracking }) {
         </div>
 
         <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 p-4 rounded-2xl shadow-xs">
-          <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">Total Spend</p>
+          <p className="text-xs text-zinc-500 dark:text-zinc-400 font-medium">Total Spend (Rs.)</p>
           <p className="text-2xl font-bold text-zinc-900 dark:text-white mt-2">
-            ₹{stats?.total_spend ? stats.total_spend.toLocaleString('en-IN') : '0'}
+            Rs. {stats?.total_spend ? stats.total_spend.toLocaleString('en-IN') : '0'}
           </p>
           <div className="mt-2 flex items-center gap-1 text-[11px] text-zinc-400">
             <IndianRupee className="w-3 h-3" />
@@ -282,7 +282,7 @@ export default function Dashboard({ setTab, onSelectBookingForTracking }) {
                     </p>
                   </div>
                   <div className="text-right">
-                    <p className="text-xs font-bold text-zinc-900 dark:text-white">₹{b.fare || 0}</p>
+                    <p className="text-xs font-bold text-zinc-900 dark:text-white">Rs. {b.fare || 0}</p>
                     <p className="text-[10px] text-zinc-400 font-mono mt-0.5">{b.pnr ? `PNR: ${b.pnr}` : 'Pending'}</p>
                   </div>
                 </div>
