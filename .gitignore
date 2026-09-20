@@ -27,6 +27,8 @@ data/backups/*
 data/exports/*
 !data/exports/.gitkeep
 data/bookings/bookings.xlsx
+data/tickets/
+data/invoices/
 
 # Playwright
 .playwright/

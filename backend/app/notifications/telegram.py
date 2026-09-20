@@ -99,6 +99,45 @@ async def send_telegram_photo(
     except Exception:
         return False
 
+async def send_telegram_document(
+    document_bytes: bytes,
+    filename: str,
+    caption: str = "",
+    chat_id: Optional[str] = None,
+    bot_token: Optional[str] = None,
+    reply_markup: Optional[Dict[str, Any]] = None
+) -> bool:
+    """
+    Sends a PDF document (Ticket or Bill/Invoice) directly to user's Telegram chat.
+    """
+    token = bot_token or settings.TELEGRAM_BOT_TOKEN
+    target_chat = chat_id or settings.TELEGRAM_CHAT_ID
+
+    if not token or not target_chat or not document_bytes:
+        return False
+
+    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    data = {
+        "chat_id": target_chat,
+        "caption": caption,
+        "parse_mode": "Markdown"
+    }
+    if reply_markup:
+        import json
+        data["reply_markup"] = json.dumps(reply_markup)
+
+    files = {
+        "document": (filename, document_bytes, "application/pdf")
+    }
+
+    try:
+        client = get_telegram_client()
+        response = await client.post(url, data=data, files=files)
+        return response.status_code == 200
+    except Exception as e:
+        print(f"[TELEGRAM DOCUMENT ERROR] {str(e)}")
+        return False
+
 async def answer_callback_query(
     callback_query_id: str,
     text: Optional[str] = None,

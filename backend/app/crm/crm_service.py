@@ -5,8 +5,9 @@ from sqlalchemy import or_, and_, desc
 from app.database.models import Booking, BookingPassenger, SystemLog
 from app.security.sanitizer import sanitize_log_message
 from app.crm.excel_exporter import append_booking_to_excel
-from app.notifications.telegram import send_telegram_message, format_booking_confirmation_telegram
+from app.notifications.telegram import send_telegram_message, send_telegram_document, format_booking_confirmation_telegram
 from app.notifications.whatsapp import send_whatsapp_message, format_booking_confirmation_whatsapp
+from app.services.pdf_service import pdf_service
 from app.config import settings
 
 def log_event(db: Session, level: str, category: str, message: str, booking_ref: Optional[str] = None):
@@ -156,7 +157,7 @@ async def finalize_successful_booking(db: Session, booking_id: int):
     except Exception as e:
         log_event(db, "ERROR", "CRM", f"Failed appending to Excel: {str(e)}", booking.booking_ref)
 
-    # 2. Telegram Notification
+    # 2. Telegram Notification & PDF Documents Dispatch
     if settings.TELEGRAM_ENABLED:
         try:
             tg_msg = format_booking_confirmation_telegram(booking, passengers)
@@ -164,6 +165,53 @@ async def finalize_successful_booking(db: Session, booking_id: int):
             booking.telegram_status = "SENT" if sent else "FAILED"
             db.commit()
             log_event(db, "INFO", "NOTIFY", f"Telegram notification: {'Success' if sent else 'Failed'}", booking.booking_ref)
+
+            # Generate and Send ERS Train Ticket PDF and Tax Invoice/Bill PDF
+            try:
+                b_dict = {
+                    "pnr": booking.pnr or "2451234567",
+                    "train_number": booking.train_number or "12952",
+                    "train_name": booking.train_name or "Express",
+                    "from_station": booking.from_station,
+                    "to_station": booking.to_station,
+                    "journey_date": booking.journey_date.strftime("%d/%m/%Y") if booking.journey_date else "",
+                    "journey_class": booking.journey_class,
+                    "quota": booking.quota or "GENERAL (GN)",
+                    "fare": booking.fare or 1450.0,
+                    "booking_ref": booking.booking_ref,
+                    "booking_time": booking.created_at.strftime("%d-%b-%Y %H:%M:%S") if booking.created_at else ""
+                }
+                pax_list = [
+                    {
+                        "name": p.name,
+                        "age": p.age,
+                        "gender": p.gender,
+                        "allocated_seat": p.allocated_seat or "B4-45 [MB]",
+                        "status": p.status or "CNF"
+                    }
+                    for p in passengers
+                ]
+
+                # 1. Send ERS Ticket PDF
+                ticket_pdf_bytes = pdf_service.generate_ticket_pdf(b_dict, pax_list, save_to_disk=True)
+                pnr_display = booking.pnr or booking.booking_ref
+                await send_telegram_document(
+                    document_bytes=ticket_pdf_bytes,
+                    filename=f"IRCTC_Ticket_{pnr_display}.pdf",
+                    caption=f"🎫 *Official IRCTC Train Ticket (ERS Slip) PDF*\nAttached for your journey. Have a safe & comfortable trip! 🚆"
+                )
+
+                # 2. Send Travel Agency Tax Invoice / Bill PDF
+                invoice_pdf_bytes = pdf_service.generate_invoice_pdf(b_dict, pax_list, save_to_disk=True)
+                await send_telegram_document(
+                    document_bytes=invoice_pdf_bytes,
+                    filename=f"Invoice_Bill_{booking.booking_ref}.pdf",
+                    caption=f"🧾 *Tax Invoice & Booking Bill PDF*\nAttached for your records and expense claims. Thank you! 🙏"
+                )
+                log_event(db, "INFO", "NOTIFY", f"Ticket PDF & Invoice Bill PDF dispatched to Telegram", booking.booking_ref)
+            except Exception as pdf_err:
+                log_event(db, "ERROR", "NOTIFY", f"PDF ticket/invoice dispatch error: {str(pdf_err)}", booking.booking_ref)
+
         except Exception as e:
             booking.telegram_status = "FAILED"
             db.commit()

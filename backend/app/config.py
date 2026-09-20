@@ -7,8 +7,10 @@ DATA_DIR = BASE_DIR / "data"
 BOOKINGS_DIR = DATA_DIR / "bookings"
 EXPORTS_DIR = DATA_DIR / "exports"
 BACKUPS_DIR = DATA_DIR / "backups"
+TICKETS_DIR = DATA_DIR / "tickets"
+INVOICES_DIR = DATA_DIR / "invoices"
 
-for directory in (DATA_DIR, BOOKINGS_DIR, EXPORTS_DIR, BACKUPS_DIR):
+for directory in (DATA_DIR, BOOKINGS_DIR, EXPORTS_DIR, BACKUPS_DIR, TICKETS_DIR, INVOICES_DIR):
     directory.mkdir(parents=True, exist_ok=True)
 
 class Settings(BaseSettings):

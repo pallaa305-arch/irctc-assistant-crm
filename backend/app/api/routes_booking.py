@@ -2,7 +2,7 @@ import uuid
 import asyncio
 from datetime import datetime, date
 from typing import List, Optional
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Response
 from sqlalchemy.orm import Session
 from pydantic import BaseModel, Field
 from app.database.connection import get_db, SessionLocal
@@ -11,6 +11,7 @@ from app.automation.flow_state import get_or_create_session, get_session
 from app.automation.mock_flow import run_mock_booking_flow
 from app.automation.irctc_flow import run_real_irctc_booking_flow
 from app.crm.crm_service import log_event
+from app.services.pdf_service import pdf_service
 from app.config import settings
 
 router = APIRouter(prefix="/api/bookings", tags=["Bookings"])
@@ -221,3 +222,79 @@ async def handle_user_action(booking_ref: str, payload: ActionRequest, db: Sessi
             db.commit()
         log_event(db, "WARNING", "AUTOMATION", f"User cancelled booking {booking_ref}.", booking_ref)
         return {"success": True, "message": "Automation cancelled."}
+
+@router.get("/{booking_id}/ticket-pdf")
+async def download_ticket_pdf(booking_id: int, db: Session = Depends(get_db)):
+    """Generates and downloads the Official IRCTC Electronic Reservation Slip (Ticket) PDF."""
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    b_dict = {
+        "pnr": booking.pnr or "2451234567",
+        "train_number": booking.train_number or "12952",
+        "train_name": booking.train_name or "Rajdhani Express",
+        "from_station": booking.from_station,
+        "to_station": booking.to_station,
+        "journey_date": booking.journey_date.strftime("%d/%m/%Y") if booking.journey_date else "",
+        "journey_class": booking.journey_class,
+        "quota": booking.quota or "GENERAL (GN)",
+        "fare": booking.fare or 1450.0,
+        "booking_ref": booking.booking_ref,
+        "booking_time": booking.created_at.strftime("%d-%b-%Y %H:%M:%S") if booking.created_at else ""
+    }
+    pax_list = [
+        {
+            "name": p.name,
+            "age": p.age,
+            "gender": p.gender,
+            "allocated_seat": p.allocated_seat or "B4-45 [MB]",
+            "status": p.status or "CNF"
+        }
+        for p in booking.passengers
+    ]
+    pdf_bytes = pdf_service.generate_ticket_pdf(b_dict, pax_list, save_to_disk=True)
+    filename = f"IRCTC_Ticket_{booking.pnr or booking.booking_ref}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
+
+@router.get("/{booking_id}/invoice-pdf")
+async def download_invoice_pdf(booking_id: int, db: Session = Depends(get_db)):
+    """Generates and downloads the Travel Agency Tax Invoice & Booking Bill PDF."""
+    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found")
+
+    b_dict = {
+        "pnr": booking.pnr or "2451234567",
+        "train_number": booking.train_number or "12952",
+        "train_name": booking.train_name or "Rajdhani Express",
+        "from_station": booking.from_station,
+        "to_station": booking.to_station,
+        "journey_date": booking.journey_date.strftime("%d/%m/%Y") if booking.journey_date else "",
+        "journey_class": booking.journey_class,
+        "quota": booking.quota or "GENERAL (GN)",
+        "fare": booking.fare or 1450.0,
+        "booking_ref": booking.booking_ref,
+        "booking_time": booking.created_at.strftime("%d-%b-%Y %H:%M:%S") if booking.created_at else ""
+    }
+    pax_list = [
+        {
+            "name": p.name,
+            "age": p.age,
+            "gender": p.gender,
+            "allocated_seat": p.allocated_seat or "B4-45 [MB]",
+            "status": p.status or "CNF"
+        }
+        for p in booking.passengers
+    ]
+    pdf_bytes = pdf_service.generate_invoice_pdf(b_dict, pax_list, save_to_disk=True)
+    filename = f"Invoice_Bill_{booking.booking_ref}.pdf"
+    return Response(
+        content=pdf_bytes,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f"attachment; filename={filename}"}
+    )
