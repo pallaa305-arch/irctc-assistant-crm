@@ -480,6 +480,45 @@ class TelegramBotService:
             await self._send_welcome_menu(chat_id)
             return
 
+        # Engine Mode Toggle (Safe Demo vs Live Official IRCTC)
+        if data == "cmd_mode":
+            await self._send_mode_menu(chat_id)
+            return
+
+        if data == "setmode_live":
+            settings.DEMO_MODE = False
+            lang = user_languages.get(chat_id, "hinglish")
+            msg = (
+                "🚀 *Live Official IRCTC Mode Active!*\n\n"
+                "अब सभी बुकिंग सीधे IRCTC की आधिकारिक वेबसाइट (irctc.co.in) पर होंगी।\n"
+                "• ब्राउज़र आपकी स्क्रीन पर खुलेगा\n"
+                "• CAPTCHA आते ही फ़ोटो टेलीग्राम पर आएगी\n"
+                "• UPI QR कोड पेमेंट के लिए भेजा जाएगा"
+            ) if lang == "hi" else (
+                "🚀 *Live Official IRCTC Mode Active!*\n\n"
+                "Now all bookings will run directly on the official IRCTC portal (irctc.co.in).\n"
+                "• Browser opens visibly\n"
+                "• CAPTCHA image is forwarded to Telegram\n"
+                "• UPI QR code is sent for your secure manual payment"
+            ) if lang == "en" else (
+                "🚀 *Live Official IRCTC Mode Active!*\n\n"
+                "Ab sabhi bookings direct official IRCTC website (irctc.co.in) par execute hongi.\n"
+                "• Browser screen par visible khulega\n"
+                "• CAPTCHA aane par photo yaha Telegram me aayegi\n"
+                "• UPI QR code payment ke liye chat me aayega"
+            )
+            await send_telegram_message(msg, chat_id=chat_id)
+            await self._send_welcome_menu(chat_id)
+            return
+
+        if data == "setmode_demo":
+            settings.DEMO_MODE = True
+            lang = user_languages.get(chat_id, "hinglish")
+            msg = "🛡️ *Safe Demo Mode Active!* Bookings will now run in safe simulation mode."
+            await send_telegram_message(msg, chat_id=chat_id)
+            await self._send_welcome_menu(chat_id)
+            return
+
         # PNR Status Check Callback
         if data == "cmd_pnr":
             user_chat_states[chat_id] = {"step": "WAIT_PNR_INPUT", "data": {}}
@@ -691,6 +730,13 @@ class TelegramBotService:
         # -------------------------------------------------------------
         if clean in ["/language", "/lang", "language", "bhasha", "भाषा", "change language", "hindi", "english", "hinglish"]:
             await self._send_irctc_greeting_and_language_selection(chat_id)
+            return
+
+        # -------------------------------------------------------------
+        # 3b. Check for Mode Command / Query (Demo vs Live IRCTC)
+        # -------------------------------------------------------------
+        if clean in ["/mode", "mode", "engine", "demo mode", "live mode", "change mode", "मोड"]:
+            await self._send_mode_menu(chat_id)
             return
 
         # -------------------------------------------------------------
@@ -1045,8 +1091,59 @@ class TelegramBotService:
         # -------------------------------------------------------------
         await self._send_welcome_menu(chat_id)
 
+    async def _send_mode_menu(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
+        current_mode = "🛡️ Safe Mock Demo" if settings.DEMO_MODE else "🚀 Live Official IRCTC"
+        if lang == "hi":
+            text = (
+                f"⚙️ *IRCTC ऑटोमेशन इंजन मोड*\n"
+                f"═════════════════════════════════════\n"
+                f"• वर्तमान मोड: *{current_mode}*\n\n"
+                f"👉 *1. Live Official IRCTC Mode:* सीधे आधिकारिक IRCTC वेबसाइट (irctc.co.in) पर ब्राउज़र खोलकर तत्काल/सामान्य बुकिंग करता है। असली CAPTCHA और UPI QR सीधे आपके फ़ोन पर आते हैं।\n"
+                f"👉 *2. Safe Demo Mode:* पूरी प्रक्रिया को सुरक्षित सिम्युलेटेड डेटा के साथ चलाता है (परीक्षण के लिए)।\n\n"
+                f"कृपया अपना पसंदीदा मोड चुनें:"
+            )
+            btn_live = "🚀 असली IRCTC मोड चालू करें"
+            btn_demo = "🛡️ सेफ डेमो मोड चालू करें"
+            btn_menu = "🔙 मुख्य मेनू"
+        elif lang == "en":
+            text = (
+                f"⚙️ *IRCTC Automation Engine Mode*\n"
+                f"═════════════════════════════════════\n"
+                f"• Current Mode: *{current_mode}*\n\n"
+                f"👉 *1. Live Official IRCTC Mode:* Directly automates official IRCTC portal (irctc.co.in). Delivers live CAPTCHA & UPI QR to Telegram.\n"
+                f"👉 *2. Safe Demo Mode:* Runs end-to-end booking in a safe simulated sandbox for testing.\n\n"
+                f"Please choose your preferred execution mode:"
+            )
+            btn_live = "🚀 Switch to Live IRCTC"
+            btn_demo = "🛡️ Switch to Demo Mode"
+            btn_menu = "🔙 Main Menu"
+        else:
+            text = (
+                f"⚙️ *Automation Engine Mode*\n"
+                f"═════════════════════════════════════\n"
+                f"• Abhi ka Mode: *{current_mode}*\n\n"
+                f"👉 *1. Live Official IRCTC Mode:* Real IRCTC website (irctc.co.in) par browser khol kar booking karta hai. Real CAPTCHA aur payment QR Telegram par aate hain.\n"
+                f"👉 *2. Safe Demo Mode:* Safe testing ke liye simulated booking run karta hai.\n\n"
+                f"Kripya apna execution mode chunein:"
+            )
+            btn_live = "🚀 Switch to Live IRCTC"
+            btn_demo = "🛡️ Switch to Demo Mode"
+            btn_menu = "🔙 Main Menu"
+
+        keyboard = {
+            "inline_keyboard": [
+                [{"text": btn_live, "callback_data": "setmode_live"}],
+                [{"text": btn_demo, "callback_data": "setmode_demo"}],
+                [{"text": btn_menu, "callback_data": "cmd_menu"}]
+            ]
+        }
+        await send_telegram_message(text, chat_id=chat_id, reply_markup=keyboard)
+
     async def _send_welcome_menu(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
+        mode_label = "🚀 Live IRCTC" if not settings.DEMO_MODE else "🛡️ Demo Mode"
+
         if lang == "hi":
             welcome = (
                 "🚆 *IRCTC (Indian Railway Catering and Tourism Corporation)*\n"
@@ -1063,9 +1160,9 @@ class TelegramBotService:
             buttons = [
                 [{"text": "🎫 नई टिकट बुक करें", "callback_data": "cmd_book"}],
                 [{"text": "🔍 PNR स्टेटस चेक", "callback_data": "cmd_pnr"}, {"text": "📍 लाइव ट्रेन स्थिति", "callback_data": "cmd_live_train"}],
-                [{"text": "🔄 वर्तमान स्थिति", "callback_data": "cmd_status"}, {"text": "👥 सहेजे गए यात्री", "callback_data": "cmd_passengers"}],
-                [{"text": "📍 मुख्य मार्ग (Routes)", "callback_data": "cmd_routes"}, {"text": "🌐 भाषा बदलें (Language)", "callback_data": "cmd_lang"}],
-                [{"text": "❌ रद्द करें", "callback_data": "cmd_cancel"}]
+                [{"text": "🔄 वर्तमान स्थिति", "callback_data": "cmd_status"}, {"text": f"⚙️ मोड: {mode_label}", "callback_data": "cmd_mode"}],
+                [{"text": "👥 सहेजे गए यात्री", "callback_data": "cmd_passengers"}, {"text": "📍 मुख्य मार्ग (Routes)", "callback_data": "cmd_routes"}],
+                [{"text": "🌐 भाषा बदलें (Language)", "callback_data": "cmd_lang"}, {"text": "❌ रद्द करें", "callback_data": "cmd_cancel"}]
             ]
         elif lang == "en":
             welcome = (
@@ -1083,9 +1180,9 @@ class TelegramBotService:
             buttons = [
                 [{"text": "🎫 Book New Ticket", "callback_data": "cmd_book"}],
                 [{"text": "🔍 Check PNR Status", "callback_data": "cmd_pnr"}, {"text": "📍 Live Train Status", "callback_data": "cmd_live_train"}],
-                [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
-                [{"text": "📍 Popular Routes", "callback_data": "cmd_routes"}, {"text": "🌐 Change Language", "callback_data": "cmd_lang"}],
-                [{"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
+                [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": f"⚙️ Mode: {mode_label}", "callback_data": "cmd_mode"}],
+                [{"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}, {"text": "📍 Popular Routes", "callback_data": "cmd_routes"}],
+                [{"text": "🌐 Change Language", "callback_data": "cmd_lang"}, {"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
             ]
         else:  # Hinglish
             welcome = (
@@ -1103,9 +1200,9 @@ class TelegramBotService:
             buttons = [
                 [{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}],
                 [{"text": "🔍 PNR Status Check", "callback_data": "cmd_pnr"}, {"text": "📍 Live Train Status", "callback_data": "cmd_live_train"}],
-                [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
-                [{"text": "📍 Saved Routes", "callback_data": "cmd_routes"}, {"text": "🌐 Bhasha Badlein (Language)", "callback_data": "cmd_lang"}],
-                [{"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
+                [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": f"⚙️ Mode: {mode_label}", "callback_data": "cmd_mode"}],
+                [{"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}, {"text": "📍 Saved Routes", "callback_data": "cmd_routes"}],
+                [{"text": "🌐 Bhasha Badlein (Language)", "callback_data": "cmd_lang"}, {"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
             ]
         await send_telegram_message(welcome, chat_id=chat_id, reply_markup={"inline_keyboard": buttons})
 
