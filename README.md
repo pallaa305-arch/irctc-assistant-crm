@@ -36,7 +36,7 @@ A lightweight, production-ready personal railway ticket booking assistant and CR
 
 1. Open a terminal or Command Prompt in the project folder:
    ```cmd
-   cd C:\Users\Depk\.gemini\antigravity\scratch\irctc-assistant-crm
+   cd F:\IRCTC
    ```
 2. Run the setup script:
    ```cmd
