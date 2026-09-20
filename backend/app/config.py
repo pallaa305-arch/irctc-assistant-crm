@@ -20,6 +20,10 @@ class Settings(BaseSettings):
     APP_ENV: str = "development"
     SECRET_KEY: str = "irctc-assistant-secret-key-change-in-production"
     
+    # Directories
+    DATA_DIR: Path = DATA_DIR
+    BROWSER_PROFILE_DIR: Path = BROWSER_PROFILE_DIR
+
     # Database
     DATABASE_URL: str = f"sqlite:///{DATA_DIR / 'assistant.db'}"
     

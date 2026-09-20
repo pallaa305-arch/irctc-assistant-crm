@@ -1,7 +1,7 @@
 import asyncio
 from typing import Optional
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
-from app.config import settings
+from app.config import settings, BROWSER_PROFILE_DIR
 
 class BrowserManager:
     """
@@ -28,7 +28,7 @@ class BrowserManager:
         if not self.playwright:
             self.playwright = await async_playwright().start()
 
-        profile_dir = str(settings.DATA_DIR / "browser_profile")
+        profile_dir = str(BROWSER_PROFILE_DIR)
         if not self.context:
             self.context = await self.playwright.chromium.launch_persistent_context(
                 user_data_dir=profile_dir,
