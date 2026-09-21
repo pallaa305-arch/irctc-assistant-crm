@@ -3,6 +3,34 @@ from typing import Optional
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 from app.config import settings, BROWSER_PROFILE_DIR
 
+import os
+
+def focus_browser_window():
+    """Forces the Chrome / IRCTC automation window to the foreground on Windows."""
+    if os.name == 'nt':
+        try:
+            import ctypes
+            user32 = ctypes.windll.user32
+            # Allow foreground window switching
+            user32.AllowSetForegroundWindow(-1)
+            
+            def enum_callback(hwnd, _):
+                if user32.IsWindowVisible(hwnd):
+                    length = user32.GetWindowTextLengthW(hwnd)
+                    if length > 0:
+                        buff = ctypes.create_unicode_buffer(length + 1)
+                        user32.GetWindowTextW(hwnd, buff, length + 1)
+                        title = buff.value.lower()
+                        if "irctc" in title or "chrome" in title or "chromium" in title:
+                            user32.ShowWindow(hwnd, 9)  # 9 = SW_RESTORE
+                            user32.SetForegroundWindow(hwnd)
+                return True
+
+            WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
+            user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+        except Exception:
+            pass
+
 class BrowserManager:
     """
     Manages a single visible browser session for low-spec optimization (4GB RAM target).
@@ -23,6 +51,11 @@ class BrowserManager:
 
     async def get_page(self) -> Page:
         if self.page and not self.page.is_closed():
+            try:
+                await self.page.bring_to_front()
+                focus_browser_window()
+            except Exception:
+                pass
             return self.page
 
         if not self.playwright:
@@ -30,23 +63,40 @@ class BrowserManager:
 
         profile_dir = str(BROWSER_PROFILE_DIR)
         if not self.context:
-            self.context = await self.playwright.chromium.launch_persistent_context(
-                user_data_dir=profile_dir,
-                headless=settings.BROWSER_HEADLESS,
-                slow_mo=settings.BROWSER_SLOW_MO,
-                no_viewport=True,
-                args=[
+            launch_args = {
+                "user_data_dir": profile_dir,
+                "headless": settings.BROWSER_HEADLESS,
+                "slow_mo": settings.BROWSER_SLOW_MO,
+                "no_viewport": True,
+                "args": [
                     "--start-maximized",
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox"
                 ],
-                user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            )
+                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+            }
+            # Attempt to launch with real installed Google Chrome for visible window & recognition
+            try:
+                self.context = await self.playwright.chromium.launch_persistent_context(
+                    **launch_args,
+                    channel="chrome"
+                )
+            except Exception:
+                # Fallback to bundled Playwright Chromium
+                self.context = await self.playwright.chromium.launch_persistent_context(
+                    **launch_args
+                )
 
         if self.context.pages:
             self.page = self.context.pages[0]
         else:
             self.page = await self.context.new_page()
+
+        try:
+            await self.page.bring_to_front()
+            focus_browser_window()
+        except Exception:
+            pass
 
         return self.page
 

@@ -900,7 +900,7 @@ class TelegramBotService:
         # -------------------------------------------------------------
         waiting_session = get_latest_waiting_session()
         if waiting_session and waiting_session.waiting_input_type in ["CAPTCHA", "OTP"]:
-            token = text.strip().upper()
+            token = text.strip()
             if 3 <= len(token) <= 8 and not any(ch in token for ch in " \t\n,./!?:;@#") and token.lower() not in GREETING_WORDS:
                 input_type = waiting_session.waiting_input_type
                 waiting_session.provide_user_input(token)

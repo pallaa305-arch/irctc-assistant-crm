@@ -187,6 +187,28 @@ async def get_booking_state(booking_ref: str, db: Session = Depends(get_db)):
         ]
     }
 
+@router.get("/screenshot/{booking_ref}")
+async def get_booking_screenshot(booking_ref: str):
+    """Returns the latest screenshot (CAPTCHA / QR / Login modal) for human-in-the-loop review."""
+    session_state = get_session(booking_ref)
+    if session_state and session_state.latest_screenshot_bytes:
+        return Response(
+            content=session_state.latest_screenshot_bytes,
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
+
+    # Check fallback image on disk
+    fallback_path = settings.DATA_DIR / "latest_captcha.png"
+    if fallback_path.exists():
+        return Response(
+            content=fallback_path.read_bytes(),
+            media_type="image/png",
+            headers={"Cache-Control": "no-cache, no-store, must-revalidate"}
+        )
+
+    raise HTTPException(status_code=404, detail="Screenshot not available.")
+
 @router.post("/action/{booking_ref}")
 async def handle_user_action(booking_ref: str, payload: ActionRequest, db: Session = Depends(get_db)):
     """Handles manual user intervention: Continue, Pause, or Cancel."""

@@ -24,11 +24,11 @@ export async function getBookingState(bookingRef) {
   return res.json();
 }
 
-export async function sendBookingAction(bookingRef, action, note = null) {
+export async function sendBookingAction(bookingRef, action, note = null, inputValue = null) {
   const res = await fetch(`${API_BASE}/bookings/action/${bookingRef}`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ action, note }),
+    body: JSON.stringify({ action, note, input_value: inputValue }),
   });
   if (!res.ok) throw new Error('Failed to dispatch user action');
   return res.json();

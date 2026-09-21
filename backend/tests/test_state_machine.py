@@ -31,3 +31,12 @@ async def test_session_state_transitions_and_pause():
     assert not session.is_paused
     assert session.status == "CANCELLED"
     assert session.cancel_event.is_set()
+
+@pytest.mark.asyncio
+async def test_session_state_with_screenshot():
+    session = BookingSessionState("BK-TEST-SCREENSHOT")
+    dummy_png = b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"
+    session.pause_for_user("Enter CAPTCHA", is_payment=False, input_type="CAPTCHA", screenshot_bytes=dummy_png)
+    assert session.latest_screenshot_bytes == dummy_png
+    assert session.waiting_input_type == "CAPTCHA"
+    assert session.is_paused

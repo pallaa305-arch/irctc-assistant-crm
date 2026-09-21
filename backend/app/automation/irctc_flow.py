@@ -2,7 +2,7 @@ import asyncio
 import re
 from datetime import datetime
 from sqlalchemy.orm import Session
-from app.automation.browser_manager import browser_manager
+from app.automation.browser_manager import browser_manager, focus_browser_window
 from app.automation.flow_state import BookingSessionState
 from app.automation.selectors import URLS, CHALLENGE_SELECTORS, NAVIGATION_SELECTORS
 from app.database.models import Booking, BookingPassenger
@@ -12,7 +12,7 @@ from app.notifications.telegram import (
     send_telegram_photo, 
     format_action_required_telegram
 )
-from app.config import settings
+from app.config import settings, DATA_DIR
 
 async def dismiss_overlays(page):
     """Dismisses initial alert popups, COVID/KAVACH disclaimers, or lingering dialogs."""
@@ -120,32 +120,61 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     log_event(db, "WARNING", "AUTOMATION", f"OTP checkbox note: {e}", ref)
 
                 # 3d. Check for Login CAPTCHA image
-                await asyncio.sleep(1)
-                login_cap_img = login_modal.locator("app-captcha img, #captchaImg, img.captcha-img, img[alt*='captcha' i]").first
+                login_cap_img = login_modal.locator("app-captcha img, #captchaImg, img.captcha-img, img[alt*='captcha' i], .captcha-img").first
                 login_cap_input = login_modal.locator("#nlpAnswer, input[formcontrolname='captcha'], input[placeholder*='captcha' i], #otp, input[formcontrolname='otp']").first
 
-                has_login_captcha = (await login_cap_img.count() > 0)
+                # Allow IRCTC API up to 3.5 seconds to render captcha image
+                try:
+                    await login_cap_img.wait_for(state="visible", timeout=3500)
+                except Exception:
+                    pass
+
+                screenshot_bytes = None
+                try:
+                    if await login_cap_img.count() > 0 and await login_cap_img.is_visible():
+                        screenshot_bytes = await login_cap_img.screenshot(timeout=3000)
+                    else:
+                        screenshot_bytes = await login_modal.screenshot(timeout=3000)
+                except Exception:
+                    try:
+                        screenshot_bytes = await page.screenshot()
+                    except Exception:
+                        pass
+
+                if screenshot_bytes:
+                    try:
+                        (DATA_DIR / "latest_captcha.png").write_bytes(screenshot_bytes)
+                    except Exception:
+                        pass
 
                 session_state.set_stage("WAITING_MANUAL")
                 login_prompt = "IRCTC Login: Credentials auto-filled. Please enter CAPTCHA/OTP or reply on Telegram."
-                session_state.pause_for_user(login_prompt, is_payment=False, input_type="CAPTCHA")
+                session_state.pause_for_user(login_prompt, is_payment=False, input_type="CAPTCHA", screenshot_bytes=screenshot_bytes)
                 booking.status = "WAITING_MANUAL"
                 db.commit()
                 log_event(db, "WARNING", "AUTOMATION", login_prompt, ref)
 
+                # Bring browser window to front
+                try:
+                    await page.bring_to_front()
+                    focus_browser_window()
+                except Exception:
+                    pass
+
                 if settings.TELEGRAM_ENABLED:
-                    if has_login_captcha:
+                    if screenshot_bytes:
                         try:
-                            cap_bytes = await login_cap_img.screenshot(timeout=3000)
                             await send_telegram_photo(
-                                photo_bytes=cap_bytes,
+                                photo_bytes=screenshot_bytes,
                                 caption=(
-                                    f"🔐 *IRCTC Login CAPTCHA* (Ref: `{ref}`)\n\n"
-                                    f"Credentials auto-fill ho chuke hain. Kripya is photo ka CAPTCHA text ya OTP reply karein:"
+                                    f"🔐 *IRCTC Login CAPTCHA / OTP* (Ref: `{ref}`)\n\n"
+                                    f"ID aur Password auto-fill ho gaye hain.\n"
+                                    f"👉 Kripya ye photo dekh kar CAPTCHA text ya OTP reply karein (Hum browser me auto-fill kar denge):"
                                 )
                             )
                         except Exception as e:
-                            log_event(db, "WARNING", "AUTOMATION", f"Could not capture login CAPTCHA for Telegram: {e}", ref)
+                            log_event(db, "WARNING", "AUTOMATION", f"Could not send login CAPTCHA photo: {e}", ref)
+                            await send_telegram_message(format_action_required_telegram(booking, "IRCTC Login (Solve CAPTCHA/OTP)"))
                     else:
                         await send_telegram_message(format_action_required_telegram(booking, "IRCTC Login (Solve CAPTCHA/OTP)"))
 
@@ -306,21 +335,37 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             has_captcha = (await captcha_img_loc.count() > 0) or (await captcha_input.count() > 0)
 
         if has_captcha:
+            captcha_bytes = None
+            try:
+                if await captcha_img_loc.count() > 0 and await captcha_img_loc.is_visible():
+                    captcha_bytes = await captcha_img_loc.screenshot(timeout=3000)
+                else:
+                    captcha_bytes = await page.screenshot()
+            except Exception:
+                pass
+
+            if captcha_bytes:
+                try:
+                    (DATA_DIR / "latest_captcha.png").write_bytes(captcha_bytes)
+                except Exception:
+                    pass
+
             session_state.set_stage("WAITING_MANUAL")
             review_prompt = "Review & CAPTCHA: Please enter the CAPTCHA in browser or reply with text on Telegram."
-            session_state.pause_for_user(review_prompt, is_payment=False, input_type="CAPTCHA")
+            session_state.pause_for_user(review_prompt, is_payment=False, input_type="CAPTCHA", screenshot_bytes=captcha_bytes)
             booking.status = "WAITING_MANUAL"
             db.commit()
             log_event(db, "WARNING", "AUTOMATION", review_prompt, ref)
 
+            # Bring browser window to front
+            try:
+                await page.bring_to_front()
+                focus_browser_window()
+            except Exception:
+                pass
+
             if settings.TELEGRAM_ENABLED:
                 try:
-                    captcha_bytes = None
-                    if await captcha_img_loc.count() > 0:
-                        captcha_bytes = await captcha_img_loc.screenshot(timeout=3000)
-                    else:
-                        captcha_bytes = await page.screenshot()
-
                     if captcha_bytes:
                         await send_telegram_photo(
                             photo_bytes=captcha_bytes,
@@ -329,6 +374,8 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                                 f"Kripya ye photo dekh kar CAPTCHA text reply karein. Hum automatically ise browser me fill kar denge!"
                             )
                         )
+                    else:
+                        await send_telegram_message(format_action_required_telegram(booking, "IRCTC Review CAPTCHA"))
                 except Exception as e:
                     log_event(db, "WARNING", "AUTOMATION", f"Could not capture CAPTCHA screenshot for Telegram: {e}", ref)
 
@@ -378,6 +425,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         db.commit()
         log_event(db, "WARNING", "AUTOMATION", pay_prompt, ref)
 
+        # Bring browser window to front
+        try:
+            await page.bring_to_front()
+            focus_browser_window()
+        except Exception:
+            pass
+
         # Attempt to auto-select UPI / BHIM QR option if visible
         try:
             upi_selectors = [
@@ -403,25 +457,33 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         except Exception:
             pass
 
+        qr_bytes = None
+        try:
+            qr_locators = [
+                "app-bhim-upi-qr img",
+                "#qr-image",
+                "#qrCode",
+                "img.qr-code",
+                "div.qr-image img",
+                "img[src*='data:image']",
+                "img[alt*='qr' i]"
+            ]
+            qr_elem = None
+            for q_sel in qr_locators:
+                loc = page.locator(q_sel).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    qr_elem = loc
+                    break
+
+            qr_bytes = await qr_elem.screenshot(timeout=3000) if qr_elem else await page.screenshot()
+            if qr_bytes:
+                session_state.latest_screenshot_bytes = qr_bytes
+                (DATA_DIR / "latest_captcha.png").write_bytes(qr_bytes)
+        except Exception:
+            pass
+
         if settings.TELEGRAM_ENABLED:
             try:
-                qr_locators = [
-                    "app-bhim-upi-qr img",
-                    "#qr-image",
-                    "#qrCode",
-                    "img.qr-code",
-                    "div.qr-image img",
-                    "img[src*='data:image']",
-                    "img[alt*='qr' i]"
-                ]
-                qr_elem = None
-                for q_sel in qr_locators:
-                    loc = page.locator(q_sel).first
-                    if await loc.count() > 0 and await loc.is_visible():
-                        qr_elem = loc
-                        break
-
-                qr_bytes = await qr_elem.screenshot(timeout=3000) if qr_elem else await page.screenshot()
                 qr_keyboard = {
                     "inline_keyboard": [
                         [
@@ -430,15 +492,22 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         ]
                     ]
                 }
-                await send_telegram_photo(
-                    photo_bytes=qr_bytes,
-                    caption=(
-                        f"💳 *IRCTC Payment Step* (Ref: `{ref}`)\n\n"
-                        f"Kripya payment complete karein aur phir neeche *'✅ Payment Ho Gayi'* button par tap karein."
-                    ),
-                    reply_markup=qr_keyboard
-                )
+                if qr_bytes:
+                    await send_telegram_photo(
+                        photo_bytes=qr_bytes,
+                        caption=(
+                            f"💳 *IRCTC Payment Step* (Ref: `{ref}`)\n\n"
+                            f"Kripya payment complete karein aur phir neeche *'✅ Payment Ho Gayi'* button par tap karein."
+                        ),
+                        reply_markup=qr_keyboard
+                    )
+                else:
+                    await send_telegram_message(
+                        format_action_required_telegram(booking, "IRCTC Payment Step"),
+                        reply_markup=qr_keyboard
+                    )
             except Exception as e:
+                log_event(db, "WARNING", "AUTOMATION", f"Could not dispatch payment prompt to Telegram: {e}", ref)
                 log_event(db, "WARNING", "AUTOMATION", f"Could not capture payment screenshot: {e}", ref)
 
         await session_state.continue_event.wait()

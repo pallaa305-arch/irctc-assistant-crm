@@ -10,6 +10,7 @@ class BookingSessionState:
         self.manual_prompt: Optional[str] = None
         self.error_message: Optional[str] = None
         self.is_paused: bool = False
+        self.latest_screenshot_bytes: Optional[bytes] = None
         
         # User input handling (CAPTCHA text, OTP, or Payment confirmation)
         self.waiting_input_type: str = "NONE"  # "CAPTCHA", "OTP", "PAYMENT", "NONE"
@@ -27,10 +28,12 @@ class BookingSessionState:
             self.status = status
         self.last_updated = datetime.now(timezone.utc)
 
-    def pause_for_user(self, prompt: str, is_payment: bool = False, input_type: str = "NONE"):
+    def pause_for_user(self, prompt: str, is_payment: bool = False, input_type: str = "NONE", screenshot_bytes: Optional[bytes] = None):
         self.is_paused = True
         self.manual_prompt = prompt
         self.waiting_input_type = input_type
+        if screenshot_bytes:
+            self.latest_screenshot_bytes = screenshot_bytes
         self.status = "PAYMENT_PENDING" if is_payment else "WAITING_MANUAL"
         self.continue_event.clear()
         self.input_event.clear()

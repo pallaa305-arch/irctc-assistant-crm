@@ -75,10 +75,10 @@ export default function App() {
     setActiveBookingRef(bookingRef);
   };
 
-  const handleUserAction = async (action) => {
+  const handleUserAction = async (action, inputValue = null) => {
     if (!activeBookingRef) return;
     try {
-      await sendBookingAction(activeBookingRef, action);
+      await sendBookingAction(activeBookingRef, action, null, inputValue);
       // Immediately refresh state
       const updated = await getBookingState(activeBookingRef);
       setActiveBookingState(updated);
