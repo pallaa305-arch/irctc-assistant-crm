@@ -158,7 +158,20 @@ def parse_passenger_info(text: str) -> Dict[str, Any]:
 
 def auto_save_passenger_to_db(pax: Dict[str, Any]):
     name = pax.get("name", "").strip()
-    if not name or len(name) < 2:
+    if not name or len(name) < 2 or len(name) > 30:
+        return
+    lower_n = name.lower()
+    invalid_keywords = {
+        "tomorrow", "kal", "parso", "parson", "today", "aaj", "next week", 
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+        "cancel", "radd", "menu", "status", "pnr", "live", "train", "jaana", "chahiye", "ticket",
+        "hi", "hii", "hello", "hey", "namaste", "yes", "no", "haan", "nahi"
+    }
+    if any(k in lower_n for k in invalid_keywords):
+        return
+    if re.search(r'\d{1,2}[/\-\.]\d{1,2}', lower_n):
+        return
+    if not any(c.isalpha() for c in name):
         return
     db = SessionLocal()
     try:
@@ -640,9 +653,15 @@ class TelegramBotService:
             await self._ask_passenger(chat_id)
 
         elif data.startswith("pax_"):
-            pax_name = data.replace("pax_", "")
+            pax_val = data.replace("pax_id_", "").replace("pax_", "")
             db = SessionLocal()
-            p_obj = db.query(Passenger).filter(Passenger.name == pax_name).first()
+            p_obj = None
+            if pax_val.isdigit():
+                p_obj = db.query(Passenger).filter(Passenger.id == int(pax_val)).first()
+            if not p_obj:
+                p_obj = db.query(Passenger).filter(Passenger.name == pax_val).first()
+
+            pax_name = p_obj.name if p_obj else (pax_val if not pax_val.isdigit() else "Traveler")
             age = p_obj.age if p_obj else 30
             gender = p_obj.gender if p_obj else "M"
             berth = p_obj.berth_preference if p_obj else "NONE"
@@ -1017,36 +1036,84 @@ class TelegramBotService:
                             await self._ask_class(chat_id)
                             return
                     else:
-                        state["step"] = "ASK_PASSENGER"
+                        state["step"] = "ASK_PASSENGER_MANUAL"
                         user_chat_states[chat_id] = state
                         await send_telegram_message(d_msg, chat_id=chat_id)
                         await self._ask_passenger(chat_id)
                         return
                 else:
+                    if lang == "hi":
+                        err_d = "⚠️ कृपया वैध तारीख लिखें (जैसे: `15 Oct`, `25/10/2026`, या `कल`) या नीचे दिए गए बटन पर टैप करें:"
+                    elif lang == "en":
+                        err_d = "⚠️ Please type a valid date (e.g. `15 Oct`, `25/10/2026`, or `Tomorrow`) or tap a button below:"
+                    else:
+                        err_d = "⚠️ Kripya valid date likhein (jaise: `15 Oct`, `25/10/2026`, ya `Kal`) ya neeche diye gaye button par tap karein:"
+                    await send_telegram_message(err_d, chat_id=chat_id)
                     await self._ask_date(chat_id)
                     return
 
             # Step C: In Passenger Selection
             if step in ["ASK_PASSENGER", "ASK_PASSENGER_MANUAL"]:
-                pax = parse_passenger_info(text)
-                if pax["name"] and len(pax["name"]) >= 2 and pax["name"].lower() not in GREETING_WORDS:
-                    auto_save_passenger_to_db(pax)
-                    state["data"]["passengers"] = [pax]
-                    pax_ack = f"✅ यात्री जोड़ा और सहेजा गया: *{pax['name']}* ({pax['age']}/{pax['gender']})" if lang == "hi" else f"✅ Traveler Added & Saved: *{pax['name']}* ({pax['age']}/{pax['gender']})"
-                    if state["data"].get("journey_class"):
-                        state["step"] = "CONFIRM_SUMMARY"
-                        user_chat_states[chat_id] = state
-                        await send_telegram_message(pax_ack, chat_id=chat_id)
-                        await self._show_summary_and_confirm(chat_id)
-                        return
+                # 1. Did user enter a date instead of traveler name?
+                potential_date = parse_date_natural(text)
+                if potential_date:
+                    state["data"]["journey_date"] = potential_date
+                    state["step"] = "ASK_PASSENGER_MANUAL"
+                    user_chat_states[chat_id] = state
+                    if lang == "hi":
+                        d_up = f"📅 *यात्रा की तारीख अपडेट की गई:* `{potential_date}`\n\nअब कृपया यात्री का नाम और उम्र लिखें (उदा. `Deepak 28 M`):"
+                    elif lang == "en":
+                        d_up = f"📅 *Journey Date updated:* `{potential_date}`\n\nNow please enter traveler name and age (e.g. `Deepak 28 M`):"
                     else:
-                        state["step"] = "ASK_CLASS"
-                        user_chat_states[chat_id] = state
-                        await send_telegram_message(pax_ack, chat_id=chat_id)
-                        await self._ask_class(chat_id)
-                        return
-                else:
+                        d_up = f"📅 *Journey Date update ho gayi:* `{potential_date}`\n\nAb kripya passenger ka naam aur age likhein (jaise: `Deepak 28 M`):"
+                    await send_telegram_message(d_up, chat_id=chat_id)
                     await self._ask_passenger(chat_id)
+                    return
+
+                # 2. Parse passenger details
+                pax = parse_passenger_info(text)
+                name_clean = pax.get("name", "").strip()
+                lower_name = name_clean.lower()
+                invalid_names = {
+                    "tomorrow", "kal", "parso", "parson", "today", "aaj", "next week",
+                    "cancel", "radd", "menu", "status", "pnr", "live", "train", "ticket",
+                    "hi", "hii", "hello", "hey", "namaste", "yes", "no", "haan", "nahi"
+                }
+
+                is_valid = (
+                    name_clean and
+                    2 <= len(name_clean) <= 30 and
+                    lower_name not in GREETING_WORDS and
+                    not any(k in lower_name for k in invalid_names) and
+                    not bool(re.search(r'\d{1,2}[/\-\.]\d{1,2}', lower_name)) and
+                    any(c.isalpha() for c in name_clean)
+                )
+
+                if not is_valid:
+                    if lang == "hi":
+                        err_p = "⚠️ कृपया सही यात्री नाम और उम्र लिखें (उदा. `Deepak 28 M` या `Priya 25 F`):"
+                    elif lang == "en":
+                        err_p = "⚠️ Please type a valid traveler name & age (e.g. `Deepak 28 M` or `Priya 25 F`):"
+                    else:
+                        err_p = "⚠️ Kripya valid passenger name aur age likhein (jaise: `Deepak 28 M` ya `Priya 25 F`):"
+                    await send_telegram_message(err_p, chat_id=chat_id)
+                    await self._ask_passenger(chat_id)
+                    return
+
+                auto_save_passenger_to_db(pax)
+                state["data"]["passengers"] = [pax]
+                pax_ack = f"✅ यात्री जोड़ा गया: *{pax['name']}* ({pax['age']}/{pax['gender']})" if lang == "hi" else f"✅ Traveler Added: *{pax['name']}* ({pax['age']}/{pax['gender']})"
+                if state["data"].get("journey_class"):
+                    state["step"] = "CONFIRM_SUMMARY"
+                    user_chat_states[chat_id] = state
+                    await send_telegram_message(pax_ack, chat_id=chat_id)
+                    await self._show_summary_and_confirm(chat_id)
+                    return
+                else:
+                    state["step"] = "ASK_CLASS"
+                    user_chat_states[chat_id] = state
+                    await send_telegram_message(pax_ack, chat_id=chat_id)
+                    await self._ask_class(chat_id)
                     return
 
             # Step D: In Class Selection
@@ -1701,7 +1768,10 @@ class TelegramBotService:
                 ]
             ]
         }
-        user_chat_states[chat_id]["step"] = "ASK_DATE_MANUAL"
+        if chat_id not in user_chat_states:
+            user_chat_states[chat_id] = {"step": "ASK_DATE_MANUAL", "data": {}}
+        else:
+            user_chat_states[chat_id]["step"] = "ASK_DATE_MANUAL"
         await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
     async def _ask_passenger(self, chat_id: str):
@@ -1712,12 +1782,16 @@ class TelegramBotService:
 
         buttons = []
         for p in saved_pax:
-            buttons.append([{"text": f"👤 {p.name} ({p.age}/{p.gender})", "callback_data": f"pax_{p.name}"}])
+            clean_name = p.name[:24]
+            buttons.append([{"text": f"👤 {clean_name} ({p.age}/{p.gender})", "callback_data": f"pax_id_{p.id}"}])
         cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
         buttons.append([{"text": cancel_txt, "callback_data": "cancel_book"}])
 
         keyboard = {"inline_keyboard": buttons}
-        user_chat_states[chat_id]["step"] = "ASK_PASSENGER_MANUAL"
+        if chat_id not in user_chat_states:
+            user_chat_states[chat_id] = {"step": "ASK_PASSENGER_MANUAL", "data": {}}
+        else:
+            user_chat_states[chat_id]["step"] = "ASK_PASSENGER_MANUAL"
 
         if lang == "hi":
             if saved_pax:
