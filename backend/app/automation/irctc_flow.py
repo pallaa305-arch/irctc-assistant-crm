@@ -61,15 +61,6 @@ async def dismiss_overlays(page):
                     }
                 }
                 
-                // Hide floating promo / beta banner without deleting Angular DOM nodes
-                document.querySelectorAll('div, section, app-header').forEach(b => {
-                    const t = b.innerText || '';
-                    if (t.includes('Explore the beta') || t.includes('beta version of our new website')) {
-                        b.style.display = 'none';
-                        action = true;
-                    }
-                });
-                
                 return action;
             }''')
             if js_res:
@@ -355,40 +346,57 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         await dismiss_overlays(page)
 
         try:
-            # From station
+            # Wait for search form to be visible on page
             from_input = page.locator("p-autocomplete[formcontrolname='origin'] input, #origin input, input[aria-label*='From' i]").first
-            if await from_input.count() > 0:
-                await from_input.click(timeout=5000, force=True)
-                await from_input.fill("")
-                await from_input.fill(booking.from_station)
-                await asyncio.sleep(1.2)
+            await from_input.wait_for(state="visible", timeout=15000)
+
+            # 1. From station
+            await from_input.scroll_into_view_if_needed()
+            await from_input.click(timeout=5000, force=True)
+            await from_input.fill("")
+            await from_input.press_sequentially(booking.from_station, delay=120)
+            await asyncio.sleep(1.2)
+            auto_item = page.locator("ul.ui-autocomplete-items li, li.ui-autocomplete-list-item").first
+            if await auto_item.count() > 0 and await auto_item.is_visible():
+                await auto_item.click(timeout=2000, force=True)
+            else:
                 await page.keyboard.press("ArrowDown")
                 await page.keyboard.press("Enter")
+            await asyncio.sleep(0.5)
 
-            # To station
+            # 2. To station
             to_input = page.locator("p-autocomplete[formcontrolname='destination'] input, #destination input, input[aria-label*='To' i]").first
-            if await to_input.count() > 0:
-                await to_input.click(timeout=5000, force=True)
-                await to_input.fill("")
-                await to_input.fill(booking.to_station)
-                await asyncio.sleep(1.2)
+            await to_input.wait_for(state="visible", timeout=10000)
+            await to_input.scroll_into_view_if_needed()
+            await to_input.click(timeout=5000, force=True)
+            await to_input.fill("")
+            await to_input.press_sequentially(booking.to_station, delay=120)
+            await asyncio.sleep(1.2)
+            auto_item_to = page.locator("ul.ui-autocomplete-items li, li.ui-autocomplete-list-item").first
+            if await auto_item_to.count() > 0 and await auto_item_to.is_visible():
+                await auto_item_to.click(timeout=2000, force=True)
+            else:
                 await page.keyboard.press("ArrowDown")
                 await page.keyboard.press("Enter")
+            await asyncio.sleep(0.5)
 
-            # Date
+            # 3. Date
             date_str = booking.journey_date.strftime("%d/%m/%Y")
             date_input = page.locator("p-calendar[formcontrolname='journeyDate'] input, #jDate input, input[placeholder*='Date' i]").first
             if await date_input.count() > 0:
                 await date_input.click(timeout=5000, force=True)
                 await page.keyboard.press("Control+A")
                 await page.keyboard.press("Backspace")
-                await date_input.fill(date_str)
+                await date_input.press_sequentially(date_str, delay=80)
                 await page.keyboard.press("Enter")
+                await asyncio.sleep(0.5)
 
-            # Click Search
+            # 4. Click Search Button
             search_btn = page.locator("button.search_btn, button[type='submit']:has-text('Search'), button:has-text('Search')").first
             if await search_btn.count() > 0:
+                await search_btn.scroll_into_view_if_needed()
                 await search_btn.click(timeout=5000, force=True)
+                log_event(db, "INFO", "AUTOMATION", f"Submitted search for {booking.from_station} to {booking.to_station} on {date_str}.", ref)
                 await asyncio.sleep(3)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Search form note: {str(e)}", ref)
@@ -469,7 +477,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             book_now = page.locator("button:has-text('Book Now'), button.btn-primary:has-text('Book Now')").first
             if await book_now.count() > 0 and await book_now.is_visible():
                 await book_now.click(timeout=4000, force=True)
-                await asyncio.sleep(1.5)
+                log_event(db, "INFO", "AUTOMATION", "Clicked 'Book Now'. Checking for confirmation dialogs or login...", ref)
+                await asyncio.sleep(2)
+                for conf_sel in ["button:has-text('Yes')", "button:has-text('I Agree')", "button:has-text('OK')", "button:has-text('Confirm')"]:
+                    c_btn = page.locator(conf_sel).first
+                    if await c_btn.count() > 0 and await c_btn.is_visible():
+                        await c_btn.click(timeout=2000, force=True)
+                        await asyncio.sleep(1)
                 await dismiss_overlays(page)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Book now click note: {e}", ref)
