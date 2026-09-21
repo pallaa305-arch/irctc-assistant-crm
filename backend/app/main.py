@@ -21,6 +21,7 @@ from app.api.routes_settings import router as settings_router
 from app.api.routes_logs import router as logs_router
 from app.api.routes_system import router as system_router
 from app.api.routes_railway import router as railway_router
+from app.api.routes_chat import router as chat_router
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -59,6 +60,7 @@ app.include_router(settings_router)
 app.include_router(logs_router)
 app.include_router(system_router)
 app.include_router(railway_router)
+app.include_router(chat_router)
 
 @app.get("/api/health")
 async def health_check():
