@@ -19,57 +19,84 @@ async def dismiss_overlays(page):
     """
     Automatically dismisses language selection dialogs, alert popups,
     Senior citizen notices, COVID/KAVACH disclaimers, beta banners,
-    or lingering PrimeNG dialog overlays.
+    or lingering dialog overlays.
     """
     if not page:
         return
     for _ in range(4):
         dismissed = False
         try:
-            # 1. Remove beta banner and any full-width promo banners via DOM
-            await page.evaluate('''() => {
-                const banners = document.querySelectorAll('div, section, app-header');
-                for (const b of banners) {
-                    if (b.innerText && (b.innerText.includes('Explore the beta') || b.innerText.includes('beta version'))) {
-                        b.remove();
+            # 1. Native DOM evaluation for rapid, bulletproof dismissal
+            js_res = await page.evaluate('''() => {
+                let action = false;
+                
+                // Click language selection: English or Hindi button/link/span
+                const allElems = Array.from(document.querySelectorAll('button, a, span, div.ui-button, [role="button"]'));
+                for (const el of allElems) {
+                    const text = (el.innerText || el.textContent || '').trim();
+                    if (text === 'English' || text === 'हिंदी') {
+                        el.click();
+                        action = true;
+                        break;
                     }
                 }
-                const masks = document.querySelectorAll('.custom-blur-mask, .ui-dialog-mask');
-                masks.forEach(m => m.remove());
+                
+                // Click standard confirmation / disclaimer buttons
+                const okTexts = ['OK', 'I Agree', 'Yes', 'DISMISS', 'Submit', 'Continue'];
+                for (const el of allElems) {
+                    const text = (el.innerText || el.textContent || '').trim();
+                    if (okTexts.includes(text) && el.closest('.ui-dialog, app-dialog, .modal, .alert, p-dialog')) {
+                        el.click();
+                        action = true;
+                        break;
+                    }
+                }
+                
+                // Close dialog titlebar close icon (X)
+                const closeIcons = document.querySelectorAll('.ui-dialog-titlebar-close, a.ui-dialog-titlebar-close, button.close, [aria-label="Close"], .fa-window-close');
+                for (const ci of closeIcons) {
+                    if (ci.offsetParent !== null) {
+                        ci.click();
+                        action = true;
+                    }
+                }
+                
+                // Hide floating promo / beta banner without deleting Angular DOM nodes
+                document.querySelectorAll('div, section, app-header').forEach(b => {
+                    const t = b.innerText || '';
+                    if (t.includes('Explore the beta') || t.includes('beta version of our new website')) {
+                        b.style.display = 'none';
+                        action = true;
+                    }
+                });
+                
+                return action;
             }''')
-
-            # 2. Preferred Language Selection Dialog ("Please select your preferred language [English] [हिंदी]")
-            lang_btns = page.locator("button:has-text('English'), a:has-text('English'), div.ui-dialog button:has-text('English')")
-            if await lang_btns.count() > 0 and await lang_btns.first.is_visible():
-                await lang_btns.first.click(timeout=1500, force=True)
+            if js_res:
+                dismissed = True
                 await asyncio.sleep(0.4)
+
+            # 2. Python Playwright selector fallback
+            lang_loc = page.locator("button:has-text('English'), button:has-text('हिंदी'), span:has-text('English'), a:has-text('English')").first
+            if await lang_loc.count() > 0 and await lang_loc.is_visible():
+                await lang_loc.click(timeout=1000, force=True)
+                await asyncio.sleep(0.3)
                 dismissed = True
 
-            # 3. General alerts, disclaimers, OK / DISMISS / I Agree / Yes buttons
             general_selectors = [
-                "button:has-text('I Agree')",
-                "button:has-text('Yes')",
-                "button:has-text('OK')",
-                "button:has-text('DISMISS')",
-                "button:has-text('SUBMIT')",
-                "button.btn-primary:has-text('I Agree')",
-                "button.btn-primary:has-text('Yes')",
-                "button.btn-primary:has-text('OK')",
+                "div.ui-dialog button:has-text('OK')",
+                "div.ui-dialog button:has-text('I Agree')",
+                "div.ui-dialog button:has-text('Yes')",
+                "div.ui-dialog button:has-text('DISMISS')",
                 ".ui-dialog-titlebar-close",
-                "a[role='button']:has-text('×')",
-                "a[role='button']:has-text('x')",
-                "a.fa-window-close",
-                "span.fa-close"
+                "a[role='button']:has-text('×')"
             ]
             for sel in general_selectors:
-                loc = page.locator(sel)
-                cnt = await loc.count()
-                for idx in range(min(cnt, 2)):
-                    elem = loc.nth(idx)
-                    if await elem.is_visible():
-                        await elem.click(timeout=1000, force=True)
-                        await asyncio.sleep(0.3)
-                        dismissed = True
+                loc = page.locator(sel).first
+                if await loc.count() > 0 and await loc.is_visible():
+                    await loc.click(timeout=800, force=True)
+                    await asyncio.sleep(0.3)
+                    dismissed = True
         except Exception:
             pass
         if not dismissed:
@@ -196,144 +223,125 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         await asyncio.sleep(2)
         await dismiss_overlays(page)
 
-        # Step 3: Verified IRCTC Authentication
+        # Step 3: Verified IRCTC Authentication Check
         session_state.set_stage("CHECKING_LOGIN")
         log_event(db, "INFO", "AUTOMATION", "Checking IRCTC login session...", ref)
 
+        if "/train-search" not in page.url:
+            await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=45000)
+            await asyncio.sleep(2)
+        await dismiss_overlays(page)
+
         is_logged_in = await check_logged_in_state(page)
 
-        if not is_logged_in:
-            log_event(db, "INFO", "AUTOMATION", "No active login session found. Navigating to IRCTC login...", ref)
+        if is_logged_in:
+            log_event(db, "INFO", "AUTOMATION", "Active IRCTC authenticated session detected. Proceeding to Train Search...", ref)
+        else:
+            log_event(db, "INFO", "AUTOMATION", "Checking if initial login is needed or saved in profile...", ref)
+            # Try opening login modal from header if present
             try:
-                # Open login page directly
-                await page.goto(URLS["LOGIN"], wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(2)
+                login_btn = page.locator("a.loginText, a:has-text('LOGIN / REGISTER'), a:has-text('LOGIN'), button:has-text('LOGIN')").first
+                if await login_btn.count() > 0 and await login_btn.is_visible():
+                    await login_btn.click(timeout=2500, force=True)
+                    await asyncio.sleep(1.5)
             except Exception:
                 pass
-            await dismiss_overlays(page)
 
-            # Check if login form is on screen
             user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
             pass_input = page.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
 
-            # If user-login URL redirected to home or opened as modal
-            if await user_input.count() == 0:
-                login_btn = page.locator("a:has-text('LOGIN'), button:has-text('LOGIN'), a.loginText").first
-                if await login_btn.count() > 0:
-                    await login_btn.click(timeout=3000, force=True)
-                    await asyncio.sleep(2)
-                user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
-                pass_input = page.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
+            # If login dialog is open, auto-fill credentials
+            if await user_input.count() > 0 and await user_input.is_visible():
+                if settings.IRCTC_USERNAME:
+                    await user_input.fill("")
+                    await user_input.fill(settings.IRCTC_USERNAME)
+                    log_event(db, "INFO", "AUTOMATION", f"Auto-filled username: {settings.IRCTC_USERNAME[:4]}****", ref)
 
-            # Auto-fill credentials
-            if await user_input.count() > 0 and settings.IRCTC_USERNAME:
-                await user_input.fill("")
-                await user_input.fill(settings.IRCTC_USERNAME)
-                log_event(db, "INFO", "AUTOMATION", f"Auto-filled username: {settings.IRCTC_USERNAME[:4]}****", ref)
+                if await pass_input.count() > 0 and settings.IRCTC_PASSWORD:
+                    await pass_input.fill("")
+                    await pass_input.fill(settings.IRCTC_PASSWORD)
 
-            if await pass_input.count() > 0 and settings.IRCTC_PASSWORD:
-                await pass_input.fill("")
-                await pass_input.fill(settings.IRCTC_PASSWORD)
-
-            # Auto-tick "Login and Booking with OTP" if available
-            try:
-                otp_chk = page.locator("label:has-text('OTP'), #otpLogin, p-checkbox[label*='OTP' i], label[for='otpLogin']").first
-                if await otp_chk.count() > 0 and await otp_chk.is_visible():
-                    await otp_chk.click(timeout=1500, force=True)
-                    log_event(db, "INFO", "AUTOMATION", "Auto-selected OTP login option.", ref)
-            except Exception:
-                pass
-
-            # Try direct Sign In
-            sign_in_btn = page.locator("button:has-text('SIGN IN'), button[type='submit']").first
-            if await sign_in_btn.count() > 0:
-                await sign_in_btn.click(timeout=2000, force=True)
-                await asyncio.sleep(2)
-
-            is_logged_in = await check_logged_in_state(page)
-
-            # If CAPTCHA or OTP is required to finish login
-            if not is_logged_in:
+                # Check if visual captcha image is present inside the login dialog
                 cap_img = page.locator("app-captcha img, #captchaImg, img.captcha-img, img[alt*='captcha' i]").first
-                cap_input = page.locator("#nlpAnswer, input[formcontrolname='captcha'], input[placeholder*='captcha' i], #otp, input[formcontrolname='otp']").first
+                cap_input = page.locator("#nlpAnswer, input[formcontrolname='captcha'], input[placeholder*='captcha' i]").first
 
-                cap_bytes = None
-                try:
-                    if await cap_img.count() > 0 and await cap_img.is_visible():
+                if await cap_img.count() > 0 and await cap_img.is_visible():
+                    cap_bytes = None
+                    try:
                         await cap_img.scroll_into_view_if_needed()
                         cap_bytes = await cap_img.screenshot(timeout=3000)
-                    else:
-                        cap_bytes = await page.screenshot()
-                except Exception:
-                    pass
-
-                if cap_bytes:
-                    try:
-                        (DATA_DIR / "latest_captcha.png").write_bytes(cap_bytes)
                     except Exception:
-                        pass
+                        login_modal = page.locator("app-login, div.ui-dialog").first
+                        if await login_modal.count() > 0 and await login_modal.is_visible():
+                            cap_bytes = await login_modal.screenshot(timeout=3000)
 
-                session_state.set_stage("WAITING_MANUAL")
-                login_prompt = "IRCTC Login: Credentials auto-filled. Please solve visual CAPTCHA or OTP."
-                session_state.pause_for_user(login_prompt, is_payment=False, input_type="CAPTCHA", screenshot_bytes=cap_bytes)
-                booking.status = "WAITING_MANUAL"
-                db.commit()
-                log_event(db, "WARNING", "AUTOMATION", login_prompt, ref)
-
-                try:
-                    await page.bring_to_front()
-                    focus_browser_window()
-                except Exception:
-                    pass
-
-                if settings.TELEGRAM_ENABLED:
-                    t_keyboard = {
-                        "inline_keyboard": [
-                            [{"text": "✅ Login Ho Gaya (Continue)", "callback_data": "action_continue"}],
-                            [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
-                        ]
-                    }
-                    cap_caption = (
-                        f"🔐 *IRCTC Login Required* (Ref: `{ref}`)\n\n"
-                        f"ID (`{settings.IRCTC_USERNAME}`) aur Password auto-fill ho chuke hain.\n"
-                        f"👉 Kripya ye photo dekh kar CAPTCHA reply karein ya browser me login karke *'Login Ho Gaya'* dabayein:"
-                    )
                     if cap_bytes:
-                        await send_telegram_photo(photo_bytes=cap_bytes, caption=cap_caption, reply_markup=t_keyboard)
-                    else:
-                        await send_telegram_message(cap_caption, reply_markup=t_keyboard)
+                        try:
+                            (DATA_DIR / "latest_captcha.png").write_bytes(cap_bytes)
+                        except Exception:
+                            pass
 
-                done, pending = await asyncio.wait(
-                    [
-                        asyncio.create_task(session_state.continue_event.wait()),
-                        asyncio.create_task(session_state.input_event.wait())
-                    ],
-                    return_when=asyncio.FIRST_COMPLETED
-                )
-                for t in pending:
-                    t.cancel()
+                        session_state.set_stage("WAITING_MANUAL")
+                        login_prompt = "IRCTC Login: Credentials auto-filled. Please solve visual CAPTCHA or click 'Login Ho Gaya'."
+                        session_state.pause_for_user(login_prompt, is_payment=False, input_type="CAPTCHA", screenshot_bytes=cap_bytes)
+                        booking.status = "WAITING_MANUAL"
+                        db.commit()
+                        log_event(db, "WARNING", "AUTOMATION", login_prompt, ref)
 
-                if session_state.cancel_event.is_set():
-                    booking.status = "CANCELLED"
-                    db.commit()
-                    return
+                        if settings.TELEGRAM_ENABLED:
+                            t_keyboard = {
+                                "inline_keyboard": [
+                                    [{"text": "✅ Login Ho Gaya (Continue)", "callback_data": "action_continue"}],
+                                    [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
+                                ]
+                            }
+                            cap_caption = (
+                                f"🔐 *IRCTC Login Required* (Ref: `{ref}`)\n\n"
+                                f"ID (`{settings.IRCTC_USERNAME}`) aur Password auto-fill ho chuke hain.\n"
+                                f"👉 Kripya photo dekh kar CAPTCHA reply karein ya browser me login karke *'Login Ho Gaya'* dabayein:"
+                            )
+                            await send_telegram_photo(photo_bytes=cap_bytes, caption=cap_caption, reply_markup=t_keyboard)
 
-                if session_state.user_input_value and await cap_input.count() > 0:
-                    try:
-                        await cap_input.fill(session_state.user_input_value.strip())
-                        if await sign_in_btn.count() > 0:
-                            await sign_in_btn.click(timeout=3000, force=True)
-                            await asyncio.sleep(2.5)
-                    except Exception:
-                        pass
+                        done, pending = await asyncio.wait(
+                            [
+                                asyncio.create_task(session_state.continue_event.wait()),
+                                asyncio.create_task(session_state.input_event.wait())
+                            ],
+                            return_when=asyncio.FIRST_COMPLETED
+                        )
+                        for t in pending:
+                            t.cancel()
 
-                for _ in range(10):
-                    if await check_logged_in_state(page):
-                        is_logged_in = True
-                        break
-                    await asyncio.sleep(1)
+                        if session_state.cancel_event.is_set():
+                            booking.status = "CANCELLED"
+                            db.commit()
+                            return
 
-        log_event(db, "INFO", "AUTOMATION", "IRCTC Login session confirmed. Proceeding to Train Search...", ref)
+                        if session_state.user_input_value and await cap_input.count() > 0:
+                            try:
+                                await cap_input.fill(session_state.user_input_value.strip())
+                                sign_in_btn = page.locator("button:has-text('SIGN IN'), button[type='submit']").first
+                                if await sign_in_btn.count() > 0:
+                                    await sign_in_btn.click(timeout=3000, force=True)
+                                    await asyncio.sleep(2.5)
+                            except Exception:
+                                pass
+
+                        for _ in range(10):
+                            if await check_logged_in_state(page):
+                                is_logged_in = True
+                                break
+                            await asyncio.sleep(1)
+                else:
+                    # No captcha needed, try direct sign in
+                    sign_in_btn = page.locator("button:has-text('SIGN IN'), button[type='submit']").first
+                    if await sign_in_btn.count() > 0:
+                        await sign_in_btn.click(timeout=2500, force=True)
+                        await asyncio.sleep(2)
+            else:
+                log_event(db, "INFO", "AUTOMATION", "Direct search mode active. Train search will proceed immediately.", ref)
+
+        log_event(db, "INFO", "AUTOMATION", "Proceeding to Train Search...", ref)
 
         # Step 4: Search Trains
         session_state.set_stage("SEARCHING_TRAINS")
@@ -466,10 +474,62 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Book now click note: {e}", ref)
 
-        # Wait up to 10 seconds for Passenger Input page
+        # Wait up to 15 seconds for Passenger Input page or Login Modal
         arrived_at_passenger = False
-        for _ in range(10):
+        for _ in range(15):
             await dismiss_overlays(page)
+
+            # Check if login modal popped up upon clicking Book Now
+            login_modal = page.locator("app-login, input[formcontrolname='userid'], #userId").first
+            if await login_modal.count() > 0 and await login_modal.is_visible():
+                log_event(db, "INFO", "AUTOMATION", "IRCTC requested authentication upon booking. Auto-filling credentials...", ref)
+                u_in = page.locator("input[formcontrolname='userid'], #userId").first
+                p_in = page.locator("input[formcontrolname='password'], #pwd").first
+                if await u_in.count() > 0 and settings.IRCTC_USERNAME:
+                    await u_in.fill("")
+                    await u_in.fill(settings.IRCTC_USERNAME)
+                if await p_in.count() > 0 and settings.IRCTC_PASSWORD:
+                    await p_in.fill("")
+                    await p_in.fill(settings.IRCTC_PASSWORD)
+
+                cap_img = page.locator("app-captcha img, #captchaImg, img.captcha-img").first
+                cap_inp = page.locator("#nlpAnswer, input[formcontrolname='captcha']").first
+                if await cap_img.count() > 0 and await cap_img.is_visible():
+                    cap_bytes = await cap_img.screenshot(timeout=3000)
+                    session_state.pause_for_user("Please enter login CAPTCHA", is_payment=False, input_type="CAPTCHA", screenshot_bytes=cap_bytes)
+                    if settings.TELEGRAM_ENABLED:
+                        t_keyboard = {
+                            "inline_keyboard": [
+                                [{"text": "✅ Login Ho Gaya (Continue)", "callback_data": "action_continue"}],
+                                [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
+                            ]
+                        }
+                        await send_telegram_photo(
+                            photo_bytes=cap_bytes,
+                            caption=f"🔐 *IRCTC Login Required* (Ref: `{ref}`)\n\nID & Password auto-fill ho chuke hain. Kripya CAPTCHA reply karein:",
+                            reply_markup=t_keyboard
+                        )
+                    done, pending = await asyncio.wait(
+                        [
+                            asyncio.create_task(session_state.continue_event.wait()),
+                            asyncio.create_task(session_state.input_event.wait())
+                        ],
+                        return_when=asyncio.FIRST_COMPLETED
+                    )
+                    for t in pending:
+                        t.cancel()
+                    if session_state.user_input_value and await cap_inp.count() > 0:
+                        await cap_inp.fill(session_state.user_input_value.strip())
+                        s_btn = page.locator("button:has-text('SIGN IN'), button[type='submit']").first
+                        if await s_btn.count() > 0:
+                            await s_btn.click(timeout=3000, force=True)
+                            await asyncio.sleep(2)
+                else:
+                    s_btn = page.locator("button:has-text('SIGN IN'), button[type='submit']").first
+                    if await s_btn.count() > 0:
+                        await s_btn.click(timeout=2500, force=True)
+                        await asyncio.sleep(2)
+
             if "psgn-input" in page.url or await page.locator("input[placeholder*='Passenger Name' i], p-autocomplete[formcontrolname='passengerName'] input").count() > 0:
                 arrived_at_passenger = True
                 break

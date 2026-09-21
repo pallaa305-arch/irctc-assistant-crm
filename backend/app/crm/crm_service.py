@@ -177,7 +177,7 @@ async def finalize_successful_booking(db: Session, booking_id: int):
                     "journey_date": booking.journey_date.strftime("%d/%m/%Y") if booking.journey_date else "",
                     "journey_class": booking.journey_class,
                     "quota": booking.quota or "GENERAL (GN)",
-                    "fare": booking.fare or 1450.0,
+                    "fare": booking.fare or 0.0,
                     "booking_ref": booking.booking_ref,
                     "booking_time": booking.created_at.strftime("%d-%b-%Y %H:%M:%S") if booking.created_at else ""
                 }
