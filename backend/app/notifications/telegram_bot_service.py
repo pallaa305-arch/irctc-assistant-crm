@@ -21,6 +21,7 @@ from app.notifications.telegram import (
 )
 from app.services.railway_service import railway_service
 from app.services.pdf_service import pdf_service
+from app.notifications.telegram_channel_adapter import telegram_adapter
 
 # Common Indian Cities & Station Codes Map
 CITY_STATION_MAP = {
@@ -1202,8 +1203,16 @@ class TelegramBotService:
             return
 
         # -------------------------------------------------------------
-        # 13. Default Fallback
+        # 13. Route through Unified Agent Router via TelegramChannelAdapter
         # -------------------------------------------------------------
+        try:
+            cid_int = int(chat_id)
+            resp = await telegram_adapter.process_user_text(cid_int, text)
+            if resp and resp.text:
+                return
+        except Exception:
+            pass
+
         await self._send_welcome_menu(chat_id)
 
     async def _send_mode_menu(self, chat_id: str):
