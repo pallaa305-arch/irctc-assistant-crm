@@ -340,46 +340,121 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
         # Step 5: Train & Class Selection
         session_state.set_stage("SELECTING_TRAIN")
-        log_event(db, "INFO", "AUTOMATION", f"Searching train results on IRCTC...", ref)
+        log_event(db, "INFO", "AUTOMATION", f"Selecting best train & class on IRCTC for {booking.from_station} ➔ {booking.to_station}...", ref)
 
-        # Attempt to auto-select train & class if available
-        train_num = booking.train_number
-        journey_cls = booking.journey_class or "3A"
         try:
-            # Look for train container
-            train_loc = page.locator(f"div.train-heading:has-text('{train_num}'), app-train-list:has-text('{train_num}'), div:has-text('{train_num}')").first
-            if await train_loc.count() > 0:
-                cls_loc = train_loc.locator(f"div:has-text('{journey_cls}'), span:has-text('{journey_cls}')").first
-                if await cls_loc.count() > 0:
-                    await cls_loc.click(timeout=3000, force=True)
-                    await asyncio.sleep(1.5)
+            await page.wait_for_selector("app-train-list, div.train-heading, div.form-group", timeout=8000)
+        except Exception:
+            pass
+        await asyncio.sleep(1.5)
+        await dismiss_overlays(page)
 
-            # Extract live fare if visible
-            live_fare = await extract_live_fare_from_page(page)
-            if live_fare:
-                booking.fare = live_fare
-                db.commit()
-                log_event(db, "INFO", "AUTOMATION", f"Live fare detected on IRCTC: ₹{live_fare:,.2f}", ref)
+        train_pref = (booking.train_number or "").strip()
+        journey_cls = (booking.journey_class or "3A").strip().upper()
 
-            # Look for 'Book Now' button
+        # Step 5a: Target a train card
+        target_train_card = None
+        if train_pref and train_pref != "12002":
+            card = page.locator(f"app-train-list:has-text('{train_pref}'), div.form-group:has-text('{train_pref}')").first
+            if await card.count() > 0:
+                target_train_card = card
+
+        # If no specific train matched, find the first train card with the requested class
+        if not target_train_card:
+            all_cards = page.locator("app-train-list, div.form-group:has(.train-heading)")
+            card_count = await all_cards.count()
+            for i in range(min(card_count, 12)):
+                c = all_cards.nth(i)
+                cls_elem = c.locator(f"div:has-text('{journey_cls}'), span:has-text('{journey_cls}'), .pre-avl:has-text('{journey_cls}')").first
+                if await cls_elem.count() > 0:
+                    target_train_card = c
+                    try:
+                        heading_txt = (await c.locator(".train-heading, .train-name").first.inner_text()).strip()
+                        num_m = re.search(r'\b\d{5}\b', heading_txt)
+                        if num_m:
+                            booking.train_number = num_m.group(0)
+                        booking.train_name = heading_txt.split('\n')[0].strip()
+                        db.commit()
+                        log_event(db, "INFO", "AUTOMATION", f"Auto-selected train: {booking.train_number} - {booking.train_name}", ref)
+                    except Exception:
+                        pass
+                    break
+
+        # Fallback to first train card on page
+        if not target_train_card:
+            first_c = page.locator("app-train-list, div.form-group:has(.train-heading)").first
+            if await first_c.count() > 0:
+                target_train_card = first_c
+
+        # Step 5b: Click the requested class tab on the chosen train
+        if target_train_card:
+            try:
+                cls_btn = target_train_card.locator(f"div:has-text('{journey_cls}'), span:has-text('{journey_cls}'), .pre-avl:has-text('{journey_cls}')").first
+                if await cls_btn.count() > 0:
+                    await cls_btn.click(timeout=3000, force=True)
+                    await asyncio.sleep(2)
+            except Exception as e:
+                log_event(db, "WARNING", "AUTOMATION", f"Class click note: {e}", ref)
+
+        # Step 5c: Extract live fare if visible
+        live_fare = await extract_live_fare_from_page(page)
+        if live_fare:
+            booking.fare = live_fare
+            db.commit()
+            log_event(db, "INFO", "AUTOMATION", f"Official IRCTC Fare: ₹{live_fare:,.2f}", ref)
+
+        # Step 5d: Click 'Book Now' automatically
+        try:
             book_now = page.locator("button:has-text('Book Now'), button.btn-primary:has-text('Book Now')").first
             if await book_now.count() > 0 and await book_now.is_visible():
                 await book_now.click(timeout=3000, force=True)
-                await asyncio.sleep(2)
+                await asyncio.sleep(2.5)
                 await dismiss_overlays(page)
         except Exception as e:
-            log_event(db, "WARNING", "AUTOMATION", f"Train selection auto-click note: {e}", ref)
+            log_event(db, "WARNING", "AUTOMATION", f"Book now click note: {e}", ref)
 
-        # If passenger input is not visible yet, pause briefly for user to confirm train
+        # Step 5e: If passenger input is not visible yet, pause with screenshot and action buttons
         if not await page.locator(NAVIGATION_SELECTORS["PASSENGER_NAME"]).count() > 0:
-            select_prompt = f"Train Selection: Please verify or click 'Book Now' for train {booking.train_number or ''} ({booking.journey_class}) in browser."
-            session_state.pause_for_user(select_prompt, is_payment=False)
+            train_bytes = None
+            try:
+                train_bytes = await page.screenshot()
+                if train_bytes:
+                    session_state.latest_screenshot_bytes = train_bytes
+                    (DATA_DIR / "latest_captcha.png").write_bytes(train_bytes)
+            except Exception:
+                pass
+
+            select_prompt = f"Train Selection: Please select your train / class and click 'Book Now' in browser."
+            session_state.pause_for_user(select_prompt, is_payment=False, screenshot_bytes=train_bytes)
             booking.status = "WAITING_MANUAL"
             db.commit()
             log_event(db, "INFO", "AUTOMATION", select_prompt, ref)
 
+            # Bring browser window to front
+            try:
+                await page.bring_to_front()
+                focus_browser_window()
+            except Exception:
+                pass
+
             if settings.TELEGRAM_ENABLED:
-                await send_telegram_message(format_action_required_telegram(booking, "Train & Class Selection"))
+                t_keyboard = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "✅ Maine 'Book Now' Click Kar Diya (Continue)", "callback_data": "action_continue"},
+                            {"text": "❌ Cancel", "callback_data": "action_cancel"}
+                        ]
+                    ]
+                }
+                caption = (
+                    f"🚆 *IRCTC Train & Class Selection* (Ref: `{ref}`)\n\n"
+                    f"Route: `{booking.from_station}` ➔ `{booking.to_station}` ({booking.journey_class})\n"
+                    f"Kripya browser me apni manpasand train par *'Book Now'* click karein aur phir neeche button dabayein:"
+                )
+                if train_bytes:
+                    await send_telegram_photo(photo_bytes=train_bytes, caption=caption, reply_markup=t_keyboard)
+                else:
+                    await send_telegram_message(caption, reply_markup=t_keyboard)
 
             await session_state.continue_event.wait()
             if session_state.cancel_event.is_set():

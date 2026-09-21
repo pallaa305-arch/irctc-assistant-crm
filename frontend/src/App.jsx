@@ -17,7 +17,7 @@ import Logs from './pages/Logs';
 import SystemStatus from './pages/SystemStatus';
 import PNRLiveTracking from './pages/PNRLiveTracking';
 
-import { getBookingState, sendBookingAction } from './services/api';
+import { getBookingState, sendBookingAction, fetchBookings } from './services/api';
 import { ShieldCheck, AlertTriangle, ArrowRight, CheckCircle2, Clock } from 'lucide-react';
 
 export default function App() {
@@ -37,6 +37,35 @@ export default function App() {
       document.documentElement.classList.remove('dark');
     }
   }, [darkMode]);
+
+  // Auto-discover any active booking triggered externally (e.g. from Telegram)
+  useEffect(() => {
+    let isSubscribed = true;
+    const checkActiveBookings = async () => {
+      try {
+        if (!activeBookingRef || (activeBookingState && ['CONFIRMED', 'FAILED', 'CANCELLED'].includes(activeBookingState.status))) {
+          const res = await fetchBookings({ limit: 5 });
+          if (isSubscribed && res && res.items) {
+            const active = res.items.find(b =>
+              ['WAITING_MANUAL', 'PAYMENT_PENDING', 'IN_PROGRESS', 'INITIATED'].includes(b.status)
+            );
+            if (active && active.booking_ref !== activeBookingRef) {
+              setActiveBookingRef(active.booking_ref);
+            }
+          }
+        }
+      } catch (err) {
+        // silent polling catch
+      }
+    };
+
+    checkActiveBookings();
+    const interval = setInterval(checkActiveBookings, 3000);
+    return () => {
+      isSubscribed = false;
+      clearInterval(interval);
+    };
+  }, [activeBookingRef, activeBookingState?.status]);
 
   // Poller for active booking state machine
   useEffect(() => {

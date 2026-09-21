@@ -1960,8 +1960,8 @@ class TelegramBotService:
             journey_date=j_date,
             journey_class=data.get("journey_class", "3A"),
             quota="GN",
-            train_number="12002",
-            train_name="Selected Train",
+            train_number=data.get("train_number") or "",
+            train_name=data.get("train_name") or "Auto-Selected Train",
             passenger_count=len(data.get("passengers", [])),
             status="INITIATED",
             payment_status="PENDING"
