@@ -17,11 +17,13 @@ def test_session_state_updates():
     assert session.journey_data["from_station"] == "NDLS"
 
 def test_session_message_history():
+    import uuid
+    s_id = f"s_hist_{uuid.uuid4().hex[:8]}"
     mgr = SessionManager()
-    mgr.get_or_create_session("s1", "web", "u1")
-    mgr.add_message("s1", "user", "Book train from Delhi to Jaipur")
-    mgr.add_message("s1", "assistant", "Searching trains...")
-    history = mgr.get_history("s1")
+    mgr.get_or_create_session(s_id, "web", "u1")
+    mgr.add_message(s_id, "user", "Book train from Delhi to Jaipur")
+    mgr.add_message(s_id, "assistant", "Searching trains...")
+    history = mgr.get_history(s_id)
     assert len(history) == 2
     assert history[0]["content"] == "Book train from Delhi to Jaipur"
     assert history[1]["content"] == "Searching trains..."
