@@ -1,6 +1,7 @@
 import React from 'react';
 import { 
   LayoutDashboard, 
+  Sparkles,
   Ticket, 
   History, 
   Users, 
@@ -17,7 +18,8 @@ import {
 export default function Sidebar({ currentTab, setTab, isOpen, setIsOpen }) {
   const navigation = [
     { id: 'dashboard', name: 'Dashboard', icon: LayoutDashboard },
-    { id: 'new-booking', name: 'New Booking', icon: Ticket, highlight: true },
+    { id: 'ai-assistant', name: 'AI Assistant', icon: Sparkles, highlight: true },
+    { id: 'new-booking', name: 'New Booking', icon: Ticket },
     { id: 'pnr-live-tracking', name: 'PNR & Live Train', icon: Radio },
     { id: 'booking-history', name: 'Booking History', icon: History },
     { id: 'crm', name: 'CRM', icon: Users },

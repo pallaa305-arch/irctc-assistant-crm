@@ -16,6 +16,7 @@ import Settings from './pages/Settings';
 import Logs from './pages/Logs';
 import SystemStatus from './pages/SystemStatus';
 import PNRLiveTracking from './pages/PNRLiveTracking';
+import AIAssistant from './pages/AIAssistant';
 
 import { getBookingState, sendBookingAction, fetchBookings } from './services/api';
 import { ShieldCheck, AlertTriangle, ArrowRight, CheckCircle2, Clock } from 'lucide-react';
@@ -166,6 +167,9 @@ export default function App() {
               setTab={setTab}
               onSelectBookingForTracking={handleSelectBookingForTracking}
             />
+          )}
+          {currentTab === 'ai-assistant' && (
+            <AIAssistant setTab={setTab} />
           )}
           {currentTab === 'new-booking' && (
             <NewBooking onBookingStarted={handleBookingStarted} />
