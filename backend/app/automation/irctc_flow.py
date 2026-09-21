@@ -18,21 +18,34 @@ from app.config import settings, DATA_DIR
 async def dismiss_overlays(page):
     """
     Automatically dismisses language selection dialogs, alert popups,
-    Senior citizen notices, COVID/KAVACH disclaimers, or lingering PrimeNG dialog overlays.
+    Senior citizen notices, COVID/KAVACH disclaimers, beta banners,
+    or lingering PrimeNG dialog overlays.
     """
     if not page:
         return
     for _ in range(4):
         dismissed = False
         try:
-            # 1. Preferred Language Selection Dialog ("Please select your preferred language [English] [हिंदी]")
+            # 1. Remove beta banner and any full-width promo banners via DOM
+            await page.evaluate('''() => {
+                const banners = document.querySelectorAll('div, section, app-header');
+                for (const b of banners) {
+                    if (b.innerText && (b.innerText.includes('Explore the beta') || b.innerText.includes('beta version'))) {
+                        b.remove();
+                    }
+                }
+                const masks = document.querySelectorAll('.custom-blur-mask, .ui-dialog-mask');
+                masks.forEach(m => m.remove());
+            }''')
+
+            # 2. Preferred Language Selection Dialog ("Please select your preferred language [English] [हिंदी]")
             lang_btns = page.locator("button:has-text('English'), a:has-text('English'), div.ui-dialog button:has-text('English')")
             if await lang_btns.count() > 0 and await lang_btns.first.is_visible():
                 await lang_btns.first.click(timeout=1500, force=True)
                 await asyncio.sleep(0.4)
                 dismissed = True
 
-            # 2. General alerts, disclaimers, OK / DISMISS / I Agree / Yes buttons
+            # 3. General alerts, disclaimers, OK / DISMISS / I Agree / Yes buttons
             general_selectors = [
                 "button:has-text('I Agree')",
                 "button:has-text('Yes')",
@@ -44,6 +57,7 @@ async def dismiss_overlays(page):
                 "button.btn-primary:has-text('OK')",
                 ".ui-dialog-titlebar-close",
                 "a[role='button']:has-text('×')",
+                "a[role='button']:has-text('x')",
                 "a.fa-window-close",
                 "span.fa-close"
             ]
@@ -53,21 +67,9 @@ async def dismiss_overlays(page):
                 for idx in range(min(cnt, 2)):
                     elem = loc.nth(idx)
                     if await elem.is_visible():
-                        await elem.click(timeout=1200, force=True)
+                        await elem.click(timeout=1000, force=True)
                         await asyncio.sleep(0.3)
                         dismissed = True
-
-            # 3. Remove custom blur masks if blocking interaction
-            mask = page.locator(".custom-blur-mask, .ui-dialog-mask")
-            if await mask.count() > 0 and await mask.first.is_visible():
-                try:
-                    await page.evaluate('''() => {
-                        const masks = document.querySelectorAll('.custom-blur-mask, .ui-dialog-mask');
-                        masks.forEach(m => m.style.display = 'none');
-                    }''')
-                    dismissed = True
-                except Exception:
-                    pass
         except Exception:
             pass
         if not dismissed:
@@ -81,7 +83,7 @@ async def extract_live_fare_from_page(page) -> Optional[float]:
     if not page:
         return None
     try:
-        # First evaluate via JS to find exact regex matches in DOM
+        # Evaluate via JS to inspect exact DOM elements
         js_fare = await page.evaluate('''() => {
             const selectors = [
                 '.fare-summary',
@@ -152,6 +154,19 @@ async def extract_live_fare_from_page(page) -> Optional[float]:
         pass
     return None
 
+async def check_logged_in_state(page) -> bool:
+    """Checks if the browser currently has an active authenticated IRCTC session."""
+    if not page:
+        return False
+    try:
+        indicators = ["a:has-text('LOGOUT')", "span:has-text('Welcome')", "span.user-name", "a:has-text('Logout')"]
+        for ind in indicators:
+            if await page.locator(ind).count() > 0:
+                return True
+    except Exception:
+        pass
+    return False
+
 async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_state: BookingSessionState):
     """
     Automates permitted IRCTC navigation while strictly handing over control
@@ -179,186 +194,159 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         log_event(db, "INFO", "AUTOMATION", f"Navigating to official IRCTC website: {URLS['HOME']}", ref)
         await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=45000)
         await asyncio.sleep(2)
-
-        # Automatically dismiss language selection dialog and any alert disclaimers
         await dismiss_overlays(page)
 
-        # Step 3: Check Login Status (Direct Login Support)
-        is_already_logged_in = False
-        try:
-            logged_in_indicator = page.locator("a:has-text('LOGOUT'), span:has-text('Welcome'), span.user-name")
-            if await logged_in_indicator.count() > 0:
-                is_already_logged_in = True
-                log_event(db, "INFO", "AUTOMATION", "Active IRCTC login session detected via persistent profile.", ref)
-        except Exception:
-            pass
+        # Step 3: Verified IRCTC Authentication
+        session_state.set_stage("CHECKING_LOGIN")
+        log_event(db, "INFO", "AUTOMATION", "Checking IRCTC login session...", ref)
 
-        if not is_already_logged_in:
-            login_btn = page.locator("a:has-text('LOGIN'), button:has-text('LOGIN')")
-            if await login_btn.count() > 0 and await login_btn.first.is_visible():
-                log_event(db, "INFO", "AUTOMATION", "Opening IRCTC login dialog...", ref)
+        is_logged_in = await check_logged_in_state(page)
+
+        if not is_logged_in:
+            log_event(db, "INFO", "AUTOMATION", "No active login session found. Navigating to IRCTC login...", ref)
+            try:
+                # Open login page directly
+                await page.goto(URLS["LOGIN"], wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
+            except Exception:
+                pass
+            await dismiss_overlays(page)
+
+            # Check if login form is on screen
+            user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
+            pass_input = page.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
+
+            # If user-login URL redirected to home or opened as modal
+            if await user_input.count() == 0:
+                login_btn = page.locator("a:has-text('LOGIN'), button:has-text('LOGIN'), a.loginText").first
+                if await login_btn.count() > 0:
+                    await login_btn.click(timeout=3000, force=True)
+                    await asyncio.sleep(2)
+                user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
+                pass_input = page.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
+
+            # Auto-fill credentials
+            if await user_input.count() > 0 and settings.IRCTC_USERNAME:
+                await user_input.fill("")
+                await user_input.fill(settings.IRCTC_USERNAME)
+                log_event(db, "INFO", "AUTOMATION", f"Auto-filled username: {settings.IRCTC_USERNAME[:4]}****", ref)
+
+            if await pass_input.count() > 0 and settings.IRCTC_PASSWORD:
+                await pass_input.fill("")
+                await pass_input.fill(settings.IRCTC_PASSWORD)
+
+            # Auto-tick "Login and Booking with OTP" if available
+            try:
+                otp_chk = page.locator("label:has-text('OTP'), #otpLogin, p-checkbox[label*='OTP' i], label[for='otpLogin']").first
+                if await otp_chk.count() > 0 and await otp_chk.is_visible():
+                    await otp_chk.click(timeout=1500, force=True)
+                    log_event(db, "INFO", "AUTOMATION", "Auto-selected OTP login option.", ref)
+            except Exception:
+                pass
+
+            # Try direct Sign In
+            sign_in_btn = page.locator("button:has-text('SIGN IN'), button[type='submit']").first
+            if await sign_in_btn.count() > 0:
+                await sign_in_btn.click(timeout=2000, force=True)
+                await asyncio.sleep(2)
+
+            is_logged_in = await check_logged_in_state(page)
+
+            # If CAPTCHA or OTP is required to finish login
+            if not is_logged_in:
+                cap_img = page.locator("app-captcha img, #captchaImg, img.captcha-img, img[alt*='captcha' i]").first
+                cap_input = page.locator("#nlpAnswer, input[formcontrolname='captcha'], input[placeholder*='captcha' i], #otp, input[formcontrolname='otp']").first
+
+                cap_bytes = None
                 try:
-                    await login_btn.first.click(timeout=3000, force=True)
-                    await asyncio.sleep(1.5)
+                    if await cap_img.count() > 0 and await cap_img.is_visible():
+                        await cap_img.scroll_into_view_if_needed()
+                        cap_bytes = await cap_img.screenshot(timeout=3000)
+                    else:
+                        cap_bytes = await page.screenshot()
                 except Exception:
                     pass
 
-            login_modal = page.locator("app-login, div.ui-dialog:has(input[formcontrolname='userid']), div.ui-dialog:has(#userId)").first
-            modal_open = (await login_modal.count() > 0)
-
-            if modal_open:
-                # 3a. Auto-fill Username
-                if settings.IRCTC_USERNAME:
+                if cap_bytes:
                     try:
-                        u_input = login_modal.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
-                        if await u_input.count() > 0:
-                            await u_input.fill(settings.IRCTC_USERNAME, timeout=3000)
-                    except Exception as e:
-                        log_event(db, "WARNING", "AUTOMATION", f"Could not auto-fill username: {e}", ref)
+                        (DATA_DIR / "latest_captcha.png").write_bytes(cap_bytes)
+                    except Exception:
+                        pass
 
-                # 3b. Auto-fill Password
-                if settings.IRCTC_PASSWORD:
-                    try:
-                        p_input = login_modal.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
-                        if await p_input.count() > 0:
-                            await p_input.fill(settings.IRCTC_PASSWORD, timeout=3000)
-                    except Exception as e:
-                        log_event(db, "WARNING", "AUTOMATION", f"Could not auto-fill password: {e}", ref)
+                session_state.set_stage("WAITING_MANUAL")
+                login_prompt = "IRCTC Login: Credentials auto-filled. Please solve visual CAPTCHA or OTP."
+                session_state.pause_for_user(login_prompt, is_payment=False, input_type="CAPTCHA", screenshot_bytes=cap_bytes)
+                booking.status = "WAITING_MANUAL"
+                db.commit()
+                log_event(db, "WARNING", "AUTOMATION", login_prompt, ref)
 
-                # 3c. Auto-tick OTP Checkbox
                 try:
-                    otp_checkbox = login_modal.locator("label:has-text('OTP'), p-checkbox[label*='OTP' i], label[for='otpLogin'], #otpLogin").first
-                    if await otp_checkbox.count() > 0:
-                        await otp_checkbox.click(timeout=2000, force=True)
-                        log_event(db, "INFO", "AUTOMATION", "Auto-ticked 'Login with OTP / Remember' checkbox.", ref)
-                except Exception as e:
-                    log_event(db, "WARNING", "AUTOMATION", f"OTP checkbox note: {e}", ref)
-
-                # 3d. Direct Login Attempt (Click SIGN IN immediately)
-                try:
-                    sign_in_btn = login_modal.locator("button:has-text('SIGN IN'), button[type='submit']").first
-                    if await sign_in_btn.count() > 0:
-                        await sign_in_btn.click(timeout=2000, force=True)
-                        await asyncio.sleep(2)
+                    await page.bring_to_front()
+                    focus_browser_window()
                 except Exception:
                     pass
 
-                # Check if direct login succeeded without CAPTCHA
-                for _ in range(4):
-                    if await page.locator("a:has-text('LOGOUT'), span:has-text('Welcome')").count() > 0:
-                        is_already_logged_in = True
-                        log_event(db, "INFO", "AUTOMATION", "Direct IRCTC login succeeded without requiring CAPTCHA.", ref)
+                if settings.TELEGRAM_ENABLED:
+                    t_keyboard = {
+                        "inline_keyboard": [
+                            [{"text": "✅ Login Ho Gaya (Continue)", "callback_data": "action_continue"}],
+                            [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
+                        ]
+                    }
+                    cap_caption = (
+                        f"🔐 *IRCTC Login Required* (Ref: `{ref}`)\n\n"
+                        f"ID (`{settings.IRCTC_USERNAME}`) aur Password auto-fill ho chuke hain.\n"
+                        f"👉 Kripya ye photo dekh kar CAPTCHA reply karein ya browser me login karke *'Login Ho Gaya'* dabayein:"
+                    )
+                    if cap_bytes:
+                        await send_telegram_photo(photo_bytes=cap_bytes, caption=cap_caption, reply_markup=t_keyboard)
+                    else:
+                        await send_telegram_message(cap_caption, reply_markup=t_keyboard)
+
+                done, pending = await asyncio.wait(
+                    [
+                        asyncio.create_task(session_state.continue_event.wait()),
+                        asyncio.create_task(session_state.input_event.wait())
+                    ],
+                    return_when=asyncio.FIRST_COMPLETED
+                )
+                for t in pending:
+                    t.cancel()
+
+                if session_state.cancel_event.is_set():
+                    booking.status = "CANCELLED"
+                    db.commit()
+                    return
+
+                if session_state.user_input_value and await cap_input.count() > 0:
+                    try:
+                        await cap_input.fill(session_state.user_input_value.strip())
+                        if await sign_in_btn.count() > 0:
+                            await sign_in_btn.click(timeout=3000, force=True)
+                            await asyncio.sleep(2.5)
+                    except Exception:
+                        pass
+
+                for _ in range(10):
+                    if await check_logged_in_state(page):
+                        is_logged_in = True
                         break
-                    await asyncio.sleep(0.8)
+                    await asyncio.sleep(1)
 
-                # 3e. Only pause if login did not succeed and CAPTCHA / OTP is actively waiting
-                if not is_already_logged_in:
-                    login_cap_img = login_modal.locator("app-captcha img, #captchaImg, img.captcha-img, img[alt*='captcha' i], .captcha-img").first
-                    login_cap_input = login_modal.locator("#nlpAnswer, input[formcontrolname='captcha'], input[placeholder*='captcha' i], #otp, input[formcontrolname='otp']").first
-
-                    if await login_modal.is_visible() and (await login_cap_input.count() > 0 or await login_cap_img.count() > 0):
-                        try:
-                            await login_cap_img.wait_for(state="visible", timeout=3000)
-                        except Exception:
-                            pass
-
-                        screenshot_bytes = None
-                        try:
-                            if await login_cap_img.count() > 0 and await login_cap_img.is_visible():
-                                screenshot_bytes = await login_cap_img.screenshot(timeout=3000)
-                            else:
-                                screenshot_bytes = await login_modal.screenshot(timeout=3000)
-                        except Exception:
-                            try:
-                                screenshot_bytes = await page.screenshot()
-                            except Exception:
-                                pass
-
-                        if screenshot_bytes:
-                            try:
-                                (DATA_DIR / "latest_captcha.png").write_bytes(screenshot_bytes)
-                            except Exception:
-                                pass
-
-                        session_state.set_stage("WAITING_MANUAL")
-                        login_prompt = "IRCTC Login: Credentials auto-filled. Please enter CAPTCHA/OTP or reply on Telegram."
-                        session_state.pause_for_user(login_prompt, is_payment=False, input_type="CAPTCHA", screenshot_bytes=screenshot_bytes)
-                        booking.status = "WAITING_MANUAL"
-                        db.commit()
-                        log_event(db, "WARNING", "AUTOMATION", login_prompt, ref)
-
-                        # Bring browser window to front
-                        try:
-                            await page.bring_to_front()
-                            focus_browser_window()
-                        except Exception:
-                            pass
-
-                        if settings.TELEGRAM_ENABLED:
-                            if screenshot_bytes:
-                                try:
-                                    await send_telegram_photo(
-                                        photo_bytes=screenshot_bytes,
-                                        caption=(
-                                            f"🔐 *IRCTC Login CAPTCHA / OTP* (Ref: `{ref}`)\n\n"
-                                            f"ID aur Password auto-fill ho gaye hain.\n"
-                                            f"👉 Kripya ye photo dekh kar CAPTCHA text ya OTP reply karein (Hum browser me auto-fill kar denge):"
-                                        )
-                                    )
-                                except Exception as e:
-                                    log_event(db, "WARNING", "AUTOMATION", f"Could not send login CAPTCHA photo: {e}", ref)
-                                    await send_telegram_message(format_action_required_telegram(booking, "IRCTC Login (Solve CAPTCHA/OTP)"))
-                            else:
-                                await send_telegram_message(format_action_required_telegram(booking, "IRCTC Login (Solve CAPTCHA/OTP)"))
-
-                        # Wait for user reply from Telegram or Web Dashboard
-                        done, pending = await asyncio.wait(
-                            [
-                                asyncio.create_task(session_state.continue_event.wait()),
-                                asyncio.create_task(session_state.input_event.wait())
-                            ],
-                            return_when=asyncio.FIRST_COMPLETED
-                        )
-                        for t in pending:
-                            t.cancel()
-
-                        if session_state.cancel_event.is_set():
-                            booking.status = "CANCELLED"
-                            db.commit()
-                            log_event(db, "INFO", "AUTOMATION", "Booking cancelled during login.", ref)
-                            return
-
-                        # If user replied with CAPTCHA/OTP text, auto-fill and submit
-                        if session_state.user_input_value:
-                            try:
-                                if await login_cap_input.count() > 0:
-                                    await login_cap_input.fill(session_state.user_input_value.strip())
-                                    log_event(db, "INFO", "AUTOMATION", "Auto-filled Login CAPTCHA/OTP received from user.", ref)
-                                    sign_in_btn = login_modal.locator("button:has-text('SIGN IN'), button[type='submit']").first
-                                    if await sign_in_btn.count() > 0:
-                                        await sign_in_btn.click(timeout=3000, force=True)
-                                        await asyncio.sleep(2)
-                            except Exception as e:
-                                log_event(db, "WARNING", "AUTOMATION", f"Could not auto-submit login: {e}", ref)
-
-                        for _ in range(4):
-                            if await page.locator("a:has-text('LOGOUT'), span:has-text('Welcome')").count() > 0:
-                                is_already_logged_in = True
-                                break
-                            await asyncio.sleep(1)
-
-        # Ensure no lingering dialogs or masks block the search form
-        await dismiss_overlays(page)
+        log_event(db, "INFO", "AUTOMATION", "IRCTC Login session confirmed. Proceeding to Train Search...", ref)
 
         # Step 4: Search Trains
         session_state.set_stage("SEARCHING_TRAINS")
+        booking.status = "IN_PROGRESS"
+        db.commit()
         log_event(db, "INFO", "AUTOMATION", f"Entering route: {booking.from_station} ➔ {booking.to_station}", ref)
 
-        try:
-            mask = page.locator(".custom-blur-mask, .ui-dialog-mask")
-            if await mask.count() > 0 and await mask.first.is_visible():
-                await dismiss_overlays(page)
+        if "/train-search" not in page.url:
+            await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=30000)
+            await asyncio.sleep(1.5)
+        await dismiss_overlays(page)
 
+        try:
             # From station
             from_input = page.locator("p-autocomplete[formcontrolname='origin'] input, #origin input, input[aria-label*='From' i]").first
             if await from_input.count() > 0:
@@ -399,10 +387,10 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
         # Step 5: Train & Class Selection
         session_state.set_stage("SELECTING_TRAIN")
-        log_event(db, "INFO", "AUTOMATION", f"Selecting train & class on IRCTC for {booking.from_station} ➔ {booking.to_station}...", ref)
+        log_event(db, "INFO", "AUTOMATION", f"Selecting train & class for {booking.from_station} ➔ {booking.to_station}...", ref)
 
-        # Wait for train cards to appear
-        for _ in range(12):
+        # Wait up to 15s for train list cards
+        for _ in range(15):
             await dismiss_overlays(page)
             if await page.locator("app-train-list, div.train-heading, div.form-group:has(.train-name)").count() > 0:
                 break
@@ -411,14 +399,12 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         train_pref = (booking.train_number or "").strip()
         journey_cls = (booking.journey_class or "3A").strip().upper()
 
-        # Step 5a: Target a train card
         target_train_card = None
         if train_pref and train_pref != "12002":
             card = page.locator(f"app-train-list:has-text('{train_pref}'), div.form-group:has-text('{train_pref}')").first
             if await card.count() > 0:
                 target_train_card = card
 
-        # If no specific train matched, find the first train card with the requested class
         if not target_train_card:
             all_cards = page.locator("app-train-list, div.form-group:has(.train-heading)")
             card_count = await all_cards.count()
@@ -439,13 +425,12 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         pass
                     break
 
-        # Fallback to first train card on page
         if not target_train_card:
             first_c = page.locator("app-train-list, div.form-group:has(.train-heading)").first
             if await first_c.count() > 0:
                 target_train_card = first_c
 
-        # Step 5b: Click the requested class tab on the chosen train
+        # Click class tab
         if target_train_card:
             try:
                 cls_btn = target_train_card.locator(f"div:has-text('{journey_cls}'), span:has-text('{journey_cls}'), .pre-avl:has-text('{journey_cls}')").first
@@ -455,7 +440,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             except Exception as e:
                 log_event(db, "WARNING", "AUTOMATION", f"Class click note: {e}", ref)
 
-        # Step 5c: Click date availability box if present (e.g. AVAILABLE, RAC, WL)
+        # Click date availability box
         try:
             avl_box = page.locator("div.pre-avl, div.avail-box, td:has-text('AVAILABLE'), td:has-text('RAC'), td:has-text('WL')").first
             if await avl_box.count() > 0 and await avl_box.is_visible():
@@ -464,25 +449,24 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         except Exception:
             pass
 
-        # Step 5d: Extract live fare if visible
+        # Extract live fare
         live_fare = await extract_live_fare_from_page(page)
         if live_fare:
             booking.fare = live_fare
             db.commit()
             log_event(db, "INFO", "AUTOMATION", f"Official IRCTC Live Fare: ₹{live_fare:,.2f}", ref)
 
-        # Step 5e: Click 'Book Now' automatically
+        # Click 'Book Now'
         try:
             book_now = page.locator("button:has-text('Book Now'), button.btn-primary:has-text('Book Now')").first
             if await book_now.count() > 0 and await book_now.is_visible():
                 await book_now.click(timeout=4000, force=True)
                 await asyncio.sleep(1.5)
-                # Auto-confirm any IRCTC post-click popups ("I Agree" / "Yes" / "OK")
                 await dismiss_overlays(page)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Book now click note: {e}", ref)
 
-        # Wait up to 10 seconds to see if page transitions to Passenger Input
+        # Wait up to 10 seconds for Passenger Input page
         arrived_at_passenger = False
         for _ in range(10):
             await dismiss_overlays(page)
@@ -491,11 +475,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 break
             await asyncio.sleep(1)
 
-        # Step 5f: If passenger input is not reached automatically, pause with screenshot and action buttons
+        # Pause only if passenger page not reached
         if not arrived_at_passenger:
             train_bytes = None
             try:
-                train_bytes = await page.screenshot()
+                # Scroll to train selection section before screenshot
+                await page.evaluate("window.scrollTo(0, 200)")
+                await asyncio.sleep(0.5)
+                train_bytes = await page.screenshot(full_page=False)
                 if train_bytes:
                     session_state.latest_screenshot_bytes = train_bytes
                     (DATA_DIR / "latest_captcha.png").write_bytes(train_bytes)
@@ -508,7 +495,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             db.commit()
             log_event(db, "INFO", "AUTOMATION", select_prompt, ref)
 
-            # Bring browser window to front
             try:
                 await page.bring_to_front()
                 focus_browser_window()
@@ -518,16 +504,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if settings.TELEGRAM_ENABLED:
                 t_keyboard = {
                     "inline_keyboard": [
-                        [
-                            {"text": "✅ Maine 'Book Now' Click Kar Diya (Continue)", "callback_data": "action_continue"},
-                            {"text": "❌ Cancel", "callback_data": "action_cancel"}
-                        ]
+                        [{"text": "✅ Maine 'Book Now' Click Kar Diya (Continue)", "callback_data": "action_continue"}],
+                        [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
                     ]
                 }
                 caption = (
                     f"🚆 *IRCTC Train & Class Selection* (Ref: `{ref}`)\n\n"
                     f"Route: `{booking.from_station}` ➔ `{booking.to_station}` ({booking.journey_class})\n"
-                    f"Kripya browser me apni manpasand train par *'Book Now'* click karein aur phir neeche button dabayein:"
+                    f"Kripya browser me apni train par *'Book Now'* click karein aur phir neeche button dabayein:"
                 )
                 if train_bytes:
                     await send_telegram_photo(photo_bytes=train_bytes, caption=caption, reply_markup=t_keyboard)
@@ -540,7 +524,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 db.commit()
                 return
 
-            # CRITICAL: Now that user clicked Continue, MUST wait for Passenger form to load!
+            # Wait for passenger form to load after manual click
             for _ in range(15):
                 await dismiss_overlays(page)
                 if "psgn-input" in page.url or await page.locator("input[placeholder*='Passenger Name' i], p-autocomplete[formcontrolname='passengerName'] input").count() > 0:
@@ -555,13 +539,11 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         passengers = db.query(BookingPassenger).filter(BookingPassenger.booking_id == booking.id).all()
         log_event(db, "INFO", "AUTOMATION", f"Entering details for {len(passengers)} passenger(s)...", ref)
 
-        # Ensure page is scrolled to passenger section
         try:
             await page.evaluate("window.scrollTo(0, 200)")
         except Exception:
             pass
 
-        # Wait up to 12s for passenger name field to be ready
         try:
             await page.wait_for_selector("input[placeholder*='Passenger Name' i], p-autocomplete[formcontrolname='passengerName'] input", timeout=12000)
         except Exception:
@@ -613,7 +595,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             except Exception:
                 pass
 
-        # Select Payment Mode on passenger page: BHIM/UPI (Convenience Fee: ₹20 + GST)
+        # Select Payment Mode: BHIM/UPI (Convenience Fee: ₹20 + GST)
         try:
             bhim_upi_radio = page.locator("p-radiobutton[value='2'], input[value='2'], label:has-text('BHIM/UPI'), div:has-text('Pay through BHIM/UPI')").first
             if await bhim_upi_radio.count() > 0:
@@ -622,7 +604,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         except Exception:
             pass
 
-        # Extract live fare from Passenger details summary if visible
+        # Live fare
         live_fare = await extract_live_fare_from_page(page)
         if live_fare:
             booking.fare = live_fare
@@ -637,30 +619,26 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 await cont_btn.click(timeout=4000, force=True)
                 await asyncio.sleep(2)
         except Exception as e:
-            log_event(db, "WARNING", "AUTOMATION", f"Passenger Continue button note: {e}", ref)
+            log_event(db, "WARNING", "AUTOMATION", f"Passenger Continue note: {e}", ref)
 
         # Step 7: Review Booking Page & Security Challenge Check
         session_state.set_stage("REVIEW_BOOKING")
         log_event(db, "INFO", "AUTOMATION", "Navigating to Review Booking page...", ref)
 
-        # Wait up to 12s for Review page or Payment page
-        arrived_at_review = False
         for _ in range(12):
             await dismiss_overlays(page)
             if "review-booking" in page.url or "payment" in page.url:
-                arrived_at_review = True
                 break
             if await page.locator("app-review-booking, div:has-text('Review Booking'), app-payment, app-captcha").count() > 0:
-                arrived_at_review = True
                 break
             await asyncio.sleep(1)
 
-        # Extract confirmed live total fare from Review page (including GST and convenience fees)
+        # Extract confirmed live total fare from Review page
         live_fare = await extract_live_fare_from_page(page)
         if live_fare:
             booking.fare = live_fare
             db.commit()
-            log_event(db, "INFO", "AUTOMATION", f"Confirmed Official IRCTC Total Fare (including taxes & fees): ₹{live_fare:,.2f}", ref)
+            log_event(db, "INFO", "AUTOMATION", f"Confirmed IRCTC Total Fare (with taxes & fees): ₹{live_fare:,.2f}", ref)
 
         # Check if CAPTCHA exists on Review page
         captcha_img_loc = page.locator("app-captcha img, #captchaImg, img.captcha-img, img[alt*='captcha' i]").first
@@ -699,7 +677,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             db.commit()
             log_event(db, "WARNING", "AUTOMATION", review_prompt, ref)
 
-            # Bring browser window to front
             try:
                 await page.bring_to_front()
                 focus_browser_window()
@@ -714,15 +691,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             photo_bytes=captcha_bytes,
                             caption=(
                                 f"📸 *IRCTC Review CAPTCHA* (Ref: `{ref}`){fare_tag}\n\n"
-                                f"Kripya ye photo dekh kar CAPTCHA text reply karein. Hum automatically ise browser me fill kar denge!"
+                                f"Kripya ye photo dekh kar CAPTCHA text reply karein. Hum automatically browser me fill kar denge!"
                             )
                         )
                     else:
                         await send_telegram_message(format_action_required_telegram(booking, "IRCTC Review CAPTCHA"))
                 except Exception as e:
-                    log_event(db, "WARNING", "AUTOMATION", f"Could not send CAPTCHA to Telegram: {e}", ref)
+                    log_event(db, "WARNING", "AUTOMATION", f"Could not send CAPTCHA: {e}", ref)
 
-            # Wait for user input from Telegram text reply or Web dashboard
             done, pending = await asyncio.wait(
                 [
                     asyncio.create_task(session_state.continue_event.wait()),
@@ -750,7 +726,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 except Exception as e:
                     log_event(db, "WARNING", "AUTOMATION", f"Could not auto-fill CAPTCHA: {e}", ref)
         else:
-            log_event(db, "INFO", "AUTOMATION", "Review CAPTCHA bypassed or not required. Proceeding directly to Payment Gateway.", ref)
+            log_event(db, "INFO", "AUTOMATION", "Review CAPTCHA bypassed or not required. Proceeding to Payment Gateway.", ref)
             try:
                 cont_btn = page.locator("button:has-text('Continue'), button[type='submit']:has-text('Continue'), button.btn-primary:has-text('Continue')").first
                 if await cont_btn.count() > 0 and await cont_btn.is_visible():
@@ -763,14 +739,12 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         session_state.set_stage("PAYMENT_PENDING")
         log_event(db, "INFO", "AUTOMATION", "Navigating to IRCTC Payment Gateway page...", ref)
 
-        # Wait up to 15s for Payment page to render
         for _ in range(15):
             await dismiss_overlays(page)
             if "payment" in page.url or await page.locator("app-payment, div:has-text('Payment Option'), div:has-text('Payment Method'), #bank-type").count() > 0:
                 break
             await asyncio.sleep(1)
 
-        # Scroll to top of payment page so upper payment cards are visible
         try:
             await page.evaluate("window.scrollTo(0, 0)")
         except Exception:
@@ -795,7 +769,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     await asyncio.sleep(1)
                     break
 
-            # Select UPI provider radio button (e.g. BHIM UPI / Paytm / Razorpay / iPay)
             provider_selectors = [
                 "p-radiobutton[name='paymentProvider']",
                 "input[name='paymentProvider']",
@@ -812,7 +785,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     await asyncio.sleep(0.8)
                     break
 
-            # Click 'Pay & Book'
             pay_btn = page.locator("button:has-text('Pay & Book'), button.btn-primary:has-text('Pay & Book'), button:has-text('Pay and Book'), button:has-text('Make Payment')").first
             if await pay_btn.count() > 0 and await pay_btn.is_visible():
                 await pay_btn.click(timeout=4000, force=True)
@@ -820,7 +792,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Payment method selection note: {e}", ref)
 
-        # Extract final payable amount from payment page
         final_fare = await extract_live_fare_from_page(page)
         if final_fare:
             booking.fare = final_fare
@@ -835,14 +806,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         db.commit()
         log_event(db, "WARNING", "AUTOMATION", pay_prompt, ref)
 
-        # Bring browser window to front
         try:
             await page.bring_to_front()
             focus_browser_window()
         except Exception:
             pass
 
-        # CRITICAL: WAIT FOR AND CAPTURE THE ACTUAL DYNAMIC UPI QR CODE
+        # WAIT FOR DYNAMIC UPI QR CODE
         qr_bytes = None
         qr_elem = None
         qr_locators = [
@@ -860,7 +830,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             "canvas"
         ]
 
-        # Poll for QR code element for up to 12 seconds
         for _ in range(12):
             for q_sel in qr_locators:
                 loc = page.locator(q_sel).first
@@ -869,7 +838,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     break
             if qr_elem:
                 break
-            # Also check if QR is inside an embedded payment iframe
             for frame in page.frames:
                 for q_sel in qr_locators:
                     f_loc = frame.locator(q_sel).first
@@ -882,7 +850,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 break
             await asyncio.sleep(1)
 
-        # 1. First priority: Crop the exact QR element
+        # 1. First priority: Crop exact QR element
         if qr_elem:
             try:
                 await qr_elem.scroll_into_view_if_needed()
@@ -890,7 +858,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             except Exception:
                 pass
 
-        # 2. Second priority: Crop the payment modal or dialog card
+        # 2. Second priority: Crop payment modal card
         if not qr_bytes:
             container_locators = [
                 "app-bhim-upi-qr",
@@ -932,10 +900,8 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             try:
                 qr_keyboard = {
                     "inline_keyboard": [
-                        [
-                            {"text": "✅ Payment Ho Gayi (Continue)", "callback_data": "action_continue"},
-                            {"text": "❌ Cancel", "callback_data": "action_cancel"}
-                        ]
+                        [{"text": "✅ Payment Ho Gayi (Continue)", "callback_data": "action_continue"}],
+                        [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
                     ]
                 }
                 caption = (
@@ -967,7 +933,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         log_event(db, "INFO", "AUTOMATION", "Detecting confirmation details from official IRCTC page...", ref)
         await asyncio.sleep(2)
 
-        # Scan for PNR in the current DOM
+        # Scan for PNR in DOM
         page_content = await page.content()
         pnr_match = re.search(r'\b[2-9]\d{9}\b', page_content)
         txn_match = re.search(r'TXN\w+|Transaction\s*ID[\s:]+(\w+)', page_content, re.IGNORECASE)

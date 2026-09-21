@@ -67,9 +67,10 @@ class BrowserManager:
                 "user_data_dir": profile_dir,
                 "headless": settings.BROWSER_HEADLESS,
                 "slow_mo": settings.BROWSER_SLOW_MO,
-                "no_viewport": True,
+                "viewport": {"width": 1366, "height": 768},
                 "args": [
                     "--start-maximized",
+                    "--window-size=1366,768",
                     "--disable-blink-features=AutomationControlled",
                     "--no-sandbox"
                 ],
