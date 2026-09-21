@@ -15,7 +15,6 @@ async def test_full_booking_e2e():
     db_cleanup.query(Booking).delete()
     db_cleanup.commit()
     db_cleanup.close()
-
     with TestClient(app) as client:
         # 1. Test Passenger CRUD
         p_resp = client.post("/api/passengers", json={

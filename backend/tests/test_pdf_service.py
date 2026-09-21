@@ -45,10 +45,12 @@ async def test_pdf_service_ticket_and_invoice_generation():
 
 @pytest.mark.asyncio
 async def test_booking_pdf_download_endpoints():
+    import uuid
     # Insert test booking in DB
     db = SessionLocal()
+    ref = f"BK-TEST-PDF-{uuid.uuid4().hex[:6]}"
     b = Booking(
-        booking_ref="BK-TEST-PDF-001",
+        booking_ref=ref,
         from_station="NDLS",
         to_station="BSB",
         boarding_station="NDLS",
