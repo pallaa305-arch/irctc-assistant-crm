@@ -145,9 +145,15 @@ export default function ManualActionModal({ state, onAction }) {
           )}
 
           {isPayment && (
-            <div className="text-center py-1">
-              <p className="text-xs text-zinc-600 dark:text-zinc-300">
-                📱 Kisi bhi UPI app (GPay, PhonePe, Paytm) se upar diya gaya QR scan karein aur payment karein.
+            <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-xl p-3.5 text-center space-y-1">
+              <p className="text-xs font-medium text-emerald-800 dark:text-emerald-300">
+                Official IRCTC Total Payable Amount:
+              </p>
+              <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+                {state.fare ? `₹${Number(state.fare).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'As per Official IRCTC Portal'}
+              </p>
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                📱 Kisi bhi UPI app (GPay, PhonePe, Paytm) se QR code scan karke exact yahi amount pay karein.
               </p>
             </div>
           )}

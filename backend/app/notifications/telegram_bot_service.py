@@ -1891,7 +1891,7 @@ class TelegramBotService:
                 f"• *तारीख (Date):* {j_date}\n"
                 f"• *श्रेणी (Class):* {j_cls} | कोटा: सामान्य (GN)\n"
                 f"• *यात्री (Passenger):* {pax_name} ({pax_age}/{pax_gender})\n"
-                f"• *अनुमानित किराया:* Rs. 1,450.00 (₹1,450.00)\n\n"
+                f"• *किराया (Fare):* As per IRCTC Live (वेबसाइट से लाइव चेक होगा)\n\n"
                 "क्या मैं IRCTC ऑटोमेशन बुकिंग शुरू करूँ?\n"
                 "नीचे *'✅ पुष्टि करें और बुक करें'* बटन दबाएं:"
             )
@@ -1904,7 +1904,7 @@ class TelegramBotService:
                 f"• *Date:* {j_date}\n"
                 f"• *Class:* {j_cls} | Quota: General (GN)\n"
                 f"• *Passenger:* {pax_name} ({pax_age}/{pax_gender})\n"
-                f"• *Est. Fare:* Rs. 1,450.00 (₹1,450.00)\n\n"
+                f"• *Fare:* As per IRCTC Live (Calculated dynamically on portal)\n\n"
                 "Should I start automated booking in IRCTC?\n"
                 "Tap *'✅ Confirm & Book'* below:"
             )
@@ -1917,7 +1917,7 @@ class TelegramBotService:
                 f"• *Date:* {j_date}\n"
                 f"• *Class:* {j_cls} | Quota: General (GN)\n"
                 f"• *Passenger:* {pax_name} ({pax_age}/{pax_gender})\n"
-                f"• *Est. Fare:* Rs. 1,450.00 (₹1,450.00)\n\n"
+                f"• *Fare:* As per IRCTC Live (IRCTC portal se live calculate hoga)\n\n"
                 "Kya main browser me booking automation shuru karun?\n"
                 "Neeche *'✅ Confirm & Book'* button dabayein:"
             )
