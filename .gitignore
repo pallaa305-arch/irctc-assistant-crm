@@ -12,6 +12,7 @@ __pycache__/
 *.pytest_cache/
 .coverage
 htmlcov/
+*.log
 
 # Node & Frontend
 node_modules/
@@ -33,14 +34,20 @@ data/bookings/bookings.xlsx
 data/tickets/
 data/invoices/
 data/*.png
-backend/test_*.png
-backend/scratch_debug_page.py
-PROMAX_*/
 
 # Playwright
 .playwright/
 test-results/
 data/browser_profile/
+
+# Build dist & standalone packages
+PROMAX_*/
+*.dist/
+
+# Scratch & debug files
+backend/scratch_debug_page.py
+backend/test_qr.png
+render_live_irctc.png
 
 # OS files
 .DS_Store
