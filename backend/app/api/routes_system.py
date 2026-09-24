@@ -67,3 +67,35 @@ async def get_page_diagnostics():
         }
     except Exception as e:
         return {"error": str(e)}
+
+@router.get("/diagnostics/inspect-login")
+async def inspect_login():
+    try:
+        page = await browser_manager.get_page()
+        elements = await page.evaluate('''() => {
+            const all = Array.from(document.querySelectorAll('*'));
+            const matching = all.filter(e => {
+                const t = (e.innerText || '').trim();
+                return t === 'LOGIN' || t === 'LOGIN / REGISTER';
+            });
+            return matching.map(e => ({
+                tagName: e.tagName,
+                className: e.className,
+                id: e.id,
+                innerText: (e.innerText || '').trim(),
+                href: e.getAttribute('href'),
+                onclick: e.getAttribute('onclick'),
+                rect: {
+                    x: e.getBoundingClientRect().x,
+                    y: e.getBoundingClientRect().y,
+                    width: e.getBoundingClientRect().width,
+                    height: e.getBoundingClientRect().height
+                },
+                outerHTML: e.outerHTML.substring(0, 300)
+            }));
+        }''')
+        return {"elements": elements}
+    except Exception as e:
+        import traceback
+        return {"error": f"{type(e).__name__}: {str(e)}", "trace": traceback.format_exc()}
+
