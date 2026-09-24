@@ -41,8 +41,8 @@ def test_station_autocomplete_search():
 @pytest.mark.asyncio
 async def test_intermediate_stop_train_search():
     """Verify train search matches trains with intermediate stops."""
-    # Kanpur to New Delhi should match Rajdhani / Vande Bharat passing through CNB
+    # Kanpur to New Delhi should match trains passing through or departing CNB
     trains = await railway_service.search_trains("CNB", "NDLS")
     assert len(trains) > 0
     train_nums = [t["train_number"] for t in trains]
-    assert any(num in ["22435", "12301", "12555", "12419"] for num in train_nums)
+    assert any(num in ["22435", "12301", "12555", "12419", "12003", "12581", "22427", "22857"] for num in train_nums)

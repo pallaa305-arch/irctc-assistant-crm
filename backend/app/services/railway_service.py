@@ -336,7 +336,9 @@ class RailwayService:
         from_code: str,
         to_code: str,
         journey_date: str,
-        quota: str = "GN"
+        quota: str = "GN",
+        classes: Optional[List[str]] = None,
+        train_name: Optional[str] = None
     ) -> Dict[str, Any]:
         """
         Calculates realistic, live IRCTC-standard seat availability, status (Available/RAC/WL),
@@ -344,8 +346,9 @@ class RailwayService:
         """
         clean_no = re.sub(r'\D', '', train_number.strip())
         train_info = KNOWN_TRAINS.get(clean_no, {})
-        t_name = train_info.get("train_name", f"EXPRESS #{clean_no}")
-        classes = train_info.get("classes", ["SL", "3A", "2A", "1A"])
+        t_name = train_name or train_info.get("train_name", f"EXPRESS #{clean_no}")
+        if not classes:
+            classes = train_info.get("classes", ["SL", "3A", "2A", "1A"])
 
         CLASS_METADATA = {
             "2S": {"name": "Second Sitting (2S)", "base": 180, "res": 15, "sf": 0, "tax": 0, "is_ac": False},
@@ -449,7 +452,7 @@ class RailwayService:
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
                 "Referer": "https://erail.in/"
             }
-            async with httpx.AsyncClient(timeout=4.0) as client:
+            async with httpx.AsyncClient(timeout=5.0) as client:
                 resp = await client.get(url, headers=headers)
                 if resp.status_code == 200 and "^" in resp.text:
                     parts = resp.text.split("^")
@@ -458,12 +461,18 @@ class RailwayService:
                         if len(fields) >= 14:
                             t_no = fields[0].strip()
                             t_name = fields[1].strip()
-                            dep_raw = fields[10].strip() if len(fields) > 10 else "08.00"
-                            arr_raw = fields[11].strip() if len(fields) > 11 else "18.00"
+                            # Exact departure and arrival for query station
+                            dep_raw = fields[10].strip() if len(fields) > 10 else ""
+                            arr_raw = fields[11].strip() if len(fields) > 11 else ""
                             dur_raw = fields[12].strip() if len(fields) > 12 else ""
-                            dep = dep_raw.replace(".", ":")
-                            arr = arr_raw.replace(".", ":")
+                            dep = dep_raw.replace(".", ":") if dep_raw else "--:--"
+                            arr = arr_raw.replace(".", ":") if arr_raw else "--:--"
                             dur = f"{dur_raw.replace('.', 'h ')}m" if dur_raw else "--"
+
+                            # Query station names from feed:
+                            # fields[6] is from_station_name, fields[8] is to_station_name
+                            from_name = fields[6].strip() if len(fields) > 6 and fields[6].strip() else station_cache.get_station_name(fc)
+                            to_name = fields[8].strip() if len(fields) > 8 and fields[8].strip() else station_cache.get_station_name(tc)
 
                             # Extract available classes if present in field 62
                             classes = []
@@ -478,15 +487,15 @@ class RailwayService:
                                 "train_number": t_no,
                                 "train_name": t_name,
                                 "from_station": fc,
-                                "from_station_name": fields[2].strip() if len(fields) > 2 else station_cache.get_station_name(fc),
+                                "from_station_name": from_name,
                                 "to_station": tc,
-                                "to_station_name": fields[4].strip() if len(fields) > 4 else station_cache.get_station_name(tc),
+                                "to_station_name": to_name,
                                 "departure_time": dep,
                                 "arrival_time": arr,
                                 "duration": dur,
                                 "classes": classes
                             })
-                            if len(matched) >= 6:
+                            if len(matched) >= 12:
                                 break
         except Exception:
             pass
@@ -506,39 +515,9 @@ class RailwayService:
                     if fc_idx < tc_idx and t_data not in matched:
                         matched.append(dict(t_data))
 
-        # 3. Fallback synthesis if no match
-        if not matched:
-            fn = station_cache.get_station_name(fc)
-            tn = station_cache.get_station_name(tc)
-            matched = [
-                {
-                    "train_number": "12952",
-                    "train_name": f"{fn} - {tn} SUPERFAST SF",
-                    "from_station": fc,
-                    "from_station_name": fn,
-                    "to_station": tc,
-                    "to_station_name": tn,
-                    "departure_time": "06:00",
-                    "arrival_time": "14:30",
-                    "duration": "08h 30m",
-                    "classes": ["3A", "2A", "SL"]
-                },
-                {
-                    "train_number": "22436",
-                    "train_name": f"{fn} - {tn} VANDE BHARAT",
-                    "from_station": fc,
-                    "from_station_name": fn,
-                    "to_station": tc,
-                    "to_station_name": tn,
-                    "departure_time": "15:00",
-                    "arrival_time": "21:30",
-                    "duration": "06h 30m",
-                    "classes": ["CC", "EC"]
-                }
-            ]
-
-        # Augment each train with timing slots, Tatkal metadata, and live coach availability
-        for tr in matched[:6]:
+        # 3. Augment each matched train with timing slots, Tatkal metadata, and live coach availability
+        # (NO FAKE SYNTHESIS FALLBACK - Return empty list if no genuine trains exist)
+        for tr in matched[:10]:
             dep = tr.get("departure_time", "08:00")
             slot_info = self._get_timing_slot(dep)
             tr["timing_slot"] = slot_info["slot"]
@@ -552,11 +531,13 @@ class RailwayService:
                 from_code=fc,
                 to_code=tc,
                 journey_date=j_date,
-                quota="GN"
+                quota="GN",
+                classes=tr.get("classes"),
+                train_name=tr.get("train_name")
             )
             tr["coaches"] = avail.get("coaches", [])
 
-        return matched[:6]
+        return matched[:10]
 
     # ---------------- Telegram Formatters in 3 Languages ---------------- #
 

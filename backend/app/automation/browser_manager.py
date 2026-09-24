@@ -114,6 +114,22 @@ class BrowserManager:
                     **launch_args
                 )
 
+        # Stealth and speed optimizer route
+        async def _speed_optimizer_route(route):
+            # Speed optimizer route: bypass heavy analytics and trackers while preserving captcha
+            url = route.request.url.lower()
+            if any(block in url for block in ["google-analytics", "doubleclick", "googletagmanager"]):
+                await route.abort()
+            else:
+                await route.continue_()
+
+        try:
+            await self.context.route("**/*", _speed_optimizer_route)
+            # navigator.webdriver stealth spoof
+            await self.context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined}); navigator.webdriver = undefined;")
+        except Exception:
+            pass
+
         if self.context.pages:
             self.page = self.context.pages[0]
         else:

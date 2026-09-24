@@ -2780,5 +2780,86 @@
       "KOLKATA SHALIMAR",
       "SHM"
     ]
+  },
+  {
+    "code": "KMNC",
+    "name": "Kuchaman City",
+    "hindi": "कुचामन सिटी",
+    "city": "Kuchaman",
+    "state": "Rajasthan",
+    "aliases": [
+      "KUCHAMAN",
+      "KUCHAMAN CITY",
+      "KMNC",
+      "KCR"
+    ]
+  },
+  {
+    "code": "MKN",
+    "name": "Makrana Junction",
+    "hindi": "मकराना",
+    "city": "Makrana",
+    "state": "Rajasthan",
+    "aliases": [
+      "MAKRANA",
+      "MKN"
+    ]
+  },
+  {
+    "code": "BER",
+    "name": "Beawar",
+    "hindi": "ब्यावर",
+    "city": "Beawar",
+    "state": "Rajasthan",
+    "aliases": [
+      "BEAWAR",
+      "BER"
+    ]
+  },
+  {
+    "code": "MTD",
+    "name": "Merta Road Junction",
+    "hindi": "मेड़ता रोड",
+    "city": "Merta",
+    "state": "Rajasthan",
+    "aliases": [
+      "MERTA",
+      "MERTA ROAD",
+      "MTD"
+    ]
+  },
+  {
+    "code": "NOK",
+    "name": "Nokha",
+    "hindi": "नोखा",
+    "city": "Nokha",
+    "state": "Rajasthan",
+    "aliases": [
+      "NOKHA",
+      "NOK"
+    ]
+  },
+  {
+    "code": "GGC",
+    "name": "Gangapur City",
+    "hindi": "गंगापुर सिटी",
+    "city": "Gangapur",
+    "state": "Rajasthan",
+    "aliases": [
+      "GANGAPUR",
+      "GANGAPUR CITY",
+      "GGC"
+    ]
+  },
+  {
+    "code": "DO",
+    "name": "Dausa",
+    "hindi": "दौसा",
+    "city": "Dausa",
+    "state": "Rajasthan",
+    "aliases": [
+      "DAUSA",
+      "DO"
+    ]
   }
 ]

@@ -50,6 +50,25 @@ class StationMasterCache:
         "PRAYAGRAJ": "PRYJ",
         "ALLAHABAD": "PRYJ",
         "AYODHYA": "AY",
+        "JAIPUR": "JP",
+        "KUCHAMAN": "KMNC",
+        "KUCHAMAN CITY": "KMNC",
+        "KMNC": "KMNC",
+        "KCR": "KMNC",
+        "KOTA": "KOTA",
+        "AJMER": "AII",
+        "JODHPUR": "JU",
+        "BIKANER": "BKN",
+        "UDAIPUR": "UDZ",
+        "SURAT": "ST",
+        "PUNE": "PUNE",
+        "CHANDIGARH": "CDG",
+        "AMRITSAR": "ASR",
+        "GWALIOR": "GWL",
+        "KANPUR": "CNB",
+        "GORAKHPUR": "GKP",
+        "INDORE": "INDB",
+        "RAIPUR": "R",
     }
 
     def _load_datasets(self):
@@ -106,24 +125,30 @@ class StationMasterCache:
         if not q:
             return None
 
-        # 1. Direct code or alias hit
+        # 1. Primary hubs priority
+        if q in self.PRIMARY_HUBS:
+            return self.PRIMARY_HUBS[q]
+
+        # 2. Direct code or alias hit
         if q in self.station_alias_map:
             return self.station_alias_map[q]
 
-        # 2. Check if query is already a known station code
+        # 3. Check if query is already a known station code
         if q in self.stations_by_code:
             return q
 
-        # 3. Substring matching in aliases
+        # 4. Exact word match in aliases
         for alias, code in self.station_alias_map.items():
             if q == alias or q in alias.split():
                 return code
 
+        # 5. Safe prefix or substring match (only if length >= 3 to prevent false positives)
         for alias, code in self.station_alias_map.items():
-            if len(q) >= 3 and (q in alias or alias in q):
-                return code
+            if len(q) >= 3 and len(alias) >= 3:
+                if q in alias or alias.startswith(q) or q.startswith(alias):
+                    return code
 
-        # If nothing matched, return the uppercase query if it looks like a valid code
+        # 6. Fallback: If it looks like a valid 2-5 letter station code, return it for live railway lookup
         if 2 <= len(q) <= 5 and q.isalpha():
             return q
 

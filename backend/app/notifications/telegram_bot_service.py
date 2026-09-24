@@ -19,6 +19,7 @@ from app.notifications.telegram import (
     format_booking_confirmation_telegram
 )
 from app.services.railway_service import railway_service
+from app.services.station_cache import station_cache
 from app.services.pdf_service import pdf_service
 from app.notifications.telegram_channel_adapter import telegram_adapter
 
@@ -38,6 +39,10 @@ CITY_STATION_MAP = {
     "ahmedabad": "ADI", "adi": "ADI",
     "pune": "PUNE", "pune": "PUNE",
     "jaipur": "JP", "jp": "JP",
+    "kuchaman": "KMNC", "kuchaman city": "KMNC", "kmnc": "KMNC", "kcr": "KMNC",
+    "makrana": "MKN", "mkn": "MKN", "degana": "DNA", "dna": "DNA",
+    "kota": "KOTA", "ajmer": "AII", "jodhpur": "JU", "bikaner": "BKN", "udaipur": "UDZ",
+    "alwar": "AWR", "dausa": "DO", "beawar": "BER", "mathura": "MTJ", "gorakhpur": "GKP",
     "chandigarh": "CDG", "cdg": "CDG",
     "amritsar": "ASR", "asr": "ASR",
     "goa": "MAO", "madgaon": "MAO", "mao": "MAO",
@@ -45,18 +50,33 @@ CITY_STATION_MAP = {
     "agra": "AGC", "agc": "AGC",
     "gwalior": "GWL", "gwl": "GWL",
     "nagpur": "NGP", "ngp": "NGP",
-    "surat": "ST", "st": "ST"
+    "surat": "ST", "st": "ST",
+    "indore": "INDB", "indb": "INDB",
+    "raipur": "R"
 }
 
 def resolve_station(text: str) -> Optional[str]:
-    clean = text.strip().lower()
+    if not text:
+        return None
+    clean = text.strip()
+
+    # 1. Use Master Station Cache (Handles 250+ stations, Hindi names, aliases, hubs)
+    resolved = station_cache.resolve_station_code(clean)
+    if resolved:
+        return resolved
+
+    # 2. Check local quick city map
+    clean_lower = clean.lower()
+    if clean_lower in CITY_STATION_MAP:
+        return CITY_STATION_MAP[clean_lower]
     if clean.upper() in CITY_STATION_MAP.values():
         return clean.upper()
-    if clean in CITY_STATION_MAP:
-        return CITY_STATION_MAP[clean]
-    # Check if station code
-    if len(clean) in [3, 4, 5] and clean.isalpha():
-        return clean.upper()
+
+    # 3. Check if standard 2-5 letter station code for live railway lookup
+    clean_alpha = re.sub(r'[^a-zA-Z]', '', clean).upper()
+    if 2 <= len(clean_alpha) <= 5:
+        return clean_alpha
+
     return None
 
 def parse_date_natural(text: str) -> Optional[str]:
@@ -1917,20 +1937,36 @@ class TelegramBotService:
         if not trains:
             fn = station_cache.get_station_name(from_stn) or from_stn
             tn = station_cache.get_station_name(to_stn) or to_stn
-            trains = [
-                {
-                    "train_number": "12952",
-                    "train_name": f"{fn} - {tn} SF EXPRESS",
-                    "departure_time": "16:55",
-                    "arrival_time": "08:35",
-                    "duration": "15h 40m",
-                    "coaches": [
-                        {"class_code": "3A", "status_display": "AVAILABLE 24", "color": "emerald", "fare": 1040},
-                        {"class_code": "2A", "status_display": "AVAILABLE 12", "color": "emerald", "fare": 1510},
-                        {"class_code": "SL", "status_display": "AVAILABLE 45", "color": "emerald", "fare": 395}
-                    ]
-                }
-            ]
+            cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
+            keyboard = {"inline_keyboard": [[{"text": cancel_txt, "callback_data": "cancel_book"}]]}
+            if chat_id in user_chat_states:
+                user_chat_states[chat_id]["step"] = "ASK_ROUTE_MANUAL"
+
+            if lang == "hi":
+                msg = (
+                    f"⚠️ *कोई सीधी ट्रेन नहीं मिली (No Direct Trains Found)*\n\n"
+                    f"📍 मार्ग: *{fn} ({from_stn}) ➔ {tn} ({to_stn})*\n"
+                    f"📅 तारीख: `{j_date}`\n\n"
+                    f"इस मार्ग पर भारतीय रेलवे की कोई डायरेक्ट ट्रेन उपलब्ध नहीं है, या स्टेशन कोड में कोई त्रुटि हो सकती है।\n\n"
+                    f"👉 कृपया सही स्टेशन या नजदीकी मुख्य स्टेशन का नाम लिखें (जैसे: *Jaipur to Kuchaman*, *JP to KMNC*, *Delhi to Varanasi*):"
+                )
+            elif lang == "en":
+                msg = (
+                    f"⚠️ *No Direct Trains Found*\n\n"
+                    f"📍 Route: *{fn} ({from_stn}) ➔ {tn} ({to_stn})*\n"
+                    f"📅 Date: `{j_date}`\n\n"
+                    f"No direct trains found on this route, or station code might need verification.\n\n"
+                    f"👉 Please type your route with correct station name or code (e.g.: *Jaipur to Kuchaman*, *JP to KMNC*, *Delhi to Varanasi*):"
+                )
+            else:
+                msg = (
+                    f"⚠️ *Koi Direct Train Nahi Mili (No Direct Trains Found)*\n\n"
+                    f"📍 Route: *{fn} ({from_stn}) ➔ {tn} ({to_stn})*\n"
+                    f"📅 Date: `{j_date}`\n\n"
+                    f"Is route par koi direct train nahi mili. Kripya sahi station name ya code likhein (jaise: *Jaipur to Kuchaman*, *JP to KMNC*, *Delhi to Varanasi*):"
+                )
+            await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
+            return
 
         # Save trains list into user state for serial number or name selection
         if chat_id not in user_chat_states:
@@ -1942,7 +1978,7 @@ class TelegramBotService:
         keyboard = {"inline_keyboard": [[{"text": cancel_txt, "callback_data": "cancel_book"}]]}
 
         train_entries = []
-        for idx, t in enumerate(trains[:6], start=1):
+        for idx, t in enumerate(trains[:8], start=1):
             t_num = t.get("train_number", "")
             t_name = t.get("train_name", "")
             dep = t.get("departure_time", "--")
@@ -2012,12 +2048,19 @@ class TelegramBotService:
         if t_num == "ANY":
             t_num = "12628"
 
+        train_list = data.get("train_list", [])
+        matched_tr = next((tr for tr in train_list if tr.get("train_number") == t_num), None)
+        tr_classes = matched_tr.get("classes") if matched_tr else None
+        tr_name = matched_tr.get("train_name") if matched_tr else None
+
         avail = railway_service.get_seat_availability(
             train_number=t_num,
             from_code=from_stn,
             to_code=to_stn,
             journey_date=j_date,
-            quota=quota
+            quota=quota,
+            classes=tr_classes,
+            train_name=tr_name
         )
         t_name = avail.get("train_name", f"Express #{t_num}")
         coaches = avail.get("coaches", [])
