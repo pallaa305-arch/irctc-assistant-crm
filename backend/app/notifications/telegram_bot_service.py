@@ -1387,7 +1387,7 @@ class TelegramBotService:
                 [{"text": "🎫 नई टिकट बुक करें", "callback_data": "cmd_book"}],
                 [{"text": "🔍 PNR स्टेटस चेक", "callback_data": "cmd_pnr"}, {"text": "📍 लाइव ट्रेन स्थिति", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 वर्तमान स्थिति", "callback_data": "cmd_status"}, {"text": f"⚙️ मोड: {mode_label}", "callback_data": "cmd_mode"}],
-                [{"text": "👥 सहेजे गए यात्री", "callback_data": "cmd_passengers"}, {"text": "📍 मुख्य मार्ग (Routes)", "callback_data": "cmd_routes"}],
+                [{"text": "👥 सहेजे गए यात्री", "callback_data": "cmd_passengers"}],
                 [{"text": "🌐 भाषा बदलें (Language)", "callback_data": "cmd_lang"}, {"text": "❌ रद्द करें", "callback_data": "cmd_cancel"}]
             ]
         elif lang == "en":
@@ -1407,7 +1407,7 @@ class TelegramBotService:
                 [{"text": "🎫 Book New Ticket", "callback_data": "cmd_book"}],
                 [{"text": "🔍 Check PNR Status", "callback_data": "cmd_pnr"}, {"text": "📍 Live Train Status", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": f"⚙️ Mode: {mode_label}", "callback_data": "cmd_mode"}],
-                [{"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}, {"text": "📍 Popular Routes", "callback_data": "cmd_routes"}],
+                [{"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
                 [{"text": "🌐 Change Language", "callback_data": "cmd_lang"}, {"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
             ]
         else:  # Hinglish
@@ -1427,7 +1427,7 @@ class TelegramBotService:
                 [{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}],
                 [{"text": "🔍 PNR Status Check", "callback_data": "cmd_pnr"}, {"text": "📍 Live Train Status", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": f"⚙️ Mode: {mode_label}", "callback_data": "cmd_mode"}],
-                [{"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}, {"text": "📍 Saved Routes", "callback_data": "cmd_routes"}],
+                [{"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
                 [{"text": "🌐 Bhasha Badlein (Language)", "callback_data": "cmd_lang"}, {"text": "❌ Cancel Request", "callback_data": "cmd_cancel"}]
             ]
         await send_telegram_message(welcome, chat_id=chat_id, reply_markup={"inline_keyboard": buttons})
@@ -1737,38 +1737,12 @@ class TelegramBotService:
             await send_telegram_message(f"{title}\n" + "\n".join(lines), chat_id=chat_id, reply_markup=keyboard)
 
     async def _send_routes(self, chat_id: str):
-        lang = user_languages.get(chat_id, "hinglish")
-        db = SessionLocal()
-        routes = db.query(SavedJourney).all()
-        db.close()
-        btn_menu = "🏠 मुख्य मेनू" if lang == "hi" else ("🏠 Main Menu" if lang == "en" else "🏠 Main Menu")
-        if not routes:
-            keyboard = {"inline_keyboard": [[{"text": btn_menu, "callback_data": "cmd_menu"}]]}
-            await send_telegram_message("Koi saved route nahi hai.", chat_id=chat_id, reply_markup=keyboard)
-        else:
-            buttons = []
-            for r in routes:
-                buttons.append([{"text": f"🚀 {r.label} ({r.from_station} ➔ {r.to_station})", "callback_data": f"route_{r.from_station}_{r.to_station}"}])
-            buttons.append([{"text": btn_menu, "callback_data": "cmd_menu"}])
-            if lang == "hi":
-                title = "📍 *भारत के मुख्य लोकप्रिय रेल मार्ग:*\nनीचे किसी भी मार्ग पर टैप करें या चैट में नया मार्ग लिखें:"
-            elif lang == "en":
-                title = "📍 *Top Popular Train Routes of India:*\nTap any route below or type a custom route in chat:"
-            else:
-                title = "📍 *Top Popular Routes of India:*\nNeeche kisi bhi route par tap karein ya chat me naya route likhein:"
-            await send_telegram_message(title, chat_id=chat_id, reply_markup={"inline_keyboard": buttons})
+        await self._ask_route(chat_id)
 
     async def _ask_route(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
-        db = SessionLocal()
-        saved = db.query(SavedJourney).limit(4).all()
-        db.close()
-
-        buttons = []
-        for r in saved:
-            buttons.append([{"text": f"📍 {r.label} ({r.from_station} ➔ {r.to_station})", "callback_data": f"route_{r.from_station}_{r.to_station}"}])
         cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
-        buttons.append([{"text": cancel_txt, "callback_data": "cancel_book"}])
+        buttons = [[{"text": cancel_txt, "callback_data": "cancel_book"}]]
 
         keyboard = {"inline_keyboard": buttons}
         user_chat_states[chat_id] = {"step": "ASK_ROUTE_MANUAL", "data": {}}
@@ -1776,23 +1750,26 @@ class TelegramBotService:
         if lang == "hi":
             msg = (
                 "🚆 *कहाँ से कहाँ यात्रा करनी है?*\n\n"
-                "👉 *विकल्प 1 (बटन):* नीचे दिया गया मुख्य मार्ग चुनें।\n"
-                "💬 *विकल्प 2 (चैट):* सीधे लिखें, जैसे:\n"
-                "`Delhi to Varanasi` या `NDLS to BSB`"
+                "चैट में स्टेशन का नाम या कोड लिखें, जैसे:\n"
+                "• `Delhi to Varanasi`\n"
+                "• `NDLS to BSB`\n"
+                "• `Mumbai to Lucknow`"
             )
         elif lang == "en":
             msg = (
                 "🚆 *Where would you like to travel?*\n\n"
-                "👉 *Option 1 (Buttons):* Select a popular route below.\n"
-                "💬 *Option 2 (Chat):* Type origin and destination, e.g.:\n"
-                "`Delhi to Varanasi` or `NDLS to BSB`"
+                "Type origin and destination in chat, e.g.:\n"
+                "• `Delhi to Varanasi`\n"
+                "• `NDLS to BSB`\n"
+                "• `Mumbai to Lucknow`"
             )
         else:
             msg = (
                 "🚆 *Kahan se kahan travel karna hai?*\n\n"
-                "👉 *Option 1 (Button):* Neeche popular route select karein.\n"
-                "💬 *Option 2 (Manual Chat):* Seedha likhein, jaise:\n"
-                "`Delhi to Varanasi` ya `NDLS to BSB`"
+                "Chat me seedha likhein, jaise:\n"
+                "• `Delhi to Varanasi`\n"
+                "• `NDLS to BSB`\n"
+                "• `Mumbai to Lucknow`"
             )
         await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
