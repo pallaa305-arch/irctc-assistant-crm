@@ -189,3 +189,25 @@ export async function searchTrains(fromStation, toStation) {
   if (!res.ok) throw new Error(json.detail || 'Train search failed');
   return json;
 }
+
+export async function searchStations(query) {
+  const res = await fetch(`${API_BASE}/railway/stations?q=${encodeURIComponent(query)}`);
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.detail || 'Station search failed');
+  return json;
+}
+
+export async function fetchSeatAvailability(trainNumber, fromStation, toStation, journeyDate, quota = 'GN') {
+  const params = new URLSearchParams({
+    train_number: trainNumber,
+    from_station: fromStation,
+    to_station: toStation,
+    journey_date: journeyDate,
+    quota: quota
+  });
+  const res = await fetch(`${API_BASE}/railway/availability?${params.toString()}`);
+  const json = await res.json();
+  if (!res.ok) throw new Error(json.detail || 'Failed to fetch seat availability');
+  return json;
+}
+

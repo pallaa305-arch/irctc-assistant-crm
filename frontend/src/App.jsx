@@ -24,18 +24,24 @@ import { ShieldCheck, AlertTriangle, ArrowRight, CheckCircle2, Clock } from 'luc
 export default function App() {
   const [currentTab, setTab] = useState('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [darkMode, setDarkMode] = useState(false);
+  const [darkMode, setDarkMode] = useState(() => {
+    const saved = localStorage.getItem('irctc_theme');
+    if (saved) return saved === 'dark';
+    return true; // Modern dark glass theme by default
+  });
 
   // Active booking tracking
   const [activeBookingRef, setActiveBookingRef] = useState(null);
   const [activeBookingState, setActiveBookingState] = useState(null);
 
-  // Apply dark mode class to root HTML element
+  // Apply dark mode class to root HTML element and persist
   useEffect(() => {
     if (darkMode) {
       document.documentElement.classList.add('dark');
+      localStorage.setItem('irctc_theme', 'dark');
     } else {
       document.documentElement.classList.remove('dark');
+      localStorage.setItem('irctc_theme', 'light');
     }
   }, [darkMode]);
 
@@ -61,38 +67,47 @@ export default function App() {
     };
 
     checkActiveBookings();
-    const interval = setInterval(checkActiveBookings, 3000);
+    const interval = setInterval(checkActiveBookings, 8000);
     return () => {
       isSubscribed = false;
       clearInterval(interval);
     };
   }, [activeBookingRef, activeBookingState?.status]);
 
-  // Poller for active booking state machine
+  // Poller for active booking state machine with adaptive interval & terminal auto-stop
   useEffect(() => {
     if (!activeBookingRef) return;
 
     let isSubscribed = true;
+    let timerId = null;
+
     const poll = async () => {
       try {
         const state = await getBookingState(activeBookingRef);
         if (isSubscribed) {
           setActiveBookingState(state);
-          // Auto-stop polling if finished
-          if (state.status === 'CONFIRMED' || state.status === 'FAILED' || state.status === 'CANCELLED') {
-            // Keep state visible but stop aggressive polling
+          // Auto-stop polling if reached terminal state
+          const terminal = ['CONFIRMED', 'FAILED', 'CANCELLED'];
+          if (terminal.includes(state.status)) {
+            return; // Terminate polling
           }
+          // Adaptive interval: slower for waiting states, faster for active
+          const waitingStates = ['WAITING_MANUAL', 'PAYMENT_PENDING'];
+          const interval = waitingStates.includes(state.status) ? 5000 : 2000;
+          timerId = setTimeout(poll, interval);
         }
       } catch (err) {
         console.error('Error polling booking state:', err);
+        if (isSubscribed) {
+          setActiveBookingRef(null);
+        }
       }
     };
 
     poll();
-    const interval = setInterval(poll, 1500);
     return () => {
       isSubscribed = false;
-      clearInterval(interval);
+      if (timerId) clearTimeout(timerId);
     };
   }, [activeBookingRef]);
 
@@ -118,7 +133,11 @@ export default function App() {
   };
 
   return (
-    <div className="min-h-screen bg-zinc-50 dark:bg-zinc-950 text-zinc-900 dark:text-zinc-100 flex flex-col antialiased transition-colors">
+    <div className="min-h-screen bg-slate-50/90 dark:bg-[#090b10] text-zinc-900 dark:text-zinc-100 flex flex-col antialiased transition-colors relative selection:bg-emerald-500 selection:text-white">
+      {/* Ambient background glow for glass theme */}
+      <div className="fixed top-[-10%] left-[-10%] w-[45vw] h-[45vw] rounded-full bg-emerald-500/10 dark:bg-emerald-500/5 blur-[120px] pointer-events-none -z-10" />
+      <div className="fixed bottom-[-10%] right-[-10%] w-[50vw] h-[50vw] rounded-full bg-teal-500/10 dark:bg-cyan-500/5 blur-[140px] pointer-events-none -z-10" />
+
       {/* Sidebar Navigation */}
       <Sidebar
         currentTab={currentTab}

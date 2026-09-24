@@ -31,6 +31,7 @@ class Booking(Base):
     passenger_count = Column(Integer, default=1)
     fare = Column(Float, nullable=True)
     payment_status = Column(String(32), default="PENDING")
+    payment_upi_url = Column(Text, nullable=True)
     
     # Contact
     contact_mobile = Column(String(20), nullable=True)

@@ -17,5 +17,13 @@ def get_db():
     finally:
         db.close()
 
+from sqlalchemy import text
+
 def init_db():
     Base.metadata.create_all(bind=engine)
+    with engine.connect() as conn:
+        try:
+            conn.execute(text("ALTER TABLE bookings ADD COLUMN payment_upi_url TEXT"))
+            conn.commit()
+        except Exception:
+            pass

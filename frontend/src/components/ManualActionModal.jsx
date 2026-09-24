@@ -1,11 +1,17 @@
 import React, { useState, useEffect } from 'react';
-import { AlertTriangle, CreditCard, ShieldCheck, CheckCircle2, PauseCircle, XCircle, RefreshCw, Send, Image as ImageIcon } from 'lucide-react';
+import { AlertTriangle, CreditCard, ShieldCheck, CheckCircle2, PauseCircle, XCircle, RefreshCw, Send, Image as ImageIcon, Clock } from 'lucide-react';
 
 export default function ManualActionModal({ state, onAction }) {
   const [inputValue, setInputValue] = useState('');
   const [imgTimestamp, setImgTimestamp] = useState(Date.now());
   const [imgError, setImgError] = useState(false);
   const [submitting, setSubmitting] = useState(false);
+  const [countdown, setCountdown] = useState(180);
+
+  const isPayment = state?.status === 'PAYMENT_PENDING' || state?.stage === 'PAYMENT_PENDING' || state?.waiting_input_type === 'PAYMENT';
+  const isCaptcha = state?.waiting_input_type === 'CAPTCHA';
+  const isOtp = state?.waiting_input_type === 'OTP';
+  const isInputRequired = isCaptcha || isOtp;
 
   useEffect(() => {
     if (state?.is_paused) {
@@ -16,10 +22,43 @@ export default function ManualActionModal({ state, onAction }) {
     }
   }, [state?.booking_ref, state?.is_paused, state?.waiting_input_type]);
 
+  useEffect(() => {
+    if (isPayment) {
+      const initial = state?.timer_remaining_seconds ?? (state?.timer_seconds ?? 180);
+      setCountdown(initial);
+      const timer = setInterval(() => {
+        setCountdown((prev) => {
+          if (prev <= 1) {
+            clearInterval(timer);
+            return 0;
+          }
+          return prev - 1;
+        });
+      }, 1000);
+      return () => clearInterval(timer);
+    }
+  }, [isPayment, state?.timer_remaining_seconds, state?.timer_seconds]);
+
+  const formatCountdown = (secs) => {
+    const m = Math.floor(secs / 60);
+    const s = secs % 60;
+    return `${m.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+  };
+
   if (!state || !state.is_paused) return null;
 
-  const isPayment = state.status === 'PAYMENT_PENDING' || state.stage === 'PAYMENT_PENDING' || state.waiting_input_type === 'PAYMENT';
-  const isInputRequired = state.waiting_input_type === 'CAPTCHA' || state.waiting_input_type === 'OTP';
+  let modalTitle = 'Action Required: Train Selection / Verification';
+  let headerGradient = 'bg-gradient-to-r from-emerald-600 to-teal-600';
+  if (isPayment) {
+    modalTitle = 'Payment Handover (UPI QR / NetBanking)';
+    headerGradient = 'bg-gradient-to-r from-purple-600 to-indigo-600';
+  } else if (isCaptcha) {
+    modalTitle = 'Security Verification: Visual CAPTCHA';
+    headerGradient = 'bg-gradient-to-r from-amber-600 to-orange-600';
+  } else if (isOtp) {
+    modalTitle = 'Security Verification: OTP Required';
+    headerGradient = 'bg-gradient-to-r from-blue-600 to-cyan-600';
+  }
 
   const handleSubmit = async (e) => {
     if (e) e.preventDefault();
@@ -30,6 +69,15 @@ export default function ManualActionModal({ state, onAction }) {
     setSubmitting(true);
     try {
       await onAction('continue', inputValue.trim());
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const handleQuickConfirm = async (val) => {
+    setSubmitting(true);
+    try {
+      await onAction('continue', val);
     } finally {
       setSubmitting(false);
     }
@@ -48,12 +96,12 @@ export default function ManualActionModal({ state, onAction }) {
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-xs p-4 animate-fade-in overflow-y-auto">
       <div className="bg-white dark:bg-zinc-900 border border-amber-500/40 dark:border-amber-500/50 rounded-2xl shadow-2xl max-w-xl w-full overflow-hidden my-6">
         {/* Header */}
-        <div className={`px-6 py-4 flex items-center justify-between text-white ${isPayment ? 'bg-gradient-to-r from-purple-600 to-indigo-600' : 'bg-gradient-to-r from-amber-600 to-orange-600'}`}>
+        <div className={`px-6 py-4 flex items-center justify-between text-white ${headerGradient}`}>
           <div className="flex items-center gap-3">
             {isPayment ? <CreditCard className="w-6 h-6 animate-pulse" /> : <AlertTriangle className="w-6 h-6 animate-bounce" />}
             <div>
               <h3 className="text-lg font-bold">
-                {isPayment ? 'Manual Payment Handover (UPI QR)' : 'Security Verification Required (CAPTCHA / OTP)'}
+                {modalTitle}
               </h3>
               <p className="text-xs text-white/80">Booking Ref: {state.booking_ref}</p>
             </div>
@@ -115,6 +163,21 @@ export default function ManualActionModal({ state, onAction }) {
           {/* CAPTCHA / OTP Input Form */}
           {isInputRequired && (
             <form onSubmit={handleSubmit} className="space-y-3">
+              {state.suggested_captcha && (
+                <div className="flex items-center justify-between p-2.5 bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-xl">
+                  <span className="text-xs text-emerald-800 dark:text-emerald-300 font-medium">
+                    ⚡ AI Auto-Detected: <strong className="font-mono tracking-wider text-sm">{state.suggested_captcha}</strong>
+                  </span>
+                  <button
+                    type="button"
+                    onClick={() => handleQuickConfirm(state.suggested_captcha)}
+                    disabled={submitting}
+                    className="px-3 py-1 bg-emerald-600 hover:bg-emerald-700 text-white font-bold text-xs rounded-lg shadow-xs cursor-pointer"
+                  >
+                    Confirm (1-Click)
+                  </button>
+                </div>
+              )}
               <div>
                 <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1.5">
                   Enter CAPTCHA / OTP Text:
@@ -124,7 +187,7 @@ export default function ManualActionModal({ state, onAction }) {
                     type="text"
                     value={inputValue}
                     onChange={(e) => setInputValue(e.target.value)}
-                    placeholder="Type CAPTCHA here..."
+                    placeholder={state.suggested_captcha || "Type CAPTCHA here..."}
                     autoFocus
                     className="flex-1 px-3.5 py-2.5 bg-zinc-50 dark:bg-zinc-800 border-2 border-emerald-500/60 focus:border-emerald-500 rounded-xl text-base font-bold text-zinc-900 dark:text-white tracking-widest uppercase outline-hidden"
                   />
@@ -145,15 +208,21 @@ export default function ManualActionModal({ state, onAction }) {
           )}
 
           {isPayment && (
-            <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-xl p-3.5 text-center space-y-1">
-              <p className="text-xs font-medium text-emerald-800 dark:text-emerald-300">
-                Official IRCTC Total Payable Amount:
-              </p>
+            <div className="bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-300 dark:border-emerald-800 rounded-xl p-4 text-center space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-semibold text-emerald-800 dark:text-emerald-300">
+                  Official IRCTC Total Payable Amount:
+                </span>
+                <span className={`text-xs font-bold font-mono px-2.5 py-1 rounded-full flex items-center gap-1 shadow-xs ${countdown <= 30 ? 'bg-rose-100 text-rose-700 dark:bg-rose-950 dark:text-rose-300 animate-pulse' : 'bg-emerald-100 text-emerald-800 dark:bg-emerald-900 dark:text-emerald-200'}`}>
+                  <Clock className="w-3.5 h-3.5" />
+                  Time Left: {formatCountdown(countdown)}
+                </span>
+              </div>
               <p className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
                 {state.fare ? `₹${Number(state.fare).toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}` : 'As per Official IRCTC Portal'}
               </p>
               <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
-                📱 Kisi bhi UPI app (GPay, PhonePe, Paytm) se QR code scan karke exact yahi amount pay karein.
+                📱 Kisi bhi UPI app (GPay, PhonePe, Paytm) se QR code scan karke exact yahi amount pay karein. <strong>Payment transfer hote hi page automatically PNR confirm kar dega!</strong>
               </p>
             </div>
           )}

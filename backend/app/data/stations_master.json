@@ -1,0 +1,2784 @@
+[
+  {
+    "code": "GTL",
+    "name": "Guntakal Junction",
+    "hindi": "गुंतकल",
+    "city": "Guntakal",
+    "state": "Andhra Pradesh",
+    "aliases": [
+      "GUNTAKAL",
+      "GTL"
+    ]
+  },
+  {
+    "code": "GNT",
+    "name": "Guntur Junction",
+    "hindi": "गुंटूर",
+    "city": "Guntur",
+    "state": "Andhra Pradesh",
+    "aliases": [
+      "GUNTUR",
+      "GNT"
+    ]
+  },
+  {
+    "code": "NLR",
+    "name": "Nellore",
+    "hindi": "नेल्लोर",
+    "city": "Nellore",
+    "state": "Andhra Pradesh",
+    "aliases": [
+      "NELLORE",
+      "NLR"
+    ]
+  },
+  {
+    "code": "RJY",
+    "name": "Rajahmundry",
+    "hindi": "राजमुंदरी",
+    "city": "Rajahmundry",
+    "state": "Andhra Pradesh",
+    "aliases": [
+      "RAJAHMUNDRY",
+      "RJY"
+    ]
+  },
+  {
+    "code": "TPTY",
+    "name": "Tirupati Main",
+    "hindi": "तिरुपति",
+    "city": "Tirupati",
+    "state": "Andhra Pradesh",
+    "aliases": [
+      "TIRUPATI",
+      "TPTY"
+    ]
+  },
+  {
+    "code": "BZA",
+    "name": "Vijayawada Junction",
+    "hindi": "विजयवाड़ा",
+    "city": "Vijayawada",
+    "state": "Andhra Pradesh",
+    "aliases": [
+      "VIJAYAWADA",
+      "BZA"
+    ]
+  },
+  {
+    "code": "VSKP",
+    "name": "Visakhapatnam Junction",
+    "hindi": "विशाखापट्टनम",
+    "city": "Visakhapatnam",
+    "state": "Andhra Pradesh",
+    "aliases": [
+      "VIZAG",
+      "VISAKHAPATNAM",
+      "VSKP"
+    ]
+  },
+  {
+    "code": "GHY",
+    "name": "Guwahati",
+    "hindi": "गुवाहाटी",
+    "city": "Guwahati",
+    "state": "Assam",
+    "aliases": [
+      "GUWAHATI",
+      "GHY",
+      "ASSAM"
+    ]
+  },
+  {
+    "code": "ARA",
+    "name": "Ara Junction",
+    "hindi": "आरा जंक्शन",
+    "city": "Ara",
+    "state": "Bihar",
+    "aliases": [
+      "ARA",
+      "ARRAH"
+    ]
+  },
+  {
+    "code": "BJU",
+    "name": "Barauni Junction",
+    "hindi": "बरौनी",
+    "city": "Barauni",
+    "state": "Bihar",
+    "aliases": [
+      "BARAUNI",
+      "BJU"
+    ]
+  },
+  {
+    "code": "BGS",
+    "name": "Begusarai",
+    "hindi": "बेगूसराय",
+    "city": "Begusarai",
+    "state": "Bihar",
+    "aliases": [
+      "BGS",
+      "BEGUSARAI"
+    ]
+  },
+  {
+    "code": "BGP",
+    "name": "Bhagalpur Junction",
+    "hindi": "भागलपुर",
+    "city": "Bhagalpur",
+    "state": "Bihar",
+    "aliases": [
+      "BHAGALPUR",
+      "BGP"
+    ]
+  },
+  {
+    "code": "BXR",
+    "name": "Buxar",
+    "hindi": "बक्सर",
+    "city": "Buxar",
+    "state": "Bihar",
+    "aliases": [
+      "BUXAR",
+      "BXR"
+    ]
+  },
+  {
+    "code": "CPR",
+    "name": "Chhapra Junction",
+    "hindi": "छपरा",
+    "city": "Chhapra",
+    "state": "Bihar",
+    "aliases": [
+      "CHHAPRA",
+      "CHAPRA",
+      "CPR"
+    ]
+  },
+  {
+    "code": "DNR",
+    "name": "Danapur",
+    "hindi": "दानापुर",
+    "city": "Patna",
+    "state": "Bihar",
+    "aliases": [
+      "DANAPUR",
+      "DNR"
+    ]
+  },
+  {
+    "code": "DBG",
+    "name": "Darbhanga Junction",
+    "hindi": "दरभंगा",
+    "city": "Darbhanga",
+    "state": "Bihar",
+    "aliases": [
+      "DBG",
+      "DARBHANGA"
+    ]
+  },
+  {
+    "code": "GAYA",
+    "name": "Gaya Junction",
+    "hindi": "गया",
+    "city": "Gaya",
+    "state": "Bihar",
+    "aliases": [
+      "GAYA",
+      "BODHGAYA"
+    ]
+  },
+  {
+    "code": "JMP",
+    "name": "Jamalpur Junction",
+    "hindi": "जमालपुर",
+    "city": "Jamalpur",
+    "state": "Bihar",
+    "aliases": [
+      "JAMALPUR",
+      "JMP"
+    ]
+  },
+  {
+    "code": "KIR",
+    "name": "Katihar Junction",
+    "hindi": "कटिहार",
+    "city": "Katihar",
+    "state": "Bihar",
+    "aliases": [
+      "KIR",
+      "KATIHAR"
+    ]
+  },
+  {
+    "code": "MFP",
+    "name": "Muzaffarpur Junction",
+    "hindi": "मुज़फ़्फ़रपुर",
+    "city": "Muzaffarpur",
+    "state": "Bihar",
+    "aliases": [
+      "MUZAFFARPUR",
+      "MFP"
+    ]
+  },
+  {
+    "code": "PPTA",
+    "name": "Patliputra Junction",
+    "hindi": "पाटलिपुत्र",
+    "city": "Patna",
+    "state": "Bihar",
+    "aliases": [
+      "PATLIPUTRA",
+      "PPTA"
+    ]
+  },
+  {
+    "code": "PNBE",
+    "name": "Patna Junction",
+    "hindi": "पटना जंक्शन",
+    "city": "Patna",
+    "state": "Bihar",
+    "aliases": [
+      "PATNA",
+      "PNBE"
+    ]
+  },
+  {
+    "code": "RJPB",
+    "name": "Rajendra Nagar Terminal",
+    "hindi": "राजेन्द्र नगर",
+    "city": "Patna",
+    "state": "Bihar",
+    "aliases": [
+      "PATNA RAJENDRA NAGAR",
+      "RJPB"
+    ]
+  },
+  {
+    "code": "SHC",
+    "name": "Saharsa Junction",
+    "hindi": "सहरसा",
+    "city": "Saharsa",
+    "state": "Bihar",
+    "aliases": [
+      "SAHARSA",
+      "SHC"
+    ]
+  },
+  {
+    "code": "SPJ",
+    "name": "Samastipur Junction",
+    "hindi": "समस्तीपुर",
+    "city": "Samastipur",
+    "state": "Bihar",
+    "aliases": [
+      "SAMASTIPUR",
+      "SPJ"
+    ]
+  },
+  {
+    "code": "CDG",
+    "name": "Chandigarh Junction",
+    "hindi": "चंडीगढ़",
+    "city": "Chandigarh",
+    "state": "Chandigarh",
+    "aliases": [
+      "CHANDIGARH",
+      "CDG"
+    ]
+  },
+  {
+    "code": "BSP",
+    "name": "Bilaspur Junction",
+    "hindi": "बिलासपुर",
+    "city": "Bilaspur",
+    "state": "Chhattisgarh",
+    "aliases": [
+      "BILASPUR",
+      "BSP"
+    ]
+  },
+  {
+    "code": "DURG",
+    "name": "Durg Junction",
+    "hindi": "दुर्ग",
+    "city": "Durg",
+    "state": "Chhattisgarh",
+    "aliases": [
+      "DURG",
+      "BHILAI"
+    ]
+  },
+  {
+    "code": "R",
+    "name": "Raipur Junction",
+    "hindi": "रायपुर",
+    "city": "Raipur",
+    "state": "Chhattisgarh",
+    "aliases": [
+      "RAIPUR",
+      "R"
+    ]
+  },
+  {
+    "code": "ANVT",
+    "name": "Anand Vihar Terminal",
+    "hindi": "आनंद विहार",
+    "city": "Delhi",
+    "state": "Delhi",
+    "aliases": [
+      "ANAND VIHAR",
+      "ANVT"
+    ]
+  },
+  {
+    "code": "DEE",
+    "name": "Delhi Sarai Rohilla",
+    "hindi": "दिल्ली सराय रोहिल्ला",
+    "city": "Delhi",
+    "state": "Delhi",
+    "aliases": [
+      "SARAI ROHILLA",
+      "DEE"
+    ]
+  },
+  {
+    "code": "NZM",
+    "name": "Hazrat Nizamuddin",
+    "hindi": "हज़रत निज़ामुद्दीन",
+    "city": "Delhi",
+    "state": "Delhi",
+    "aliases": [
+      "NIZAMUDDIN",
+      "NZM",
+      "HAZRAT NIZAMUDDIN"
+    ]
+  },
+  {
+    "code": "NDLS",
+    "name": "New Delhi",
+    "hindi": "नई दिल्ली",
+    "city": "Delhi",
+    "state": "Delhi",
+    "aliases": [
+      "DELHI",
+      "NEW DELHI",
+      "NDLS",
+      "DILLI"
+    ]
+  },
+  {
+    "code": "DLI",
+    "name": "Old Delhi Junction",
+    "hindi": "पुरानी दिल्ली",
+    "city": "Delhi",
+    "state": "Delhi",
+    "aliases": [
+      "OLD DELHI",
+      "DELHI JN",
+      "DLI"
+    ]
+  },
+  {
+    "code": "MAO",
+    "name": "Madgaon Junction",
+    "hindi": "मडगांव",
+    "city": "Goa",
+    "state": "Goa",
+    "aliases": [
+      "GOA",
+      "MADGAON",
+      "MAO"
+    ]
+  },
+  {
+    "code": "ADI",
+    "name": "Ahmedabad Junction",
+    "hindi": "अहमदाबाद",
+    "city": "Ahmedabad",
+    "state": "Gujarat",
+    "aliases": [
+      "AHMEDABAD",
+      "ADI"
+    ]
+  },
+  {
+    "code": "ANND",
+    "name": "Anand Junction",
+    "hindi": "आनंद जंक्शन",
+    "city": "Anand",
+    "state": "Gujarat",
+    "aliases": [
+      "ANAND",
+      "AMUL",
+      "ANND"
+    ]
+  },
+  {
+    "code": "BH",
+    "name": "Bharuch Junction",
+    "hindi": "भरूच जंक्शन",
+    "city": "Bharuch",
+    "state": "Gujarat",
+    "aliases": [
+      "BHARUCH",
+      "BH"
+    ]
+  },
+  {
+    "code": "BVC",
+    "name": "Bhavnagar Terminus",
+    "hindi": "भावनगर",
+    "city": "Bhavnagar",
+    "state": "Gujarat",
+    "aliases": [
+      "BHAVNAGAR",
+      "BVC"
+    ]
+  },
+  {
+    "code": "DWK",
+    "name": "Dwarka",
+    "hindi": "द्वारका",
+    "city": "Dwarka",
+    "state": "Gujarat",
+    "aliases": [
+      "DWARKA",
+      "DWK"
+    ]
+  },
+  {
+    "code": "GIMB",
+    "name": "Gandhidham Junction",
+    "hindi": "गांधीधाम",
+    "city": "Gandhidham",
+    "state": "Gujarat",
+    "aliases": [
+      "GANDHIDHAM",
+      "GIMB"
+    ]
+  },
+  {
+    "code": "JAM",
+    "name": "Jamnagar",
+    "hindi": "जामनगर",
+    "city": "Jamnagar",
+    "state": "Gujarat",
+    "aliases": [
+      "JAMNAGAR",
+      "JAM"
+    ]
+  },
+  {
+    "code": "ME",
+    "name": "Mahesana Junction",
+    "hindi": "महेसाणा जंक्शन",
+    "city": "Mehsana",
+    "state": "Gujarat",
+    "aliases": [
+      "MEHSANA",
+      "MAHESANA",
+      "ME"
+    ]
+  },
+  {
+    "code": "ND",
+    "name": "Nadiad Junction",
+    "hindi": "नडियाद जंक्शन",
+    "city": "Nadiad",
+    "state": "Gujarat",
+    "aliases": [
+      "NADIAD",
+      "ND"
+    ]
+  },
+  {
+    "code": "PNU",
+    "name": "Palanpur Junction",
+    "hindi": "पालनपुर जंक्शन",
+    "city": "Palanpur",
+    "state": "Gujarat",
+    "aliases": [
+      "PALANPUR",
+      "PNU"
+    ]
+  },
+  {
+    "code": "RJT",
+    "name": "Rajkot Junction",
+    "hindi": "राजकोट जंक्शन",
+    "city": "Rajkot",
+    "state": "Gujarat",
+    "aliases": [
+      "RAJKOT",
+      "RJT"
+    ]
+  },
+  {
+    "code": "ST",
+    "name": "Surat",
+    "hindi": "सूरत",
+    "city": "Surat",
+    "state": "Gujarat",
+    "aliases": [
+      "SURAT",
+      "ST"
+    ]
+  },
+  {
+    "code": "BRC",
+    "name": "Vadodara Junction",
+    "hindi": "वडोदरा",
+    "city": "Vadodara",
+    "state": "Gujarat",
+    "aliases": [
+      "VADODARA",
+      "BARODA",
+      "BRC"
+    ]
+  },
+  {
+    "code": "BL",
+    "name": "Valsad",
+    "hindi": "वलसाड",
+    "city": "Valsad",
+    "state": "Gujarat",
+    "aliases": [
+      "VALSAD",
+      "BL"
+    ]
+  },
+  {
+    "code": "VAPI",
+    "name": "Vapi",
+    "hindi": "वापी",
+    "city": "Vapi",
+    "state": "Gujarat",
+    "aliases": [
+      "VAPI",
+      "DAMAN"
+    ]
+  },
+  {
+    "code": "VRL",
+    "name": "Veraval Junction (Somnath)",
+    "hindi": "वेरावल / सोमनाथ",
+    "city": "Somnath",
+    "state": "Gujarat",
+    "aliases": [
+      "VERAVAL",
+      "SOMNATH",
+      "VRL"
+    ]
+  },
+  {
+    "code": "UMB",
+    "name": "Ambala Cantt Junction",
+    "hindi": "अंबाला कैंट",
+    "city": "Ambala",
+    "state": "Haryana",
+    "aliases": [
+      "AMBALA",
+      "UMB",
+      "AMBALA CANTT"
+    ]
+  },
+  {
+    "code": "FDB",
+    "name": "Faridabad",
+    "hindi": "फरीदाबाद",
+    "city": "Faridabad",
+    "state": "Haryana",
+    "aliases": [
+      "FARIDABAD",
+      "FDB"
+    ]
+  },
+  {
+    "code": "GGN",
+    "name": "Gurgaon / Gurugram",
+    "hindi": "गुरुग्राम / गुड़गांव",
+    "city": "Gurugram",
+    "state": "Haryana",
+    "aliases": [
+      "GURGAON",
+      "GURUGRAM",
+      "GGN"
+    ]
+  },
+  {
+    "code": "HSR",
+    "name": "Hisar Junction",
+    "hindi": "हिसार",
+    "city": "Hisar",
+    "state": "Haryana",
+    "aliases": [
+      "HISAR",
+      "HISSAR",
+      "HSR"
+    ]
+  },
+  {
+    "code": "KUN",
+    "name": "Karnal",
+    "hindi": "करनाल",
+    "city": "Karnal",
+    "state": "Haryana",
+    "aliases": [
+      "KARNAL",
+      "KUN"
+    ]
+  },
+  {
+    "code": "KKDE",
+    "name": "Kurukshetra Junction",
+    "hindi": "कुरुक्षेत्र",
+    "city": "Kurukshetra",
+    "state": "Haryana",
+    "aliases": [
+      "KURUKSHETRA",
+      "KKDE"
+    ]
+  },
+  {
+    "code": "PNP",
+    "name": "Panipat Junction",
+    "hindi": "पानीपत",
+    "city": "Panipat",
+    "state": "Haryana",
+    "aliases": [
+      "PANIPAT",
+      "PNP"
+    ]
+  },
+  {
+    "code": "RE",
+    "name": "Rewari Junction",
+    "hindi": "रेवाड़ी",
+    "city": "Rewari",
+    "state": "Haryana",
+    "aliases": [
+      "REWARI",
+      "RE"
+    ]
+  },
+  {
+    "code": "ROK",
+    "name": "Rohtak Junction",
+    "hindi": "रोहतक",
+    "city": "Rohtak",
+    "state": "Haryana",
+    "aliases": [
+      "ROHTAK",
+      "ROK"
+    ]
+  },
+  {
+    "code": "SML",
+    "name": "Shimla",
+    "hindi": "शिमला",
+    "city": "Shimla",
+    "state": "Himachal Pradesh",
+    "aliases": [
+      "SHIMLA",
+      "SML"
+    ]
+  },
+  {
+    "code": "JAT",
+    "name": "Jammu Tawi",
+    "hindi": "जम्मू तवी",
+    "city": "Jammu",
+    "state": "Jammu & Kashmir",
+    "aliases": [
+      "JAMMU",
+      "JAMMU TAWI",
+      "JAT"
+    ]
+  },
+  {
+    "code": "UHP",
+    "name": "Martyr Captain Tushar Mahajan (Udhampur)",
+    "hindi": "उधमपुर",
+    "city": "Udhampur",
+    "state": "Jammu & Kashmir",
+    "aliases": [
+      "UDHAMPUR",
+      "MCTM",
+      "UHP"
+    ]
+  },
+  {
+    "code": "SVDK",
+    "name": "Shri Mata Vaishno Devi Katra",
+    "hindi": "श्री माता वैष्णो देवी कटरा",
+    "city": "Katra",
+    "state": "Jammu & Kashmir",
+    "aliases": [
+      "KATRA",
+      "VAISHNO DEVI",
+      "SVDK"
+    ]
+  },
+  {
+    "code": "SINA",
+    "name": "Srinagar Kashmir",
+    "hindi": "श्रीनगर",
+    "city": "Srinagar",
+    "state": "Jammu & Kashmir",
+    "aliases": [
+      "SRINAGAR",
+      "KASHMIR",
+      "SINA"
+    ]
+  },
+  {
+    "code": "BKSC",
+    "name": "Bokaro Steel City",
+    "hindi": "बोकारो स्टील सिटी",
+    "city": "Bokaro",
+    "state": "Jharkhand",
+    "aliases": [
+      "BOKARO",
+      "BKSC"
+    ]
+  },
+  {
+    "code": "DHN",
+    "name": "Dhanbad Junction",
+    "hindi": "धनबाद",
+    "city": "Dhanbad",
+    "state": "Jharkhand",
+    "aliases": [
+      "DHANBAD",
+      "DHN"
+    ]
+  },
+  {
+    "code": "HTE",
+    "name": "Hatia",
+    "hindi": "हटिया",
+    "city": "Ranchi",
+    "state": "Jharkhand",
+    "aliases": [
+      "HATIA",
+      "RANCHI HATIA",
+      "HTE"
+    ]
+  },
+  {
+    "code": "JSME",
+    "name": "Jasidih Junction (Deoghar)",
+    "hindi": "जसीडीह / देवघर",
+    "city": "Deoghar",
+    "state": "Jharkhand",
+    "aliases": [
+      "JASIDIH",
+      "DEOGHAR",
+      "BAIDYANATH DHAM",
+      "JSME"
+    ]
+  },
+  {
+    "code": "RNC",
+    "name": "Ranchi Junction",
+    "hindi": "राँची",
+    "city": "Ranchi",
+    "state": "Jharkhand",
+    "aliases": [
+      "RANCHI",
+      "RNC"
+    ]
+  },
+  {
+    "code": "TATA",
+    "name": "Tatanagar Junction",
+    "hindi": "टाटानगर",
+    "city": "Jamshedpur",
+    "state": "Jharkhand",
+    "aliases": [
+      "TATANAGAR",
+      "JAMSHEDPUR",
+      "TATA"
+    ]
+  },
+  {
+    "code": "BGM",
+    "name": "Belagavi",
+    "hindi": "बेलगावी",
+    "city": "Belagavi",
+    "state": "Karnataka",
+    "aliases": [
+      "BELAGAVI",
+      "BELGAUM",
+      "BGM"
+    ]
+  },
+  {
+    "code": "SBC",
+    "name": "KSR Bengaluru City",
+    "hindi": "केएसआर बेंगलुरु",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "aliases": [
+      "BANGALORE",
+      "BENGALURU",
+      "SBC",
+      "BANGALORE CITY"
+    ]
+  },
+  {
+    "code": "KLBG",
+    "name": "Kalaburagi Junction (Gulbarga)",
+    "hindi": "कलबुर्गी / गुलबर्गा",
+    "city": "Kalaburagi",
+    "state": "Karnataka",
+    "aliases": [
+      "GULBARGA",
+      "KALABURAGI",
+      "KLBG"
+    ]
+  },
+  {
+    "code": "MAQ",
+    "name": "Mangaluru Central",
+    "hindi": "मंगलुरु सेंट्रल",
+    "city": "Mangaluru",
+    "state": "Karnataka",
+    "aliases": [
+      "MANGALORE",
+      "MANGALURU",
+      "MAQ"
+    ]
+  },
+  {
+    "code": "MYS",
+    "name": "Mysuru Junction",
+    "hindi": "मैसूरु",
+    "city": "Mysuru",
+    "state": "Karnataka",
+    "aliases": [
+      "MYSURU",
+      "MYSORE",
+      "MYS"
+    ]
+  },
+  {
+    "code": "UBL",
+    "name": "SSS Hubballi Junction",
+    "hindi": "हुब्बल्ली",
+    "city": "Hubballi",
+    "state": "Karnataka",
+    "aliases": [
+      "HUBBALLI",
+      "HUBLI",
+      "UBL"
+    ]
+  },
+  {
+    "code": "SMVB",
+    "name": "Sir M. Visvesvaraya Terminal",
+    "hindi": "सर एम विश्वेश्वरैया टर्मिनल",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "aliases": [
+      "SMVB",
+      "BYAPPANAHALLI"
+    ]
+  },
+  {
+    "code": "YPR",
+    "name": "Yesvantpur Junction",
+    "hindi": "यशवंतपुर",
+    "city": "Bengaluru",
+    "state": "Karnataka",
+    "aliases": [
+      "YESVANTPUR",
+      "YPR"
+    ]
+  },
+  {
+    "code": "ERS",
+    "name": "Ernakulam Junction",
+    "hindi": "एर्नाकुलम जंक्शन",
+    "city": "Kochi",
+    "state": "Kerala",
+    "aliases": [
+      "KOCHI",
+      "COCHIN",
+      "ERNAKULAM",
+      "ERS"
+    ]
+  },
+  {
+    "code": "ERN",
+    "name": "Ernakulam Town (North)",
+    "hindi": "एर्नाकुलम टाउन",
+    "city": "Kochi",
+    "state": "Kerala",
+    "aliases": [
+      "ERNAKULAM TOWN",
+      "KOCHI",
+      "ERN"
+    ]
+  },
+  {
+    "code": "CAN",
+    "name": "Kannur",
+    "hindi": "कन्नूर",
+    "city": "Kannur",
+    "state": "Kerala",
+    "aliases": [
+      "KANNUR",
+      "CAN"
+    ]
+  },
+  {
+    "code": "CLT",
+    "name": "Kozhikode Main",
+    "hindi": "कोझिकोड",
+    "city": "Kozhikode",
+    "state": "Kerala",
+    "aliases": [
+      "CALICUT",
+      "KOZHIKODE",
+      "CLT"
+    ]
+  },
+  {
+    "code": "TVC",
+    "name": "Thiruvananthapuram Central",
+    "hindi": "तिरुवनंतपुरम सेंट्रल",
+    "city": "Thiruvananthapuram",
+    "state": "Kerala",
+    "aliases": [
+      "TRIVANDRUM",
+      "THIRUVANANTHAPURAM",
+      "TVC"
+    ]
+  },
+  {
+    "code": "TCR",
+    "name": "Thrissur",
+    "hindi": "त्रिशूर",
+    "city": "Thrissur",
+    "state": "Kerala",
+    "aliases": [
+      "THRISSUR",
+      "TRICHUR",
+      "TCR"
+    ]
+  },
+  {
+    "code": "BPL",
+    "name": "Bhopal Junction",
+    "hindi": "भोपाल",
+    "city": "Bhopal",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "BHOPAL",
+      "BPL"
+    ]
+  },
+  {
+    "code": "BINA",
+    "name": "Bina Junction",
+    "hindi": "बीना जंक्शन",
+    "city": "Bina",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "BINA"
+    ]
+  },
+  {
+    "code": "DWX",
+    "name": "Dewas Junction",
+    "hindi": "देवास",
+    "city": "Dewas",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "DEWAS",
+      "DWX"
+    ]
+  },
+  {
+    "code": "GWL",
+    "name": "Gwalior Junction",
+    "hindi": "ग्वालियर",
+    "city": "Gwalior",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "GWALIOR",
+      "GWL"
+    ]
+  },
+  {
+    "code": "INDB",
+    "name": "Indore Junction",
+    "hindi": "इंदौर",
+    "city": "Indore",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "INDB",
+      "INDORE"
+    ]
+  },
+  {
+    "code": "ET",
+    "name": "Itarsi Junction",
+    "hindi": "इटारसी जंक्शन",
+    "city": "Itarsi",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "ITARSI",
+      "ET"
+    ]
+  },
+  {
+    "code": "JBP",
+    "name": "Jabalpur Junction",
+    "hindi": "जबलपुर",
+    "city": "Jabalpur",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "JABALPUR",
+      "JBP"
+    ]
+  },
+  {
+    "code": "KTE",
+    "name": "Katni Junction",
+    "hindi": "कटनी जंक्शन",
+    "city": "Katni",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "KATNI",
+      "KTE"
+    ]
+  },
+  {
+    "code": "NAD",
+    "name": "Nagda Junction",
+    "hindi": "नागदा जंक्शन",
+    "city": "Nagda",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "NAGDA",
+      "NAD"
+    ]
+  },
+  {
+    "code": "PPI",
+    "name": "Pipariya (Pachmarhi)",
+    "hindi": "पिपरिया / पचमढ़ी",
+    "city": "Pachmarhi",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "PIPARIYA",
+      "PACHMARHI",
+      "PPI"
+    ]
+  },
+  {
+    "code": "RKMP",
+    "name": "Rani Kamlapati",
+    "hindi": "रानी कमलापति",
+    "city": "Bhopal",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "HABIBGANJ",
+      "RANI KAMLAPATI",
+      "RKMP"
+    ]
+  },
+  {
+    "code": "RTM",
+    "name": "Ratlam Junction",
+    "hindi": "रतलाम",
+    "city": "Ratlam",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "RATLAM",
+      "RTM"
+    ]
+  },
+  {
+    "code": "REWA",
+    "name": "Rewa",
+    "hindi": "रीवा",
+    "city": "Rewa",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "REWA"
+    ]
+  },
+  {
+    "code": "STA",
+    "name": "Satna Junction",
+    "hindi": "सतना जंक्शन",
+    "city": "Satna",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "SATNA",
+      "STA"
+    ]
+  },
+  {
+    "code": "UJN",
+    "name": "Ujjain Junction",
+    "hindi": "उज्जैन जंक्शन",
+    "city": "Ujjain",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "UJJAIN",
+      "MAHAKAL",
+      "UJN"
+    ]
+  },
+  {
+    "code": "BHS",
+    "name": "Vidisha",
+    "hindi": "विदिशा",
+    "city": "Vidisha",
+    "state": "Madhya Pradesh",
+    "aliases": [
+      "VIDISHA",
+      "BHS"
+    ]
+  },
+  {
+    "code": "AJNI",
+    "name": "Ajni (Nagpur)",
+    "hindi": "अजनी",
+    "city": "Nagpur",
+    "state": "Maharashtra",
+    "aliases": [
+      "AJNI NAGPUR",
+      "AJNI"
+    ]
+  },
+  {
+    "code": "AK",
+    "name": "Akola Junction",
+    "hindi": "अकोला जंक्शन",
+    "city": "Akola",
+    "state": "Maharashtra",
+    "aliases": [
+      "AKOLA",
+      "AK"
+    ]
+  },
+  {
+    "code": "BD",
+    "name": "Badnera Junction",
+    "hindi": "बडनेरा जंक्शन",
+    "city": "Amravati",
+    "state": "Maharashtra",
+    "aliases": [
+      "BADNERA",
+      "AMRAVATI BD",
+      "BD"
+    ]
+  },
+  {
+    "code": "BPQ",
+    "name": "Balharshah",
+    "hindi": "बल्हारशाह",
+    "city": "Chandrapur",
+    "state": "Maharashtra",
+    "aliases": [
+      "BALHARSHAH",
+      "BPQ"
+    ]
+  },
+  {
+    "code": "BDTS",
+    "name": "Bandra Terminus",
+    "hindi": "बांद्रा टर्मिनस",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "BANDRA",
+      "BDTS"
+    ]
+  },
+  {
+    "code": "BSL",
+    "name": "Bhusaval Junction",
+    "hindi": "भुसावल जंक्शन",
+    "city": "Bhusaval",
+    "state": "Maharashtra",
+    "aliases": [
+      "BHUSAVAL",
+      "BSL"
+    ]
+  },
+  {
+    "code": "BVI",
+    "name": "Borivali",
+    "hindi": "बोरीवली",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "BORIVALI",
+      "BVI"
+    ]
+  },
+  {
+    "code": "AWB",
+    "name": "Chhatrapati Sambhajinagar (Aurangabad)",
+    "hindi": "संभाजीनगर / औरंगाबाद",
+    "city": "Aurangabad",
+    "state": "Maharashtra",
+    "aliases": [
+      "AURANGABAD",
+      "SAMBHAJINAGAR",
+      "AWB"
+    ]
+  },
+  {
+    "code": "CSMT",
+    "name": "Chhatrapati Shivaji Maharaj Terminus",
+    "hindi": "छत्रपति शिवाजी महाराज टर्मिनस",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "VT",
+      "CST",
+      "CSMT",
+      "MUMBAI CST"
+    ]
+  },
+  {
+    "code": "DR",
+    "name": "Dadar Central",
+    "hindi": "दादर",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "DADAR",
+      "DR"
+    ]
+  },
+  {
+    "code": "DND",
+    "name": "Daund Junction",
+    "hindi": "दौंड जंक्शन",
+    "city": "Daund",
+    "state": "Maharashtra",
+    "aliases": [
+      "DAUND",
+      "DND"
+    ]
+  },
+  {
+    "code": "NED",
+    "name": "Hazur Sahib Nanded",
+    "hindi": "नांदेड",
+    "city": "Nanded",
+    "state": "Maharashtra",
+    "aliases": [
+      "NANDED",
+      "HAZUR SAHIB",
+      "NED"
+    ]
+  },
+  {
+    "code": "JL",
+    "name": "Jalgaon Junction",
+    "hindi": "जलगांव जंक्शन",
+    "city": "Jalgaon",
+    "state": "Maharashtra",
+    "aliases": [
+      "JALGAON",
+      "JL"
+    ]
+  },
+  {
+    "code": "KYN",
+    "name": "Kalyan Junction",
+    "hindi": "कल्याण",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "KALYAN",
+      "KYN"
+    ]
+  },
+  {
+    "code": "KOP",
+    "name": "Kolhapur CSMT",
+    "hindi": "कोल्हापुर",
+    "city": "Kolhapur",
+    "state": "Maharashtra",
+    "aliases": [
+      "KOLHAPUR",
+      "KOP"
+    ]
+  },
+  {
+    "code": "KWV",
+    "name": "Kurduvadi Junction",
+    "hindi": "कुर्डूवाडी",
+    "city": "Kurduvadi",
+    "state": "Maharashtra",
+    "aliases": [
+      "KURDUVADI",
+      "KWV"
+    ]
+  },
+  {
+    "code": "LTT",
+    "name": "Lokmanya Tilak Terminus",
+    "hindi": "लोकमान्य तिलक टर्मिनस",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "LTT",
+      "KURLA",
+      "LOKMANYA TILAK"
+    ]
+  },
+  {
+    "code": "LNL",
+    "name": "Lonavala",
+    "hindi": "लोनावाला",
+    "city": "Lonavala",
+    "state": "Maharashtra",
+    "aliases": [
+      "LONAVALA",
+      "LNL"
+    ]
+  },
+  {
+    "code": "MMR",
+    "name": "Manmad Junction",
+    "hindi": "मनमाड जंक्शन",
+    "city": "Manmad",
+    "state": "Maharashtra",
+    "aliases": [
+      "MANMAD",
+      "SHIRDI JUNCTION",
+      "MMR"
+    ]
+  },
+  {
+    "code": "MRJ",
+    "name": "Miraj Junction",
+    "hindi": "मिरज जंक्शन",
+    "city": "Miraj",
+    "state": "Maharashtra",
+    "aliases": [
+      "MIRAJ",
+      "MRJ"
+    ]
+  },
+  {
+    "code": "MMCT",
+    "name": "Mumbai Central",
+    "hindi": "मुंबई सेंट्रल",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "MUMBAI",
+      "BOMBAY",
+      "MUMBAI CENTRAL",
+      "MMCT"
+    ]
+  },
+  {
+    "code": "NGP",
+    "name": "Nagpur Junction",
+    "hindi": "नागपुर",
+    "city": "Nagpur",
+    "state": "Maharashtra",
+    "aliases": [
+      "NAGPUR",
+      "NGP"
+    ]
+  },
+  {
+    "code": "NK",
+    "name": "Nashik Road",
+    "hindi": "नासिक रोड",
+    "city": "Nashik",
+    "state": "Maharashtra",
+    "aliases": [
+      "NASHIK",
+      "NASIK",
+      "NK"
+    ]
+  },
+  {
+    "code": "PVR",
+    "name": "Pandharpur",
+    "hindi": "पंढरपुर",
+    "city": "Pandharpur",
+    "state": "Maharashtra",
+    "aliases": [
+      "PANDHARPUR",
+      "PVR"
+    ]
+  },
+  {
+    "code": "PNVL",
+    "name": "Panvel Junction",
+    "hindi": "पनवेल",
+    "city": "Navi Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "PANVEL",
+      "PNVL"
+    ]
+  },
+  {
+    "code": "PUNE",
+    "name": "Pune Junction",
+    "hindi": "पुणे",
+    "city": "Pune",
+    "state": "Maharashtra",
+    "aliases": [
+      "PUNE",
+      "POONA"
+    ]
+  },
+  {
+    "code": "SNSI",
+    "name": "Sainagar Shirdi",
+    "hindi": "साईंनगर शिरडी",
+    "city": "Shirdi",
+    "state": "Maharashtra",
+    "aliases": [
+      "SHIRDI",
+      "SAINAGAR SHIRDI",
+      "SNSI"
+    ]
+  },
+  {
+    "code": "SLI",
+    "name": "Sangli",
+    "hindi": "सांगली",
+    "city": "Sangli",
+    "state": "Maharashtra",
+    "aliases": [
+      "SANGLI",
+      "SLI"
+    ]
+  },
+  {
+    "code": "STR",
+    "name": "Satara",
+    "hindi": "सतारा",
+    "city": "Satara",
+    "state": "Maharashtra",
+    "aliases": [
+      "SATARA",
+      "STR"
+    ]
+  },
+  {
+    "code": "SUR",
+    "name": "Solapur",
+    "hindi": "सोलापुर",
+    "city": "Solapur",
+    "state": "Maharashtra",
+    "aliases": [
+      "SOLAPUR",
+      "SHOLAPUR",
+      "SUR"
+    ]
+  },
+  {
+    "code": "TNA",
+    "name": "Thane",
+    "hindi": "ठाणे",
+    "city": "Mumbai",
+    "state": "Maharashtra",
+    "aliases": [
+      "THANE",
+      "TNA"
+    ]
+  },
+  {
+    "code": "WR",
+    "name": "Wardha Junction",
+    "hindi": "वर्धा जंक्शन",
+    "city": "Wardha",
+    "state": "Maharashtra",
+    "aliases": [
+      "WARDHA",
+      "WR"
+    ]
+  },
+  {
+    "code": "BBS",
+    "name": "Bhubaneswar",
+    "hindi": "भुवनेश्वर",
+    "city": "Bhubaneswar",
+    "state": "Odisha",
+    "aliases": [
+      "BHUBANESWAR",
+      "BBS"
+    ]
+  },
+  {
+    "code": "CTC",
+    "name": "Cuttack Junction",
+    "hindi": "कटक",
+    "city": "Cuttack",
+    "state": "Odisha",
+    "aliases": [
+      "CUTTACK",
+      "CTC"
+    ]
+  },
+  {
+    "code": "PURI",
+    "name": "Puri",
+    "hindi": "पुरी",
+    "city": "Puri",
+    "state": "Odisha",
+    "aliases": [
+      "PURI",
+      "JAGANNATH PURI"
+    ]
+  },
+  {
+    "code": "ROU",
+    "name": "Rourkela Junction",
+    "hindi": "राउरकेला",
+    "city": "Rourkela",
+    "state": "Odisha",
+    "aliases": [
+      "ROURKELA",
+      "ROU"
+    ]
+  },
+  {
+    "code": "ASR",
+    "name": "Amritsar Junction",
+    "hindi": "अमृतसर",
+    "city": "Amritsar",
+    "state": "Punjab",
+    "aliases": [
+      "AMRITSAR",
+      "ASR",
+      "GOLDEN TEMPLE"
+    ]
+  },
+  {
+    "code": "BTI",
+    "name": "Bathinda Junction",
+    "hindi": "बठिंडा",
+    "city": "Bathinda",
+    "state": "Punjab",
+    "aliases": [
+      "BATHINDA",
+      "BHATINDA",
+      "BTI"
+    ]
+  },
+  {
+    "code": "BEAS",
+    "name": "Beas",
+    "hindi": "ब्यास",
+    "city": "Beas",
+    "state": "Punjab",
+    "aliases": [
+      "BEAS"
+    ]
+  },
+  {
+    "code": "JUC",
+    "name": "Jalandhar City",
+    "hindi": "जालंधर सिटी",
+    "city": "Jalandhar",
+    "state": "Punjab",
+    "aliases": [
+      "JALANDHAR",
+      "JUC"
+    ]
+  },
+  {
+    "code": "LDH",
+    "name": "Ludhiana Junction",
+    "hindi": "लुधियाना",
+    "city": "Ludhiana",
+    "state": "Punjab",
+    "aliases": [
+      "LUDHIANA",
+      "LDH"
+    ]
+  },
+  {
+    "code": "PTKC",
+    "name": "Pathankot Cantt",
+    "hindi": "पठानकोट कैंट",
+    "city": "Pathankot",
+    "state": "Punjab",
+    "aliases": [
+      "PATHANKOT",
+      "CHAKKI BANK",
+      "PTKC"
+    ]
+  },
+  {
+    "code": "PTA",
+    "name": "Patiala",
+    "hindi": "पटियाला",
+    "city": "Patiala",
+    "state": "Punjab",
+    "aliases": [
+      "PATIALA",
+      "PTA"
+    ]
+  },
+  {
+    "code": "ABR",
+    "name": "Abu Road",
+    "hindi": "आबू रोड",
+    "city": "Mount Abu",
+    "state": "Rajasthan",
+    "aliases": [
+      "ABU ROAD",
+      "MOUNT ABU",
+      "ABR"
+    ]
+  },
+  {
+    "code": "AII",
+    "name": "Ajmer Junction",
+    "hindi": "अजमेर",
+    "city": "Ajmer",
+    "state": "Rajasthan",
+    "aliases": [
+      "AJMER",
+      "AII"
+    ]
+  },
+  {
+    "code": "AWR",
+    "name": "Alwar Junction",
+    "hindi": "अलवर जंक्शन",
+    "city": "Alwar",
+    "state": "Rajasthan",
+    "aliases": [
+      "ALWAR",
+      "AWR"
+    ]
+  },
+  {
+    "code": "BLT",
+    "name": "Balotra",
+    "hindi": "बालोतरा",
+    "city": "Balotra",
+    "state": "Rajasthan",
+    "aliases": [
+      "BALOTRA",
+      "BLT"
+    ]
+  },
+  {
+    "code": "BKI",
+    "name": "Bandikui Junction",
+    "hindi": "बांदीकुई जंक्शन",
+    "city": "Dausa",
+    "state": "Rajasthan",
+    "aliases": [
+      "BANDIKUI",
+      "BKI"
+    ]
+  },
+  {
+    "code": "BME",
+    "name": "Barmer",
+    "hindi": "बाड़मेर",
+    "city": "Barmer",
+    "state": "Rajasthan",
+    "aliases": [
+      "BARMER",
+      "BME"
+    ]
+  },
+  {
+    "code": "BGKT",
+    "name": "Bhagat Ki Kothi",
+    "hindi": "भगत की कोठी",
+    "city": "Jodhpur",
+    "state": "Rajasthan",
+    "aliases": [
+      "JODHPUR BGKT",
+      "BGKT"
+    ]
+  },
+  {
+    "code": "BTE",
+    "name": "Bharatpur Junction",
+    "hindi": "भरतपुर जंक्शन",
+    "city": "Bharatpur",
+    "state": "Rajasthan",
+    "aliases": [
+      "BHARATPUR",
+      "BTE"
+    ]
+  },
+  {
+    "code": "BHL",
+    "name": "Bhilwara",
+    "hindi": "भीलवाड़ा",
+    "city": "Bhilwara",
+    "state": "Rajasthan",
+    "aliases": [
+      "BHILWARA",
+      "BHL"
+    ]
+  },
+  {
+    "code": "BKN",
+    "name": "Bikaner Junction",
+    "hindi": "बीकानेर",
+    "city": "Bikaner",
+    "state": "Rajasthan",
+    "aliases": [
+      "BIKANER",
+      "BKN"
+    ]
+  },
+  {
+    "code": "COR",
+    "name": "Chittaurgarh Junction",
+    "hindi": "चित्तौड़गढ़",
+    "city": "Chittorgarh",
+    "state": "Rajasthan",
+    "aliases": [
+      "CHITTORGARH",
+      "CHITTAURGARH",
+      "COR"
+    ]
+  },
+  {
+    "code": "CUR",
+    "name": "Churu",
+    "hindi": "चूरू",
+    "city": "Churu",
+    "state": "Rajasthan",
+    "aliases": [
+      "CHURU",
+      "CUR"
+    ]
+  },
+  {
+    "code": "DNA",
+    "name": "Degana Junction",
+    "hindi": "डेगाना जंक्शन",
+    "city": "Degana",
+    "state": "Rajasthan",
+    "aliases": [
+      "DEGANA",
+      "DNA"
+    ]
+  },
+  {
+    "code": "DPA",
+    "name": "Durgapura",
+    "hindi": "दुर्गापुरा",
+    "city": "Jaipur",
+    "state": "Rajasthan",
+    "aliases": [
+      "DURGAPURA JAIPUR",
+      "DPA"
+    ]
+  },
+  {
+    "code": "FA",
+    "name": "Falna",
+    "hindi": "फालना",
+    "city": "Falna",
+    "state": "Rajasthan",
+    "aliases": [
+      "FALNA",
+      "FA"
+    ]
+  },
+  {
+    "code": "GADJ",
+    "name": "Gandhinagar Jaipur",
+    "hindi": "गांधीनगर जयपुर",
+    "city": "Jaipur",
+    "state": "Rajasthan",
+    "aliases": [
+      "JAIPUR GANDHINAGAR",
+      "GADJ"
+    ]
+  },
+  {
+    "code": "HMH",
+    "name": "Hanumangarh Junction",
+    "hindi": "हनुमानगढ़",
+    "city": "Hanumangarh",
+    "state": "Rajasthan",
+    "aliases": [
+      "HANUMANGARH",
+      "HMH"
+    ]
+  },
+  {
+    "code": "JP",
+    "name": "Jaipur Junction",
+    "hindi": "जयपुर",
+    "city": "Jaipur",
+    "state": "Rajasthan",
+    "aliases": [
+      "JAIPUR",
+      "JP",
+      "PINK CITY"
+    ]
+  },
+  {
+    "code": "JSM",
+    "name": "Jaisalmer",
+    "hindi": "जैसलमेर",
+    "city": "Jaisalmer",
+    "state": "Rajasthan",
+    "aliases": [
+      "JAISALMER",
+      "JSM"
+    ]
+  },
+  {
+    "code": "JU",
+    "name": "Jodhpur Junction",
+    "hindi": "जोधपुर",
+    "city": "Jodhpur",
+    "state": "Rajasthan",
+    "aliases": [
+      "JODHPUR",
+      "JU"
+    ]
+  },
+  {
+    "code": "KSG",
+    "name": "Kishangarh",
+    "hindi": "किशनगढ़",
+    "city": "Kishangarh",
+    "state": "Rajasthan",
+    "aliases": [
+      "KISHANGARH",
+      "KSG"
+    ]
+  },
+  {
+    "code": "KOTA",
+    "name": "Kota Junction",
+    "hindi": "कोटा",
+    "city": "Kota",
+    "state": "Rajasthan",
+    "aliases": [
+      "KOTA",
+      "KOTA JN"
+    ]
+  },
+  {
+    "code": "LGH",
+    "name": "Lalgarh Junction",
+    "hindi": "लालगढ़ जंक्शन",
+    "city": "Bikaner",
+    "state": "Rajasthan",
+    "aliases": [
+      "LALGARH BIKANER",
+      "LGH"
+    ]
+  },
+  {
+    "code": "MDJN",
+    "name": "Madar Junction",
+    "hindi": "मदार जंक्शन",
+    "city": "Ajmer",
+    "state": "Rajasthan",
+    "aliases": [
+      "MADAR AJMER",
+      "MDJN"
+    ]
+  },
+  {
+    "code": "MJ",
+    "name": "Marwar Junction",
+    "hindi": "मारवाड़ जंक्शन",
+    "city": "Marwar",
+    "state": "Rajasthan",
+    "aliases": [
+      "MARWAR JN",
+      "MJ"
+    ]
+  },
+  {
+    "code": "NGO",
+    "name": "Nagaur",
+    "hindi": "नागौर",
+    "city": "Nagaur",
+    "state": "Rajasthan",
+    "aliases": [
+      "NAGAUR",
+      "NGO"
+    ]
+  },
+  {
+    "code": "FL",
+    "name": "Phulera Junction",
+    "hindi": "फुलेरा जंक्शन",
+    "city": "Phulera",
+    "state": "Rajasthan",
+    "aliases": [
+      "PHULERA",
+      "FL"
+    ]
+  },
+  {
+    "code": "RPZ",
+    "name": "Ranapratapnagar",
+    "hindi": "राणाप्रतापनगर",
+    "city": "Udaipur",
+    "state": "Rajasthan",
+    "aliases": [
+      "UDAIPUR RPZ",
+      "RPZ"
+    ]
+  },
+  {
+    "code": "RANI",
+    "name": "Rani",
+    "hindi": "रानी",
+    "city": "Rani",
+    "state": "Rajasthan",
+    "aliases": [
+      "RANI",
+      "RANI STATION"
+    ]
+  },
+  {
+    "code": "RTGH",
+    "name": "Ratangarh Junction",
+    "hindi": "रतनगढ़",
+    "city": "Ratangarh",
+    "state": "Rajasthan",
+    "aliases": [
+      "RATANGARH",
+      "RTGH"
+    ]
+  },
+  {
+    "code": "RGS",
+    "name": "Ringas Junction",
+    "hindi": "रींगस जंक्शन",
+    "city": "Ringas",
+    "state": "Rajasthan",
+    "aliases": [
+      "RINGAS",
+      "KHATU SHYAM",
+      "RGS"
+    ]
+  },
+  {
+    "code": "SWM",
+    "name": "Sawai Madhopur Junction",
+    "hindi": "सवाई माधोपुर",
+    "city": "Sawai Madhopur",
+    "state": "Rajasthan",
+    "aliases": [
+      "SAWAI MADHOPUR",
+      "RANTHAMBORE",
+      "SWM"
+    ]
+  },
+  {
+    "code": "SGNR",
+    "name": "Shri Ganganagar Junction",
+    "hindi": "श्री गंगानगर",
+    "city": "Sri Ganganagar",
+    "state": "Rajasthan",
+    "aliases": [
+      "GANGANAGAR",
+      "SGNR"
+    ]
+  },
+  {
+    "code": "SIKR",
+    "name": "Sikar Junction",
+    "hindi": "सीकर जंक्शन",
+    "city": "Sikar",
+    "state": "Rajasthan",
+    "aliases": [
+      "SIKAR",
+      "SIKR"
+    ]
+  },
+  {
+    "code": "SOG",
+    "name": "Suratgarh Junction",
+    "hindi": "सूरतगढ़",
+    "city": "Suratgarh",
+    "state": "Rajasthan",
+    "aliases": [
+      "SURATGARH",
+      "SOG"
+    ]
+  },
+  {
+    "code": "UDZ",
+    "name": "Udaipur City",
+    "hindi": "उदयपुर सिटी",
+    "city": "Udaipur",
+    "state": "Rajasthan",
+    "aliases": [
+      "UDAIPUR",
+      "UDZ"
+    ]
+  },
+  {
+    "code": "MS",
+    "name": "Chennai Egmore",
+    "hindi": "चेन्नई एग्मोर",
+    "city": "Chennai",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "EGMORE",
+      "MS",
+      "CHENNAI EGMORE"
+    ]
+  },
+  {
+    "code": "CBE",
+    "name": "Coimbatore Junction",
+    "hindi": "कोयंबटूर",
+    "city": "Coimbatore",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "COIMBATORE",
+      "CBE"
+    ]
+  },
+  {
+    "code": "ED",
+    "name": "Erode Junction",
+    "hindi": "इरोड",
+    "city": "Erode",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "ERODE",
+      "ED"
+    ]
+  },
+  {
+    "code": "CAPE",
+    "name": "Kanniyakumari",
+    "hindi": "कन्याकुमारी",
+    "city": "Kanyakumari",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "KANYAKUMARI",
+      "CAPE"
+    ]
+  },
+  {
+    "code": "MAS",
+    "name": "MGR Chennai Central",
+    "hindi": "चेन्नई सेंट्रल",
+    "city": "Chennai",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "CHENNAI",
+      "MADRAS",
+      "CHENNAI CENTRAL",
+      "MAS"
+    ]
+  },
+  {
+    "code": "MDU",
+    "name": "Madurai Junction",
+    "hindi": "मदुरै",
+    "city": "Madurai",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "MADURAI",
+      "MDU"
+    ]
+  },
+  {
+    "code": "RMM",
+    "name": "Rameswaram",
+    "hindi": "रामेश्वरम",
+    "city": "Rameswaram",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "RAMESWARAM",
+      "RMM"
+    ]
+  },
+  {
+    "code": "SA",
+    "name": "Salem Junction",
+    "hindi": "सलेम",
+    "city": "Salem",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "SALEM",
+      "SA"
+    ]
+  },
+  {
+    "code": "TBM",
+    "name": "Tambaram",
+    "hindi": "तांबरम",
+    "city": "Chennai",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "TAMBARAM",
+      "CHENNAI TAMBARAM",
+      "TBM"
+    ]
+  },
+  {
+    "code": "TPJ",
+    "name": "Tiruchchirappalli Junction",
+    "hindi": "तिरुचिरापल्ली",
+    "city": "Tiruchirappalli",
+    "state": "Tamil Nadu",
+    "aliases": [
+      "TRICHY",
+      "TPJ"
+    ]
+  },
+  {
+    "code": "HYB",
+    "name": "Hyderabad Deccan Nampally",
+    "hindi": "हैदराबाद",
+    "city": "Hyderabad",
+    "state": "Telangana",
+    "aliases": [
+      "HYDERABAD",
+      "HYB",
+      "NAMPALLY"
+    ]
+  },
+  {
+    "code": "KCG",
+    "name": "Kacheguda",
+    "hindi": "काचेगुडा",
+    "city": "Hyderabad",
+    "state": "Telangana",
+    "aliases": [
+      "KACHEGUDA",
+      "KCG"
+    ]
+  },
+  {
+    "code": "KZJ",
+    "name": "Kazipet Junction",
+    "hindi": "काजीपेट",
+    "city": "Warangal",
+    "state": "Telangana",
+    "aliases": [
+      "KAZIPET",
+      "KZJ"
+    ]
+  },
+  {
+    "code": "SC",
+    "name": "Secunderabad Junction",
+    "hindi": "सिकंदराबाद",
+    "city": "Hyderabad",
+    "state": "Telangana",
+    "aliases": [
+      "SECUNDERABAD",
+      "SC"
+    ]
+  },
+  {
+    "code": "WL",
+    "name": "Warangal",
+    "hindi": "वारंगल",
+    "city": "Warangal",
+    "state": "Telangana",
+    "aliases": [
+      "WARANGAL",
+      "WL"
+    ]
+  },
+  {
+    "code": "AGC",
+    "name": "Agra Cantt",
+    "hindi": "आगरा कैंट",
+    "city": "Agra",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "AGRA",
+      "AGRA CANTT",
+      "AGC"
+    ]
+  },
+  {
+    "code": "AF",
+    "name": "Agra Fort",
+    "hindi": "आगरा फोर्ट",
+    "city": "Agra",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "AF",
+      "AGRA FORT"
+    ]
+  },
+  {
+    "code": "ALJN",
+    "name": "Aligarh Junction",
+    "hindi": "अलीगढ़",
+    "city": "Aligarh",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "ALJN",
+      "ALIGARH"
+    ]
+  },
+  {
+    "code": "AYC",
+    "name": "Ayodhya Cantt",
+    "hindi": "अयोध्या कैंट",
+    "city": "Ayodhya",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "FD",
+      "AYC",
+      "AYODHYA CANTT",
+      "FAIZABAD"
+    ]
+  },
+  {
+    "code": "AY",
+    "name": "Ayodhya Dham Junction",
+    "hindi": "अयोध्या धाम",
+    "city": "Ayodhya",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "AY",
+      "AYODHYA DHAM",
+      "AYODHYA"
+    ]
+  },
+  {
+    "code": "BUI",
+    "name": "Ballia",
+    "hindi": "बलिया",
+    "city": "Ballia",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "BALLIA",
+      "BUI"
+    ]
+  },
+  {
+    "code": "BSBS",
+    "name": "Banaras",
+    "hindi": "बनारस",
+    "city": "Varanasi",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "BANARAS STATION",
+      "MANDUADIH",
+      "BANARAS",
+      "BSBS"
+    ]
+  },
+  {
+    "code": "BE",
+    "name": "Bareilly Junction",
+    "hindi": "बरेली",
+    "city": "Bareilly",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "BAREILLY",
+      "BE"
+    ]
+  },
+  {
+    "code": "BST",
+    "name": "Basti",
+    "hindi": "बस्ती",
+    "city": "Basti",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "BASTI",
+      "BST"
+    ]
+  },
+  {
+    "code": "ETW",
+    "name": "Etawah Junction",
+    "hindi": "इटावा जंक्शन",
+    "city": "Etawah",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "ETAWAH",
+      "ETW"
+    ]
+  },
+  {
+    "code": "GZB",
+    "name": "Ghaziabad Junction",
+    "hindi": "गाज़ियाबाद",
+    "city": "Ghaziabad",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "GHAZIABAD",
+      "GZB"
+    ]
+  },
+  {
+    "code": "GD",
+    "name": "Gonda Junction",
+    "hindi": "गोंडा जंक्शन",
+    "city": "Gonda",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "GONDA",
+      "GD"
+    ]
+  },
+  {
+    "code": "GKP",
+    "name": "Gorakhpur Junction",
+    "hindi": "गोरखपुर",
+    "city": "Gorakhpur",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "GKP",
+      "GORAKHPUR"
+    ]
+  },
+  {
+    "code": "HPU",
+    "name": "Hapur Junction",
+    "hindi": "हापुड़",
+    "city": "Hapur",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "HAPUR",
+      "HPU"
+    ]
+  },
+  {
+    "code": "HRI",
+    "name": "Hardoi",
+    "hindi": "हरदोई",
+    "city": "Hardoi",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "HARDOI",
+      "HRI"
+    ]
+  },
+  {
+    "code": "JOP",
+    "name": "Jaunpur City",
+    "hindi": "जौनपुर",
+    "city": "Jaunpur",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "JAUNPUR",
+      "JOP"
+    ]
+  },
+  {
+    "code": "CNB",
+    "name": "Kanpur Central",
+    "hindi": "कानपुर सेंट्रल",
+    "city": "Kanpur",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "KANPUR",
+      "CNB",
+      "CAWNPORE"
+    ]
+  },
+  {
+    "code": "LKO",
+    "name": "Lucknow Charbagh",
+    "hindi": "लखनऊ चारबाग",
+    "city": "Lucknow",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "LUCKNOW",
+      "LKO",
+      "CHARBAGH"
+    ]
+  },
+  {
+    "code": "LJN",
+    "name": "Lucknow Junction NER",
+    "hindi": "लखनऊ जंक्शन",
+    "city": "Lucknow",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "LUCKNOW JN",
+      "LJN"
+    ]
+  },
+  {
+    "code": "PBH",
+    "name": "Maa Belha Devi Dham Pratapgarh",
+    "hindi": "प्रतापगढ़",
+    "city": "Pratapgarh",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "PRATAPGARH",
+      "PBH"
+    ]
+  },
+  {
+    "code": "MTJ",
+    "name": "Mathura Junction",
+    "hindi": "मथुरा",
+    "city": "Mathura",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "VRINDAVAN",
+      "MTJ",
+      "MATHURA"
+    ]
+  },
+  {
+    "code": "MAU",
+    "name": "Mau Junction",
+    "hindi": "मऊ जंक्शन",
+    "city": "Mau",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "MAU",
+      "MAU NATH BHANJAN"
+    ]
+  },
+  {
+    "code": "MTC",
+    "name": "Meerut City",
+    "hindi": "मेरठ सिटी",
+    "city": "Meerut",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "MEERUT",
+      "MTC"
+    ]
+  },
+  {
+    "code": "MB",
+    "name": "Moradabad Junction",
+    "hindi": "मुरादाबाद",
+    "city": "Moradabad",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "MB",
+      "MORADABAD"
+    ]
+  },
+  {
+    "code": "ORAI",
+    "name": "Orai",
+    "hindi": "उरई",
+    "city": "Orai",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "ORAI"
+    ]
+  },
+  {
+    "code": "PRYJ",
+    "name": "Prayagraj Junction",
+    "hindi": "प्रयागराज जंक्शन",
+    "city": "Prayagraj",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "PRAYAGRAJ",
+      "ALLAHABAD",
+      "PRYJ",
+      "ALD"
+    ]
+  },
+  {
+    "code": "DDU",
+    "name": "Pt Deen Dayal Upadhyaya Junction",
+    "hindi": "पं दीन दयाल उपाध्याय",
+    "city": "Mughalsarai",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "MGS",
+      "DEEN DAYAL UPADHYAY",
+      "MUGHALSARAI",
+      "DEEN DAYAL",
+      "DDU"
+    ]
+  },
+  {
+    "code": "RBL",
+    "name": "Rae Bareli Junction",
+    "hindi": "रायबरेली",
+    "city": "Rae Bareli",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "RAE BARELI",
+      "RBL"
+    ]
+  },
+  {
+    "code": "SRE",
+    "name": "Saharanpur Junction",
+    "hindi": "सहारनपुर",
+    "city": "Saharanpur",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "SAHARANPUR",
+      "SRE"
+    ]
+  },
+  {
+    "code": "SPN",
+    "name": "Shahjahanpur",
+    "hindi": "शाहजहांपुर",
+    "city": "Shahjahanpur",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "SHAHJAHANPUR",
+      "SPN"
+    ]
+  },
+  {
+    "code": "SLN",
+    "name": "Sultanpur Junction",
+    "hindi": "सुल्तानपुर",
+    "city": "Sultanpur",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "SULTANPUR",
+      "SLN"
+    ]
+  },
+  {
+    "code": "TDL",
+    "name": "Tundla Junction",
+    "hindi": "टूंडला जंक्शन",
+    "city": "Tundla",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "TUNDLA",
+      "TDL"
+    ]
+  },
+  {
+    "code": "BSB",
+    "name": "Varanasi Junction",
+    "hindi": "वाराणसी जंक्शन",
+    "city": "Varanasi",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "VARANASI",
+      "BANARAS",
+      "KASHI",
+      "BSB"
+    ]
+  },
+  {
+    "code": "VGLJ",
+    "name": "Virangana Lakshmibai Jhansi",
+    "hindi": "वीरांगना लक्ष्मीबाई झांसी",
+    "city": "Jhansi",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "JHANSI",
+      "VGLJ",
+      "JHS"
+    ]
+  },
+  {
+    "code": "JHS",
+    "name": "Virangana Lakshmibai Jhansi",
+    "hindi": "वीरांगना लक्ष्मीबाई झाँसी",
+    "city": "Jhansi",
+    "state": "Uttar Pradesh",
+    "aliases": [
+      "JHANSI",
+      "VGLB",
+      "JHS"
+    ]
+  },
+  {
+    "code": "DDN",
+    "name": "Dehradun",
+    "hindi": "देहरादून",
+    "city": "Dehradun",
+    "state": "Uttarakhand",
+    "aliases": [
+      "DEHRADUN",
+      "DDN"
+    ]
+  },
+  {
+    "code": "HW",
+    "name": "Haridwar",
+    "hindi": "हरिद्वार",
+    "city": "Haridwar",
+    "state": "Uttarakhand",
+    "aliases": [
+      "HARIDWAR",
+      "HW"
+    ]
+  },
+  {
+    "code": "KGM",
+    "name": "Kathgodam",
+    "hindi": "काठगोदाम",
+    "city": "Nainital",
+    "state": "Uttarakhand",
+    "aliases": [
+      "KGM",
+      "NAINITAL",
+      "KATHGODAM"
+    ]
+  },
+  {
+    "code": "RK",
+    "name": "Roorkee",
+    "hindi": "रुड़की",
+    "city": "Roorkee",
+    "state": "Uttarakhand",
+    "aliases": [
+      "ROORKEE",
+      "RK"
+    ]
+  },
+  {
+    "code": "YNRK",
+    "name": "Yog Nagari Rishikesh",
+    "hindi": "योग नगरी ऋषिकेश",
+    "city": "Rishikesh",
+    "state": "Uttarakhand",
+    "aliases": [
+      "RISHIKESH",
+      "YOG NAGARI",
+      "YNRK"
+    ]
+  },
+  {
+    "code": "BWN",
+    "name": "Barddhaman Junction",
+    "hindi": "बर्द्धमान",
+    "city": "Bardhaman",
+    "state": "West Bengal",
+    "aliases": [
+      "BARDDHAMAN",
+      "BURDWAN",
+      "BWN"
+    ]
+  },
+  {
+    "code": "DGR",
+    "name": "Durgapur",
+    "hindi": "दुर्गापुर",
+    "city": "Durgapur",
+    "state": "West Bengal",
+    "aliases": [
+      "DURGAPUR",
+      "DGR"
+    ]
+  },
+  {
+    "code": "HWH",
+    "name": "Howrah Junction",
+    "hindi": "हावड़ा",
+    "city": "Kolkata",
+    "state": "West Bengal",
+    "aliases": [
+      "HOWRAH",
+      "KOLKATA",
+      "CALCUTTA",
+      "HWH"
+    ]
+  },
+  {
+    "code": "KGP",
+    "name": "Kharagpur Junction",
+    "hindi": "खड़गपुर",
+    "city": "Kharagpur",
+    "state": "West Bengal",
+    "aliases": [
+      "KHARAGPUR",
+      "KGP"
+    ]
+  },
+  {
+    "code": "KOAA",
+    "name": "Kolkata Chitpur",
+    "hindi": "कोलकाता",
+    "city": "Kolkata",
+    "state": "West Bengal",
+    "aliases": [
+      "KOLKATA TERMINAL",
+      "CHITPUR",
+      "KOAA"
+    ]
+  },
+  {
+    "code": "MLDT",
+    "name": "Malda Town",
+    "hindi": "मालदा टाउन",
+    "city": "Malda",
+    "state": "West Bengal",
+    "aliases": [
+      "MALDA",
+      "MLDT"
+    ]
+  },
+  {
+    "code": "NJP",
+    "name": "New Jalpaiguri",
+    "hindi": "न्यू जलपाईगुड़ी",
+    "city": "Siliguri",
+    "state": "West Bengal",
+    "aliases": [
+      "NEW JALPAIGURI",
+      "SILIGURI",
+      "NJP",
+      "DARJEELING"
+    ]
+  },
+  {
+    "code": "SRC",
+    "name": "Santragachi Junction",
+    "hindi": "संत्रागाछी",
+    "city": "Howrah",
+    "state": "West Bengal",
+    "aliases": [
+      "SANTRAGACHI",
+      "SRC"
+    ]
+  },
+  {
+    "code": "SDAH",
+    "name": "Sealdah",
+    "hindi": "सियालदह",
+    "city": "Kolkata",
+    "state": "West Bengal",
+    "aliases": [
+      "SEALDAH",
+      "SDAH"
+    ]
+  },
+  {
+    "code": "SHM",
+    "name": "Shalimar",
+    "hindi": "शालीमार",
+    "city": "Kolkata",
+    "state": "West Bengal",
+    "aliases": [
+      "SHALIMAR",
+      "KOLKATA SHALIMAR",
+      "SHM"
+    ]
+  }
+]

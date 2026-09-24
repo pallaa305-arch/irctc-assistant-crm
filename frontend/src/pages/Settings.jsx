@@ -16,7 +16,6 @@ export default function Settings() {
   const [settings, setSettings] = useState(null);
   const [irctcUser, setIrctcUser] = useState('');
   const [irctcPassword, setIrctcPassword] = useState('');
-  const [demoMode, setDemoMode] = useState(false);
   const [browserHeadless, setBrowserHeadless] = useState(false);
   const [slowMo, setSlowMo] = useState(150);
   const [savedSuccess, setSavedSuccess] = useState(false);
@@ -27,7 +26,6 @@ export default function Settings() {
       setSettings(d);
       setIrctcUser(d.irctc_username || '');
       setIrctcPassword(d.irctc_password_masked || '');
-      setDemoMode(d.demo_mode ?? false);
       setBrowserHeadless(d.browser_headless ?? false);
       setSlowMo(d.browser_slow_mo ?? 150);
     });
@@ -39,7 +37,6 @@ export default function Settings() {
       await updateSettings({
         irctc_username: irctcUser,
         irctc_password: irctcPassword,
-        demo_mode: demoMode,
         browser_headless: browserHeadless,
         browser_slow_mo: parseInt(slowMo) || 150,
       });
@@ -148,21 +145,6 @@ export default function Settings() {
                 <span className="font-bold text-zinc-900 dark:text-white">Visible Browser Mode (Recommended)</span>
                 <p className="text-[11px] text-zinc-400">
                   Launches a real Chromium window so you can watch progress and seamlessly enter CAPTCHA/OTP.
-                </p>
-              </div>
-            </label>
-
-            <label className="flex items-center gap-3 cursor-pointer p-3 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-zinc-200/60 dark:border-zinc-800">
-              <input
-                type="checkbox"
-                checked={demoMode}
-                onChange={(e) => setDemoMode(e.target.checked)}
-                className="rounded text-emerald-600 focus:ring-emerald-500"
-              />
-              <div>
-                <span className="font-bold text-zinc-900 dark:text-white">Default to Demo Mode</span>
-                <p className="text-[11px] text-zinc-400">
-                  Safe test runs without real financial charges or IRCTC website traffic.
                 </p>
               </div>
             </label>

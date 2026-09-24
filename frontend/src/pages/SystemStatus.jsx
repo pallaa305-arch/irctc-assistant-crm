@@ -142,7 +142,7 @@ export default function SystemStatus() {
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2 text-zinc-600 dark:text-zinc-400">
           <div>
             <span className="text-[10px] text-zinc-400 uppercase">MODE</span>
-            <p className="font-semibold text-zinc-900 dark:text-white">{status?.demo_mode ? 'Safe Demo Mode' : 'Live Production'}</p>
+            <p className="font-semibold text-emerald-600 dark:text-emerald-400">Live Official IRCTC Mode</p>
           </div>
           <div>
             <span className="text-[10px] text-zinc-400 uppercase">ENVIRONMENT</span>

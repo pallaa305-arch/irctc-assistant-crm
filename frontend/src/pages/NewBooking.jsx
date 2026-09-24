@@ -11,9 +11,18 @@ import {
   Train, 
   AlertCircle,
   CheckCircle2,
-  Bookmark
+  Bookmark,
+  Clock,
+  ArrowRight,
+  Loader2,
+  Sparkles,
+  Zap,
+  Filter,
+  ArrowLeftRight
 } from 'lucide-react';
-import { startBooking, fetchPassengers, fetchJourneys } from '../services/api';
+import { startBooking, fetchPassengers, fetchJourneys, searchTrains } from '../services/api';
+import StationSelector from '../components/StationSelector';
+import ModernDatePicker from '../components/ModernDatePicker';
 
 export default function NewBooking({ onBookingStarted }) {
   // Form fields
@@ -30,7 +39,12 @@ export default function NewBooking({ onBookingStarted }) {
   const [trainPreference, setTrainPreference] = useState('12002');
   const [contactMobile, setContactMobile] = useState('9876543210');
   const [contactEmail, setContactEmail] = useState('user@example.com');
-  const [demoMode, setDemoMode] = useState(false);
+
+  // Timing filter & Auto-fetched trains on selected route
+  const [timingFilter, setTimingFilter] = useState('ALL');
+  const [routeTrains, setRouteTrains] = useState([]);
+  const [loadingTrains, setLoadingTrains] = useState(false);
+  const [selectedTrainObj, setSelectedTrainObj] = useState(null);
 
   // Passengers list
   const [passengers, setPassengers] = useState([
@@ -50,6 +64,45 @@ export default function NewBooking({ onBookingStarted }) {
     fetchPassengers().then(setSavedPassengers).catch(() => {});
     fetchJourneys().then(setSavedJourneys).catch(() => {});
   }, []);
+
+  // Auto-fetch trains and timings whenever route changes
+  useEffect(() => {
+    const f = (fromStation || '').trim();
+    const t = (toStation || '').trim();
+    if (f.length >= 2 && t.length >= 2) {
+      setLoadingTrains(true);
+      const timer = setTimeout(() => {
+        searchTrains(f, t)
+          .then((res) => {
+            const list = res.trains || [];
+            setRouteTrains(list);
+            if (list.length > 0) {
+              const currentMatch = list.find((item) => item.train_number === trainPreference);
+              if (currentMatch) {
+                setSelectedTrainObj(currentMatch);
+              } else {
+                setSelectedTrainObj(list[0]);
+                setTrainPreference(list[0].train_number);
+                if (list[0].classes && !list[0].classes.includes(journeyClass)) {
+                  setJourneyClass(list[0].classes[0]);
+                }
+              }
+            } else {
+              setSelectedTrainObj(null);
+            }
+          })
+          .catch(() => {
+            setRouteTrains([]);
+            setSelectedTrainObj(null);
+          })
+          .finally(() => setLoadingTrains(false));
+      }, 350);
+      return () => clearTimeout(timer);
+    } else {
+      setRouteTrains([]);
+      setSelectedTrainObj(null);
+    }
+  }, [fromStation, toStation]);
 
   const handleAddPassenger = () => {
     if (passengers.length >= 6) {
@@ -97,6 +150,22 @@ export default function NewBooking({ onBookingStarted }) {
     }
   };
 
+  const selectTrain = (train, targetClass = null) => {
+    setTrainPreference(train.train_number);
+    setSelectedTrainObj(train);
+    if (targetClass) {
+      setJourneyClass(targetClass);
+    } else if (train.classes && !train.classes.includes(journeyClass)) {
+      setJourneyClass(train.classes[0]);
+    }
+  };
+
+  const handleSwapStations = () => {
+    const prevFrom = fromStation;
+    setFromStation(toStation);
+    setToStation(prevFrom);
+  };
+
   const applySavedJourney = (j) => {
     setFromStation(j.from_station);
     setToStation(j.to_station);
@@ -115,52 +184,102 @@ export default function NewBooking({ onBookingStarted }) {
       setErrorMsg('Please specify origin and destination stations.');
       return;
     }
-    for (let p of passengers) {
+    if (fromStation.trim().toUpperCase() === toStation.trim().toUpperCase()) {
+      setErrorMsg('Origin and destination stations cannot be the same.');
+      return;
+    }
+    if (!journeyDate) {
+      setErrorMsg('Please select a journey date.');
+      return;
+    }
+    if (passengers.length === 0) {
+      setErrorMsg('At least one passenger is required.');
+      return;
+    }
+    for (let i = 0; i < passengers.length; i++) {
+      const p = passengers[i];
       if (!p.name.trim()) {
-        setErrorMsg('Please enter a name for all passengers.');
+        setErrorMsg(`Passenger #${i + 1} name is required.`);
+        return;
+      }
+      if (!p.age || p.age < 1 || p.age > 125) {
+        setErrorMsg(`Passenger #${i + 1} age must be between 1 and 125.`);
         return;
       }
     }
+    if (!contactMobile || contactMobile.length < 10) {
+      setErrorMsg('Valid 10-digit mobile number is required.');
+      return;
+    }
+
     setShowSummaryModal(true);
   };
 
-  const handleConfirmAndStart = async (allowDuplicate = false) => {
+  const handleConfirmAndStart = async (forceDuplicate = false) => {
     setSubmitting(true);
     setErrorMsg(null);
+
     try {
-      const isDuplicateAllowed = typeof allowDuplicate === 'boolean' ? allowDuplicate : false;
       const payload = {
-        from_station: fromStation,
-        to_station: toStation,
-        boarding_station: boardingStation,
+        from_station: fromStation.trim().toUpperCase(),
+        to_station: toStation.trim().toUpperCase(),
+        boarding_station: (boardingStation || fromStation).trim().toUpperCase(),
         journey_date: journeyDate,
         journey_class: journeyClass,
         quota: quota,
-        train_preference: trainPreference,
-        contact_mobile: contactMobile,
-        contact_email: contactEmail,
-        passengers: passengers,
-        demo_mode: demoMode,
-        allow_duplicate: isDuplicateAllowed
+        train_preference: (trainPreference || '').trim() || undefined,
+        contact_mobile: contactMobile.trim(),
+        contact_email: (contactEmail || '').trim() || undefined,
+        auto_pay: true,
+        force_duplicate: forceDuplicate,
+        passengers: passengers.map((p) => ({
+          name: p.name.trim().toUpperCase(),
+          age: parseInt(p.age, 10),
+          gender: p.gender,
+          berth_preference: p.berth_preference,
+          food_preference: p.food_preference,
+        })),
       };
 
       const res = await startBooking(payload);
       setShowSummaryModal(false);
-      onBookingStarted(res.booking_ref);
+      if (onBookingStarted) {
+        onBookingStarted(res.booking_ref || res.booking_id);
+      }
     } catch (err) {
-      setErrorMsg(err.message || 'Failed to initiate booking.');
+      setErrorMsg(err.message || 'Failed to start booking');
       setShowSummaryModal(false);
     } finally {
       setSubmitting(false);
     }
   };
 
+  const TIMING_FILTERS = [
+    { id: 'ALL', label: 'All Trains' },
+    { id: 'morning', label: '🌅 Morning (06-12)' },
+    { id: 'afternoon', label: '☀️ Afternoon (12-18)' },
+    { id: 'evening', label: '🌆 Evening (18-24)' },
+    { id: 'night', label: '🌙 Night (00-06)' },
+    { id: 'tatkal', label: '⚡ Tatkal Ready' },
+  ];
+
+  // Filtered route trains based on morning/evening/all
+  const filteredTrains = routeTrains.filter((tr) => {
+    if (timingFilter === 'ALL') return true;
+    return tr.timing_slot === timingFilter;
+  });
+
+  const selectedCoach = selectedTrainObj?.coaches?.find((c) => c.class_code === journeyClass) || selectedTrainObj?.coaches?.[0];
+  const passengerCount = passengers.length;
+  const farePerPerson = selectedCoach?.fare || 0;
+  const totalEstimatedFare = farePerPerson * passengerCount;
+
   return (
     <div className="max-w-4xl mx-auto space-y-6 animate-fade-in pb-12">
       <div>
         <h2 className="text-2xl font-bold text-zinc-900 dark:text-white">Prepare New Ticket Booking</h2>
         <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-1">
-          Configure journey details, passengers, and automation boundaries.
+          Configure journey details, live station lookup, passengers, and automation boundaries.
         </p>
       </div>
 
@@ -206,45 +325,61 @@ export default function NewBooking({ onBookingStarted }) {
       )}
 
       <form onSubmit={handleReviewClick} className="space-y-6">
-        {/* Section 1: Journey Details */}
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 shadow-xs space-y-4">
-          <div className="flex items-center gap-2 border-b border-zinc-100 dark:border-zinc-800 pb-3">
-            <MapPin className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
-            <h3 className="font-bold text-sm text-zinc-900 dark:text-white">1. Journey Information</h3>
+        {/* Section 1: Journey Details (Glass Panel) */}
+        <div className="relative z-20 glass-panel rounded-2xl p-6 shadow-lg border border-zinc-200/70 dark:border-white/10 space-y-5">
+          <div className="flex items-center justify-between border-b border-zinc-200/60 dark:border-zinc-800/80 pb-3.5">
+            <div className="flex items-center gap-2">
+              <div className="p-1.5 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                <MapPin className="w-4 h-4" />
+              </div>
+              <h3 className="font-bold text-sm text-zinc-900 dark:text-white">1. Journey Information</h3>
+            </div>
+            <span className="text-[11px] text-zinc-400">
+              Live Indian Railways Resolution
+            </span>
           </div>
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">From Station</label>
-              <input
-                type="text"
+          {/* Row 1: Station Selector with Swap Button */}
+          <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-end">
+            <div className="sm:col-span-5">
+              <StationSelector
+                label="From Station"
                 value={fromStation}
-                onChange={(e) => setFromStation(e.target.value.toUpperCase())}
-                placeholder="e.g. NDLS or NEW DELHI"
-                className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-emerald-500"
+                onChange={setFromStation}
+                placeholder="Search station or state (e.g. Rajasthan, NDLS)..."
                 required
               />
             </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">To Station</label>
-              <input
-                type="text"
+            <div className="sm:col-span-2 flex justify-center pb-0.5">
+              <button
+                type="button"
+                onClick={handleSwapStations}
+                title="Swap From and To stations"
+                className="w-11 h-11 rounded-xl bg-zinc-100/80 hover:bg-emerald-50 text-zinc-600 hover:text-emerald-600 dark:bg-zinc-800/80 dark:hover:bg-zinc-700 dark:text-zinc-300 border border-zinc-200/80 dark:border-zinc-700/80 flex items-center justify-center transition-all duration-200 hover:scale-105 active:scale-95 shadow-xs cursor-pointer backdrop-blur-md"
+              >
+                <ArrowLeftRight className="w-4 h-4" />
+              </button>
+            </div>
+
+            <div className="sm:col-span-5">
+              <StationSelector
+                label="To Station"
                 value={toStation}
-                onChange={(e) => setToStation(e.target.value.toUpperCase())}
-                placeholder="e.g. BPL or BHOPAL"
-                className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-emerald-500"
+                onChange={setToStation}
+                placeholder="Search station or state (e.g. Mumbai, BPL)..."
                 required
               />
             </div>
+          </div>
 
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Journey Date</label>
-              <input
-                type="date"
+          {/* Row 2: Modern Date Picker + Class + Quota + Preferred Train */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-4 pt-1">
+            <div className="sm:col-span-1 md:col-span-2">
+              <ModernDatePicker
+                label="Journey Date"
                 value={journeyDate}
-                onChange={(e) => setJourneyDate(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-emerald-500"
+                onChange={setJourneyDate}
                 required
               />
             </div>
@@ -254,7 +389,7 @@ export default function NewBooking({ onBookingStarted }) {
               <select
                 value={journeyClass}
                 onChange={(e) => setJourneyClass(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-emerald-500"
+                className="w-full h-11 px-3 py-2 text-xs font-semibold rounded-xl border border-zinc-200 dark:border-zinc-700/80 bg-zinc-50/90 dark:bg-zinc-900/80 text-zinc-900 dark:text-white focus:outline-emerald-500 shadow-xs cursor-pointer"
               >
                 <option value="1A">AC First Class (1A)</option>
                 <option value="2A">AC 2 Tier (2A)</option>
@@ -268,11 +403,18 @@ export default function NewBooking({ onBookingStarted }) {
             </div>
 
             <div>
-              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Quota</label>
+              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1 flex items-center justify-between">
+                <span>Quota</span>
+                {quota === 'TQ' && (
+                  <span className="text-[10px] font-bold text-amber-500 bg-amber-500/10 px-1.5 py-0.5 rounded">
+                    ⚡ Tatkal
+                  </span>
+                )}
+              </label>
               <select
                 value={quota}
                 onChange={(e) => setQuota(e.target.value)}
-                className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-emerald-500"
+                className="w-full h-11 px-3 py-2 text-xs font-semibold rounded-xl border border-zinc-200 dark:border-zinc-700/80 bg-zinc-50/90 dark:bg-zinc-900/80 text-zinc-900 dark:text-white focus:outline-emerald-500 shadow-xs cursor-pointer"
               >
                 <option value="GN">General (GN)</option>
                 <option value="TQ">Tatkal (TQ)</option>
@@ -281,22 +423,286 @@ export default function NewBooking({ onBookingStarted }) {
                 <option value="SS">Senior Citizen (SS)</option>
               </select>
             </div>
-
-            <div>
-              <label className="block text-xs font-semibold text-zinc-700 dark:text-zinc-300 mb-1">Preferred Train No.</label>
-              <input
-                type="text"
-                value={trainPreference}
-                onChange={(e) => setTrainPreference(e.target.value)}
-                placeholder="e.g. 12002"
-                className="w-full px-3 py-2 text-xs rounded-xl border border-zinc-200 dark:border-zinc-700 bg-zinc-50 dark:bg-zinc-800 text-zinc-900 dark:text-white focus:outline-emerald-500"
-              />
-            </div>
           </div>
         </div>
 
+        {/* Section: Auto-Fetched Trains & Timings on Route */}
+        <div className="glass-panel rounded-2xl p-6 shadow-lg border border-zinc-200/70 dark:border-white/10 space-y-4">
+          <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
+            <div className="flex items-center gap-2">
+              <Train className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
+              <h3 className="font-bold text-sm text-zinc-900 dark:text-white">
+                Available Trains & Timings on Route
+              </h3>
+              {routeTrains.length > 0 && (
+                <span className="px-2 py-0.5 text-[11px] font-semibold bg-emerald-100 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-300 rounded-full">
+                  {filteredTrains.length} / {routeTrains.length} trains
+                </span>
+              )}
+            </div>
+            {loadingTrains && (
+              <div className="flex items-center gap-1.5 text-xs text-zinc-500 dark:text-zinc-400">
+                <Loader2 className="w-3.5 h-3.5 animate-spin text-emerald-500" />
+                <span>Checking live route & seat availability...</span>
+              </div>
+            )}
+          </div>
+
+          {/* Timing & Tatkal Filter Bar */}
+          {routeTrains.length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 text-xs">
+              <div className="flex items-center gap-1 text-zinc-400 font-semibold shrink-0 pr-1">
+                <Filter className="w-3.5 h-3.5" />
+                <span>Filter:</span>
+              </div>
+              {TIMING_FILTERS.map((f) => (
+                <button
+                  key={f.id}
+                  type="button"
+                  onClick={() => setTimingFilter(f.id)}
+                  className={`px-3 py-1 rounded-lg font-medium shrink-0 transition-all cursor-pointer text-xs ${
+                    timingFilter === f.id
+                      ? 'bg-emerald-600 text-white font-bold shadow-xs'
+                      : 'bg-zinc-100 dark:bg-zinc-800 text-zinc-600 dark:text-zinc-300 hover:bg-zinc-200 dark:hover:bg-zinc-700'
+                  }`}
+                >
+                  {f.label}
+                </button>
+              ))}
+            </div>
+          )}
+
+          {loadingTrains ? (
+            <div className="py-8 flex flex-col items-center justify-center text-center space-y-2 text-zinc-400">
+              <Loader2 className="w-6 h-6 animate-spin text-emerald-500" />
+              <p className="text-xs">Fetching available trains, coaches & fares for {fromStation || '...'} ➔ {toStation || '...'}</p>
+            </div>
+          ) : filteredTrains.length > 0 ? (
+            <div className="space-y-4">
+              <p className="text-[11px] text-zinc-500 dark:text-zinc-400">
+                Click any train to select. Click any coach box to choose class and lock live availability & fare:
+              </p>
+              <div className="grid grid-cols-1 gap-3.5">
+                {filteredTrains.map((tr) => {
+                  const isSelected = trainPreference === tr.train_number;
+                  return (
+                    <div
+                      key={tr.train_number}
+                      onClick={() => selectTrain(tr)}
+                      className={`relative p-4 rounded-xl border transition-all cursor-pointer ${
+                        isSelected
+                          ? 'border-emerald-500 bg-emerald-50/30 dark:bg-emerald-950/20 ring-2 ring-emerald-500/20 shadow-xs'
+                          : 'border-zinc-200/80 dark:border-zinc-800 bg-zinc-50/60 dark:bg-zinc-800/30 hover:border-zinc-300 dark:hover:border-zinc-700'
+                      }`}
+                    >
+                      {/* Top Row: Train Number, Name, Type */}
+                      <div className="flex items-start justify-between gap-2 mb-2.5">
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={`px-2 py-0.5 text-xs font-mono font-bold rounded-md ${
+                            isSelected 
+                              ? 'bg-emerald-600 text-white' 
+                              : 'bg-zinc-200 dark:bg-zinc-700 text-zinc-800 dark:text-zinc-200'
+                          }`}>
+                            {tr.train_number}
+                          </span>
+                          <span className="font-bold text-xs text-zinc-900 dark:text-white">
+                            {tr.train_name}
+                          </span>
+                          {tr.timing_slot_label && (
+                            <span className="text-[10px] font-medium px-2 py-0.5 rounded-full bg-zinc-200/60 dark:bg-zinc-700/50 text-zinc-600 dark:text-zinc-300">
+                              {tr.timing_slot_label}
+                            </span>
+                          )}
+                        </div>
+                        {isSelected ? (
+                          <span className="flex items-center gap-1 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400 shrink-0">
+                            <CheckCircle2 className="w-3.5 h-3.5" />
+                            Selected
+                          </span>
+                        ) : (
+                          tr.type && (
+                            <span className="text-[10px] font-semibold uppercase px-1.5 py-0.5 bg-zinc-200/60 dark:bg-zinc-700/60 text-zinc-600 dark:text-zinc-300 rounded shrink-0">
+                              {tr.type}
+                            </span>
+                          )
+                        )}
+                      </div>
+
+                      {/* Middle Row: Schedule / Timings */}
+                      <div className="bg-white dark:bg-zinc-900/80 rounded-lg p-2.5 border border-zinc-200/60 dark:border-zinc-800/80 mb-3">
+                        <div className="flex items-center justify-between text-xs">
+                          {/* Departure */}
+                          <div className="text-left">
+                            <div className="font-bold text-sm text-zinc-900 dark:text-white">
+                              {tr.departure_time || '--:--'}
+                            </div>
+                            <div className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                              {tr.from_station} {tr.from_station_name ? `(${tr.from_station_name})` : ''}
+                            </div>
+                          </div>
+
+                          {/* Duration Badge */}
+                          <div className="flex flex-col items-center px-2">
+                            <div className="flex items-center gap-1 text-[10px] font-semibold text-zinc-500 dark:text-zinc-400">
+                              <Clock className="w-3 h-3 text-emerald-500" />
+                              <span>{tr.duration || 'Direct'}</span>
+                            </div>
+                            <div className="flex items-center gap-1 text-zinc-300 dark:text-zinc-600 my-0.5">
+                              <div className="w-8 h-[1.5px] bg-zinc-300 dark:bg-zinc-700" />
+                              <ArrowRight className="w-3 h-3 text-zinc-400" />
+                            </div>
+                            <span className="text-[9px] text-zinc-400">
+                              {tr.stops && tr.stops.length > 0 ? `${tr.stops.length} stops` : 'Non-stop'}
+                            </span>
+                          </div>
+
+                          {/* Arrival */}
+                          <div className="text-right">
+                            <div className="font-bold text-sm text-zinc-900 dark:text-white">
+                              {tr.arrival_time || '--:--'}
+                            </div>
+                            <div className="text-[11px] font-medium text-zinc-500 dark:text-zinc-400">
+                              {tr.to_station} {tr.to_station_name ? `(${tr.to_station_name})` : ''}
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Bottom Row: Coach & Live Seat Availability Grid with Prices */}
+                      <div className="space-y-1.5 pt-1">
+                        <div className="flex items-center justify-between text-[11px]">
+                          <span className="font-semibold text-zinc-600 dark:text-zinc-400">
+                            Coach & Live Seat Availability:
+                          </span>
+                          {tr.tatkal_ac_open && (
+                            <span className="text-[10px] text-amber-600 dark:text-amber-400 font-medium flex items-center gap-1">
+                              <Zap className="w-2.5 h-2.5" />
+                              Tatkal: {tr.tatkal_ac_open} (AC) / {tr.tatkal_nonac_open} (Non-AC)
+                            </span>
+                          )}
+                        </div>
+
+                        <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-5 gap-2">
+                          {(tr.coaches && tr.coaches.length > 0
+                            ? tr.coaches
+                            : (tr.classes || ['3A', '2A', 'SL']).map((cls) => ({
+                                class_code: cls,
+                                class_name: cls,
+                                status: 'AVAILABLE',
+                                color: 'emerald',
+                                fare: 1080
+                              }))
+                          ).map((coach) => {
+                            const isClassActive = isSelected && journeyClass === coach.class_code;
+                            const isAvailable = coach.color === 'emerald';
+                            const isRAC = coach.color === 'amber';
+
+                            return (
+                              <button
+                                key={coach.class_code}
+                                type="button"
+                                onClick={(e) => {
+                                  e.stopPropagation();
+                                  selectTrain(tr, coach.class_code);
+                                }}
+                                className={`p-2 rounded-lg border text-left transition-all cursor-pointer flex flex-col justify-between ${
+                                  isClassActive
+                                    ? 'border-emerald-500 bg-emerald-50/80 dark:bg-emerald-950/60 ring-2 ring-emerald-500/30 shadow-xs'
+                                    : 'border-zinc-200 dark:border-zinc-700/80 bg-white dark:bg-zinc-800/80 hover:border-emerald-400 dark:hover:border-emerald-500'
+                                }`}
+                              >
+                                <div className="flex items-center justify-between gap-1 mb-1">
+                                  <span className="font-bold text-xs text-zinc-900 dark:text-white">
+                                    {coach.class_code}
+                                  </span>
+                                  <span className="text-[11px] font-extrabold text-zinc-800 dark:text-zinc-200">
+                                    ₹{coach.fare || '--'}
+                                  </span>
+                                </div>
+
+                                <div className="flex items-center gap-1">
+                                  <span className={`text-[10px] font-bold px-1.5 py-0.5 rounded-md flex items-center gap-1 w-full justify-center ${
+                                    isAvailable
+                                      ? 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200'
+                                      : isRAC
+                                      ? 'bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200'
+                                      : 'bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200'
+                                  }`}>
+                                    <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${
+                                      isAvailable ? 'bg-emerald-500 animate-pulse' : isRAC ? 'bg-amber-500' : 'bg-rose-500'
+                                    }`} />
+                                    <span className="truncate">{coach.status || 'AVAILABLE'}</span>
+                                  </span>
+                                </div>
+                              </button>
+                            );
+                          })}
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+
+              {/* Live Fare & Selected Coach Summary Breakdown Card */}
+              {selectedCoach && selectedTrainObj && (
+                <div className="p-4 bg-emerald-50/60 dark:bg-emerald-950/30 border border-emerald-200 dark:border-emerald-800/80 rounded-xl space-y-2 mt-4 animate-fade-in">
+                  <div className="flex items-center justify-between flex-wrap gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span className="text-xs font-bold text-emerald-900 dark:text-emerald-300">
+                        Selected: Train {selectedTrainObj.train_number} • Coach {selectedCoach.class_name || selectedCoach.class_code}
+                      </span>
+                      <span className={`text-[11px] font-bold px-2 py-0.5 rounded-md ${
+                        selectedCoach.color === 'emerald'
+                          ? 'bg-emerald-100 dark:bg-emerald-900/60 text-emerald-800 dark:text-emerald-200'
+                          : selectedCoach.color === 'amber'
+                          ? 'bg-amber-100 dark:bg-amber-900/60 text-amber-800 dark:text-amber-200'
+                          : 'bg-rose-100 dark:bg-rose-900/60 text-rose-800 dark:text-rose-200'
+                      }`}>
+                        {selectedCoach.status}
+                      </span>
+                    </div>
+                    <div className="text-right">
+                      <span className="text-[11px] text-zinc-500 dark:text-zinc-400">Total Fare: </span>
+                      <span className="text-base font-extrabold text-emerald-700 dark:text-emerald-400">
+                        ₹{totalEstimatedFare.toLocaleString('en-IN')}
+                      </span>
+                      <span className="text-[10px] text-zinc-400 ml-1">({passengers.length} passenger{passengers.length > 1 ? 's' : ''})</span>
+                    </div>
+                  </div>
+
+                  {selectedCoach.fare_breakdown && (
+                    <div className="pt-2 border-t border-emerald-200/60 dark:border-emerald-800/60 grid grid-cols-2 sm:grid-cols-4 gap-2 text-[11px] text-zinc-600 dark:text-zinc-400">
+                      <div>Base Fare: <strong className="text-zinc-800 dark:text-zinc-200">₹{selectedCoach.fare_breakdown.base_fare}</strong></div>
+                      <div>Reservation Fee: <strong className="text-zinc-800 dark:text-zinc-200">₹{selectedCoach.fare_breakdown.reservation_charge}</strong></div>
+                      <div>Superfast Charge: <strong className="text-zinc-800 dark:text-zinc-200">₹{selectedCoach.fare_breakdown.superfast_charge}</strong></div>
+                      <div>GST / Tax: <strong className="text-zinc-800 dark:text-zinc-200">₹{selectedCoach.fare_breakdown.service_tax}</strong></div>
+                    </div>
+                  )}
+
+                  {selectedCoach.tatkal_open_time && (
+                    <div className="text-[10px] text-amber-700 dark:text-amber-400 flex items-center gap-1 pt-1 border-t border-emerald-200/40 dark:border-emerald-800/40">
+                      <Zap className="w-3 h-3 text-amber-500" />
+                      <span>Tatkal Booking Window: <strong>{selectedCoach.tatkal_open_time} (1 day prior to journey)</strong></span>
+                    </div>
+                  )}
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-4 bg-zinc-50 dark:bg-zinc-800/40 rounded-xl border border-dashed border-zinc-200 dark:border-zinc-700 text-xs text-zinc-500 dark:text-zinc-400 flex items-center gap-3">
+              <Sparkles className="w-4 h-4 text-emerald-500 shrink-0" />
+              <div>
+                <span>No trains match timing filter <strong className="text-zinc-800 dark:text-zinc-200">"{timingFilter}"</strong>.</span>
+                <span className="ml-1">Switch to <strong>All Trains</strong> to see available trains for this route.</span>
+              </div>
+            </div>
+          )}
+        </div>
+
+
         {/* Section 2: Passengers */}
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 shadow-xs space-y-4">
+        <div className="glass-panel rounded-2xl p-6 shadow-lg border border-zinc-200/70 dark:border-white/10 space-y-4">
           <div className="flex items-center justify-between border-b border-zinc-100 dark:border-zinc-800 pb-3">
             <div className="flex items-center gap-2">
               <Users className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
@@ -410,7 +816,7 @@ export default function NewBooking({ onBookingStarted }) {
         </div>
 
         {/* Section 3: Contact & Preferences */}
-        <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 shadow-xs space-y-4">
+        <div className="glass-panel rounded-2xl p-6 shadow-lg border border-zinc-200/70 dark:border-white/10 space-y-4">
           <div className="flex items-center gap-2 border-b border-zinc-100 dark:border-zinc-800 pb-3">
             <Phone className="w-4 h-4 text-emerald-600 dark:text-emerald-400" />
             <h3 className="font-bold text-sm text-zinc-900 dark:text-white">3. Contact & Execution Mode</h3>
@@ -440,29 +846,19 @@ export default function NewBooking({ onBookingStarted }) {
             </div>
           </div>
 
-          {/* Mode Selector (Demo Mode vs Live) */}
+          {/* Official Mode Banner */}
           <div className="mt-4 p-4 rounded-xl border border-emerald-500/30 bg-emerald-50/30 dark:bg-emerald-950/20 flex items-center justify-between">
             <div>
               <p className="text-xs font-bold text-emerald-900 dark:text-emerald-300">
-                {demoMode ? 'Safe Mock / Demo Mode Active' : 'Live Official IRCTC Mode Active'}
+                Official IRCTC Automation Active
               </p>
               <p className="text-[11px] text-emerald-700 dark:text-emerald-400 mt-0.5">
-                {demoMode 
-                  ? 'Simulates entire end-to-end booking, manual pauses, CRM, and Excel without placing real IRCTC orders.' 
-                  : 'Automates browser on official irctc.co.in with manual security & payment handoffs.'}
+                Automates real browser on official irctc.co.in with manual security & payment handoffs.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={() => setDemoMode(!demoMode)}
-              className={`px-3 py-1.5 rounded-lg text-xs font-bold cursor-pointer transition-all ${
-                demoMode 
-                  ? 'bg-emerald-600 text-white shadow-xs' 
-                  : 'bg-amber-600 text-white shadow-xs'
-              }`}
-            >
-              {demoMode ? 'Using Demo' : 'Using Live IRCTC'}
-            </button>
+            <span className="px-3 py-1 bg-emerald-600 text-white rounded-lg text-xs font-bold shadow-xs">
+              Live Official IRCTC
+            </span>
           </div>
         </div>
 
@@ -489,6 +885,12 @@ export default function NewBooking({ onBookingStarted }) {
             <div className="p-6 space-y-4 text-xs">
               <div className="p-3 bg-zinc-50 dark:bg-zinc-800 rounded-xl space-y-2">
                 <div className="flex justify-between">
+                  <span className="text-zinc-500 dark:text-zinc-400">Train:</span>
+                  <span className="font-bold text-zinc-900 dark:text-white">
+                    {trainPreference} {selectedTrainObj?.train_name ? `(${selectedTrainObj.train_name})` : ''}
+                  </span>
+                </div>
+                <div className="flex justify-between">
                   <span className="text-zinc-500 dark:text-zinc-400">Route:</span>
                   <span className="font-bold text-zinc-900 dark:text-white">{fromStation} ➔ {toStation}</span>
                 </div>
@@ -497,16 +899,24 @@ export default function NewBooking({ onBookingStarted }) {
                   <span className="font-semibold text-zinc-900 dark:text-white">{journeyDate}</span>
                 </div>
                 <div className="flex justify-between">
-                  <span className="text-zinc-500 dark:text-zinc-400">Class & Quota:</span>
-                  <span className="font-semibold text-zinc-900 dark:text-white">{journeyClass} | {quota}</span>
+                  <span className="text-zinc-500 dark:text-zinc-400">Class & Availability:</span>
+                  <span className="font-semibold text-zinc-900 dark:text-white">
+                    {journeyClass} {selectedCoach ? `• ${selectedCoach.status}` : ''} | Quota: {quota}
+                  </span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500 dark:text-zinc-400">Passengers ({passengers.length}):</span>
                   <span className="font-semibold text-zinc-900 dark:text-white">{passengers.map(p => p.name).join(', ')}</span>
                 </div>
+                <div className="flex justify-between items-center pt-1 border-t border-zinc-200 dark:border-zinc-700">
+                  <span className="text-zinc-500 dark:text-zinc-400">Total Est. Fare:</span>
+                  <span className="font-extrabold text-sm text-emerald-600 dark:text-emerald-400">
+                    ₹{totalEstimatedFare.toLocaleString('en-IN')}
+                  </span>
+                </div>
                 <div className="flex justify-between">
                   <span className="text-zinc-500 dark:text-zinc-400">Mode:</span>
-                  <span className="font-bold text-emerald-600 dark:text-emerald-400">{demoMode ? 'Safe Mock Demo' : 'Live IRCTC'}</span>
+                  <span className="font-bold text-emerald-600 dark:text-emerald-400">Live Official IRCTC</span>
                 </div>
               </div>
 

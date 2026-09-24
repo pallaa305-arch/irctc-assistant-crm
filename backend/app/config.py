@@ -45,13 +45,29 @@ class Settings(BaseSettings):
     BROWSER_HEADLESS: bool = False  # Visible browser by default as requested
     BROWSER_SLOW_MO: int = 150      # Slower pace for visual inspection
     DEMO_MODE: bool = False         # Live Official IRCTC Mode by default
-    IRCTC_USERNAME: str = ""
-    IRCTC_PASSWORD: str = ""
+    IRCTC_USERNAME: str = "randisumandalladeepak"
+    IRCTC_PASSWORD: str = "Gandusuman@7323"
     
-    # Low-spec optimization
-    MAX_BROWSER_INSTANCES: int = 1
-    AUTO_CLOSE_IDLE_BROWSER_SECONDS: int = 300
+    # Network & Public URLs
+    PUBLIC_BASE_URL: str = ""  # If using ngrok/tunnel, e.g. "https://xxxx.ngrok-free.app", otherwise auto-detected local IP
     
+    @staticmethod
+    def get_local_ip() -> str:
+        try:
+            import socket
+            s = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+            s.connect(("8.8.8.8", 80))
+            ip = s.getsockname()[0]
+            s.close()
+            return ip
+        except Exception:
+            return "127.0.0.1"
+
+    def get_server_base_url(self) -> str:
+        if self.PUBLIC_BASE_URL and self.PUBLIC_BASE_URL.strip():
+            return self.PUBLIC_BASE_URL.strip().rstrip('/')
+        return f"http://{self.get_local_ip()}:8000"
+
     class Config:
         env_file = str(BASE_DIR / ".env")
         env_file_encoding = "utf-8"

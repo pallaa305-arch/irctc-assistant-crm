@@ -20,6 +20,9 @@ dist-ssr/
 *.local
 
 # Database & Local user data
+*.db
+*.sqlite
+*.sqlite3
 data/assistant.db
 backend/data/
 data/backups/*
@@ -29,6 +32,10 @@ data/exports/*
 data/bookings/bookings.xlsx
 data/tickets/
 data/invoices/
+data/*.png
+backend/test_*.png
+backend/scratch_debug_page.py
+PROMAX_*/
 
 # Playwright
 .playwright/

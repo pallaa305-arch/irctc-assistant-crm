@@ -1,6 +1,16 @@
 import os
+import sys
+import asyncio
 from pathlib import Path
 from contextlib import asynccontextmanager
+
+# On Windows, Playwright requires ProactorEventLoop to launch subprocesses
+if sys.platform == 'win32':
+    asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+
+def proactor_loop_factory():
+    return asyncio.ProactorEventLoop()
+
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -62,6 +72,8 @@ app.include_router(system_router)
 app.include_router(railway_router)
 app.include_router(chat_router)
 
+from fastapi.responses import FileResponse, RedirectResponse
+
 @app.get("/api/health")
 async def health_check():
     return {
@@ -69,6 +81,11 @@ async def health_check():
         "app": settings.APP_NAME,
         "mode": "DEMO" if settings.DEMO_MODE else "LIVE_IRCTC"
     }
+
+@app.get("/pay/{booking_ref}")
+@app.get("/api/pay-redirect/{booking_ref}")
+async def redirect_to_pay(booking_ref: str):
+    return RedirectResponse(url=f"/api/bookings/pay-redirect/{booking_ref}")
 
 # Serve Frontend static assets and SPA if built
 DIST_DIR = BASE_DIR / "frontend" / "dist"

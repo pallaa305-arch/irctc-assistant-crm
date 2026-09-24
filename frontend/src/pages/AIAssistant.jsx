@@ -353,6 +353,7 @@ export default function AIAssistant({ setTab }) {
         <CaptchaFallbackDrawer
           challengeType={captchaData.type || 'CAPTCHA'}
           imageSrc={captchaData.image_url}
+          suggestedValue={captchaData.suggested_captcha || captchaData.suggested_value || ''}
           onSubmit={(val) => {
             setCaptchaData(null);
             handleSendMessage(val);

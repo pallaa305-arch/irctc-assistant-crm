@@ -41,9 +41,9 @@ export default function Sidebar({ currentTab, setTab, isOpen, setIsOpen }) {
         />
       )}
 
-      <aside className={`fixed top-0 bottom-0 left-0 z-40 w-64 bg-white dark:bg-zinc-950 border-r border-zinc-200 dark:border-zinc-800 transition-transform duration-200 flex flex-col ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
+      <aside className={`fixed top-0 bottom-0 left-0 z-40 w-64 glass-panel border-r border-black/5 dark:border-white/10 transition-transform duration-200 flex flex-col ${isOpen ? 'translate-x-0' : '-translate-x-full lg:translate-x-0'}`}>
         {/* Brand header */}
-        <div className="h-16 border-b border-zinc-200 dark:border-zinc-800 px-6 flex items-center gap-3">
+        <div className="h-16 border-b border-black/5 dark:border-white/10 px-6 flex items-center gap-3">
           <div className="w-10 h-10 rounded-xl bg-emerald-600 flex items-center justify-center text-white shadow-md shadow-emerald-600/30">
             <Train className="w-5 h-5" />
           </div>

@@ -1,0 +1,614 @@
+[
+  {
+    "train_number": "12951",
+    "train_name": "MUMBAI TEJAS RAJDHANI",
+    "type": "RAJDHANI",
+    "from_station": "MMCT",
+    "from_station_name": "Mumbai Central",
+    "to_station": "NDLS",
+    "to_station_name": "New Delhi",
+    "departure_time": "17:00",
+    "arrival_time": "08:32",
+    "duration": "15h 32m",
+    "classes": [
+      "3A",
+      "2A",
+      "1A"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "MMCT",
+      "BVI",
+      "ST",
+      "BRC",
+      "RTM",
+      "KOTA",
+      "NDLS"
+    ]
+  },
+  {
+    "train_number": "12952",
+    "train_name": "NEW DELHI TEJAS RAJDHANI",
+    "type": "RAJDHANI",
+    "from_station": "NDLS",
+    "from_station_name": "New Delhi",
+    "to_station": "MMCT",
+    "to_station_name": "Mumbai Central",
+    "departure_time": "16:55",
+    "arrival_time": "08:35",
+    "duration": "15h 40m",
+    "classes": [
+      "3A",
+      "2A",
+      "1A"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "NDLS",
+      "KOTA",
+      "RTM",
+      "BRC",
+      "ST",
+      "BVI",
+      "MMCT"
+    ]
+  },
+  {
+    "train_number": "22435",
+    "train_name": "VANDE BHARAT EXPRESS",
+    "type": "VANDE BHARAT",
+    "from_station": "BSB",
+    "from_station_name": "Varanasi Junction",
+    "to_station": "NDLS",
+    "to_station_name": "New Delhi",
+    "departure_time": "15:00",
+    "arrival_time": "23:00",
+    "duration": "08h 00m",
+    "classes": [
+      "CC",
+      "EC"
+    ],
+    "runs_on": [
+      "TUE",
+      "WED",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "BSB",
+      "PRYJ",
+      "CNB",
+      "NDLS"
+    ]
+  },
+  {
+    "train_number": "22436",
+    "train_name": "VANDE BHARAT EXPRESS",
+    "type": "VANDE BHARAT",
+    "from_station": "NDLS",
+    "from_station_name": "New Delhi",
+    "to_station": "BSB",
+    "to_station_name": "Varanasi Junction",
+    "departure_time": "06:00",
+    "arrival_time": "14:00",
+    "duration": "08h 00m",
+    "classes": [
+      "CC",
+      "EC"
+    ],
+    "runs_on": [
+      "TUE",
+      "WED",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "NDLS",
+      "CNB",
+      "PRYJ",
+      "BSB"
+    ]
+  },
+  {
+    "train_number": "12004",
+    "train_name": "LUCKNOW SHATABDI",
+    "type": "SHATABDI",
+    "from_station": "NDLS",
+    "from_station_name": "New Delhi",
+    "to_station": "LKO",
+    "to_station_name": "Lucknow Charbagh",
+    "departure_time": "06:10",
+    "arrival_time": "12:40",
+    "duration": "06h 30m",
+    "classes": [
+      "CC",
+      "EC"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "NDLS",
+      "GZB",
+      "ALJN",
+      "TDL",
+      "ETW",
+      "CNB",
+      "LKO"
+    ]
+  },
+  {
+    "train_number": "12003",
+    "train_name": "NEW DELHI SHATABDI",
+    "type": "SHATABDI",
+    "from_station": "LKO",
+    "from_station_name": "Lucknow Charbagh",
+    "to_station": "NDLS",
+    "to_station_name": "New Delhi",
+    "departure_time": "15:30",
+    "arrival_time": "22:20",
+    "duration": "06h 50m",
+    "classes": [
+      "CC",
+      "EC"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "LKO",
+      "CNB",
+      "ETW",
+      "TDL",
+      "ALJN",
+      "GZB",
+      "NDLS"
+    ]
+  },
+  {
+    "train_number": "12301",
+    "train_name": "HOWRAH RAJDHANI EXPRESS",
+    "type": "RAJDHANI",
+    "from_station": "HWH",
+    "from_station_name": "Howrah Junction",
+    "to_station": "NDLS",
+    "to_station_name": "New Delhi",
+    "departure_time": "16:50",
+    "arrival_time": "10:05",
+    "duration": "17h 15m",
+    "classes": [
+      "3A",
+      "2A",
+      "1A"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT"
+    ],
+    "stops": [
+      "HWH",
+      "ASN",
+      "DHN",
+      "PNME",
+      "GAYA",
+      "DDU",
+      "PRYJ",
+      "CNB",
+      "NDLS"
+    ]
+  },
+  {
+    "train_number": "12302",
+    "train_name": "NEW DELHI HOWRAH RAJDHANI",
+    "type": "RAJDHANI",
+    "from_station": "NDLS",
+    "from_station_name": "New Delhi",
+    "to_station": "HWH",
+    "to_station_name": "Howrah Junction",
+    "departure_time": "16:50",
+    "arrival_time": "09:55",
+    "duration": "17h 05m",
+    "classes": [
+      "3A",
+      "2A",
+      "1A"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "NDLS",
+      "CNB",
+      "PRYJ",
+      "DDU",
+      "GAYA",
+      "PNME",
+      "DHN",
+      "ASN",
+      "HWH"
+    ]
+  },
+  {
+    "train_number": "22691",
+    "train_name": "BENGALURU RAJDHANI EXPRESS",
+    "type": "RAJDHANI",
+    "from_station": "SBC",
+    "from_station_name": "KSR Bengaluru",
+    "to_station": "NZM",
+    "to_station_name": "Hazrat Nizamuddin",
+    "departure_time": "20:00",
+    "arrival_time": "05:30",
+    "duration": "33h 30m",
+    "classes": [
+      "3A",
+      "2A",
+      "1A"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "SBC",
+      "DMM",
+      "GTL",
+      "SC",
+      "KZJ",
+      "BPQ",
+      "NGP",
+      "ET",
+      "BPL",
+      "VGLJ",
+      "GWL",
+      "AGC",
+      "NZM"
+    ]
+  },
+  {
+    "train_number": "12423",
+    "train_name": "DIBRUGARH RAJDHANI EXPRESS",
+    "type": "RAJDHANI",
+    "from_station": "DBRG",
+    "from_station_name": "Dibrugarh",
+    "to_station": "NDLS",
+    "to_station_name": "New Delhi",
+    "departure_time": "20:55",
+    "arrival_time": "10:30",
+    "duration": "37h 35m",
+    "classes": [
+      "3A",
+      "2A",
+      "1A"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "GHY",
+      "NBQ",
+      "NJP",
+      "KIR",
+      "BJU",
+      "PPTA",
+      "DDU",
+      "PRYJ",
+      "CNB",
+      "NDLS"
+    ]
+  },
+  {
+    "train_number": "12555",
+    "train_name": "GORAKHDHAM EXPRESS",
+    "type": "SUPERFAST",
+    "from_station": "GKP",
+    "from_station_name": "Gorakhpur Junction",
+    "to_station": "BTI",
+    "to_station_name": "Bhatinda Junction",
+    "departure_time": "16:35",
+    "arrival_time": "09:30",
+    "duration": "16h 55m",
+    "classes": [
+      "SL",
+      "3A",
+      "2A",
+      "1A"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "GKP",
+      "BST",
+      "GD",
+      "BBK",
+      "LKO",
+      "ON",
+      "CNB",
+      "NDLS",
+      "SSB",
+      "ROK",
+      "BTI"
+    ]
+  },
+  {
+    "train_number": "12419",
+    "train_name": "GOMTI EXPRESS",
+    "type": "SUPERFAST",
+    "from_station": "LKO",
+    "from_station_name": "Lucknow Charbagh",
+    "to_station": "NDLS",
+    "to_station_name": "New Delhi",
+    "departure_time": "05:45",
+    "arrival_time": "15:00",
+    "duration": "09h 15m",
+    "classes": [
+      "2S",
+      "CC"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "LKO",
+      "CNB",
+      "PNKD",
+      "RURA",
+      "ETW",
+      "SKB",
+      "TDL",
+      "HRS",
+      "ALJN",
+      "KRJ",
+      "GZB",
+      "NDLS"
+    ]
+  },
+  {
+    "train_number": "12015",
+    "train_name": "AJMER SHATABDI EXPRESS",
+    "type": "SHATABDI",
+    "from_station": "NDLS",
+    "from_station_name": "New Delhi",
+    "to_station": "AII",
+    "to_station_name": "Ajmer Junction",
+    "departure_time": "06:10",
+    "arrival_time": "12:55",
+    "duration": "06h 45m",
+    "classes": [
+      "CC",
+      "EC"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "NDLS",
+      "DEC",
+      "GGN",
+      "RE",
+      "AWR",
+      "BKI",
+      "GADJ",
+      "JP",
+      "KSG",
+      "AII"
+    ]
+  },
+  {
+    "train_number": "12431",
+    "train_name": "TRIVANDRUM RAJDHANI EXPRESS",
+    "type": "RAJDHANI",
+    "from_station": "TVC",
+    "from_station_name": "Thiruvananthapuram Central",
+    "to_station": "NZM",
+    "to_station_name": "Hazrat Nizamuddin",
+    "departure_time": "19:15",
+    "arrival_time": "12:30",
+    "duration": "41h 15m",
+    "classes": [
+      "3A",
+      "2A",
+      "1A"
+    ],
+    "runs_on": [
+      "TUE",
+      "THU",
+      "FRI"
+    ],
+    "stops": [
+      "TVC",
+      "QLN",
+      "ALLP",
+      "ERS",
+      "TCR",
+      "SRR",
+      "CLT",
+      "CAN",
+      "KGQ",
+      "MAJN",
+      "UD",
+      "KAWR",
+      "MAO",
+      "RN",
+      "PNVL",
+      "BSR",
+      "ST",
+      "BRC",
+      "RTM",
+      "KOTA",
+      "NZM"
+    ]
+  },
+  {
+    "train_number": "12002",
+    "train_name": "BHOPAL SHATABDI EXPRESS",
+    "type": "SHATABDI",
+    "from_station": "NDLS",
+    "from_station_name": "New Delhi",
+    "to_station": "BPL",
+    "to_station_name": "Bhopal Junction",
+    "departure_time": "06:00",
+    "arrival_time": "14:40",
+    "duration": "08h 40m",
+    "classes": [
+      "CC",
+      "EC"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "NDLS",
+      "MTJ",
+      "AGC",
+      "GWL",
+      "VGLJ",
+      "BINA",
+      "BPL",
+      "RKMP"
+    ]
+  },
+  {
+    "train_number": "12156",
+    "train_name": "SHAN-E-BHOPAL SF EXPRESS",
+    "type": "SUPERFAST",
+    "from_station": "NZM",
+    "from_station_name": "Hazrat Nizamuddin",
+    "to_station": "BPL",
+    "to_station_name": "Bhopal Junction",
+    "departure_time": "20:40",
+    "arrival_time": "07:05",
+    "duration": "10h 25m",
+    "classes": [
+      "1A",
+      "2A",
+      "3A",
+      "SL"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SAT",
+      "SUN"
+    ],
+    "stops": [
+      "NZM",
+      "MTJ",
+      "AGC",
+      "GWL",
+      "VGLJ",
+      "BINA",
+      "BPL",
+      "RKMP"
+    ]
+  },
+  {
+    "train_number": "20172",
+    "train_name": "VANDE BHARAT EXPRESS",
+    "type": "VANDE BHARAT",
+    "from_station": "NZM",
+    "from_station_name": "Hazrat Nizamuddin",
+    "to_station": "RKMP",
+    "to_station_name": "Rani Kamlapati (Bhopal)",
+    "departure_time": "14:40",
+    "arrival_time": "22:10",
+    "duration": "07h 30m",
+    "classes": [
+      "CC",
+      "EC"
+    ],
+    "runs_on": [
+      "MON",
+      "TUE",
+      "WED",
+      "THU",
+      "FRI",
+      "SUN"
+    ],
+    "stops": [
+      "NZM",
+      "AGC",
+      "GWL",
+      "VGLJ",
+      "BPL",
+      "RKMP"
+    ]
+  }
+]

@@ -15,11 +15,14 @@ class BookingSessionState:
         # User input handling (CAPTCHA text, OTP, or Payment confirmation)
         self.waiting_input_type: str = "NONE"  # "CAPTCHA", "OTP", "PAYMENT", "NONE"
         self.user_input_value: Optional[str] = None
+        self.suggested_captcha: Optional[str] = None
         self.input_event = asyncio.Event()
 
         self.continue_event = asyncio.Event()
         self.cancel_event = asyncio.Event()
         self.captured_data: Dict[str, Any] = {}
+        self.timer_seconds: Optional[int] = None
+        self.timer_started_at: Optional[datetime] = None
         self.last_updated: datetime = datetime.now(timezone.utc)
 
     def set_stage(self, stage: str, status: Optional[str] = None):
@@ -28,25 +31,43 @@ class BookingSessionState:
             self.status = status
         self.last_updated = datetime.now(timezone.utc)
 
-    def pause_for_user(self, prompt: str, is_payment: bool = False, input_type: str = "NONE", screenshot_bytes: Optional[bytes] = None):
-        self.is_paused = True
-        self.manual_prompt = prompt
-        self.waiting_input_type = input_type
-        if screenshot_bytes:
-            self.latest_screenshot_bytes = screenshot_bytes
-        self.status = "PAYMENT_PENDING" if is_payment else "WAITING_MANUAL"
+    def reset_events(self):
+        """Clears continue and input events for a fresh wait cycle. Does NOT touch cancel."""
         self.continue_event.clear()
         self.input_event.clear()
         self.user_input_value = None
+
+    def pause_for_user(self, prompt: str, is_payment: bool = False, input_type: str = "NONE", screenshot_bytes: Optional[bytes] = None, suggested_value: Optional[str] = None, timer_seconds: Optional[int] = None):
+        if self.cancel_event.is_set():
+            return  # Already cancelled, don't pause
+        self.is_paused = True
+        self.manual_prompt = prompt
+        self.waiting_input_type = input_type
+        self.suggested_captcha = suggested_value
+        if screenshot_bytes:
+            self.latest_screenshot_bytes = screenshot_bytes
+        self.timer_seconds = timer_seconds
+        self.timer_started_at = datetime.now(timezone.utc) if timer_seconds else None
+        self.status = "PAYMENT_PENDING" if is_payment else "WAITING_MANUAL"
+        self.reset_events()
         self.last_updated = datetime.now(timezone.utc)
 
     def provide_user_input(self, value: str):
         """Called when user types CAPTCHA/OTP via Telegram or Web"""
-        self.user_input_value = value
+        val_clean = (value or "").strip()
+        # If user confirmed suggestion via 'ok', 'yes', 'confirm', or callback
+        if val_clean.upper() in ["OK", "YES", "HAAN", "CONFIRM", "SUBMIT", "DONE"] and self.suggested_captcha:
+            self.user_input_value = self.suggested_captcha
+        elif val_clean.startswith("CONFIRM_"):
+            self.user_input_value = val_clean.replace("CONFIRM_", "")
+        else:
+            self.user_input_value = val_clean
         self.input_event.set()
         self.user_resumed()
 
     def user_resumed(self):
+        if self.cancel_event.is_set():
+            return  # Already cancelled, don't resume
         self.is_paused = False
         self.manual_prompt = None
         self.waiting_input_type = "NONE"

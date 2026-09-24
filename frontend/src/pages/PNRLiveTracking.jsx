@@ -16,6 +16,7 @@ import {
   Navigation
 } from 'lucide-react';
 import { checkPNRStatus, checkLiveTrainStatus, searchTrains } from '../services/api';
+import StationSelector from '../components/StationSelector';
 
 export default function PNRLiveTracking({ setTab }) {
   const [activeSubTab, setActiveSubTab] = useState('pnr'); // 'pnr' | 'live' | 'search'
@@ -473,35 +474,31 @@ export default function PNRLiveTracking({ setTab }) {
       {/* ======================= TAB 3: TRAIN ROUTE SEARCH ======================= */}
       {activeSubTab === 'search' && (
         <div className="space-y-6">
-          <div className="bg-white dark:bg-zinc-900 border border-zinc-200 dark:border-zinc-800 rounded-2xl p-6 shadow-xs">
-            <form onSubmit={(e) => handleRouteSearch(e)} className="grid grid-cols-1 sm:grid-cols-5 gap-3">
+          <div className="glass-panel border border-zinc-200/70 dark:border-white/10 rounded-2xl p-6 shadow-lg">
+            <form onSubmit={(e) => handleRouteSearch(e)} className="grid grid-cols-1 sm:grid-cols-5 gap-3 items-end">
               <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400 mb-1">From Station Code</label>
-                <input
-                  type="text"
+                <StationSelector
+                  label="From Station"
                   value={fromStation}
-                  onChange={(e) => setFromStation(e.target.value.toUpperCase())}
-                  placeholder="e.g. NDLS"
-                  className="w-full px-3.5 py-2.5 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  onChange={setFromStation}
+                  placeholder="e.g. NDLS, Delhi, Rajasthan..."
                 />
               </div>
 
               <div className="sm:col-span-2">
-                <label className="block text-xs font-semibold text-zinc-600 dark:text-zinc-400 mb-1">To Station Code</label>
-                <input
-                  type="text"
+                <StationSelector
+                  label="To Station"
                   value={toStation}
-                  onChange={(e) => setToStation(e.target.value.toUpperCase())}
-                  placeholder="e.g. MMCT"
-                  className="w-full px-3.5 py-2.5 bg-zinc-50 dark:bg-zinc-800/60 border border-zinc-200 dark:border-zinc-700 rounded-xl text-sm font-semibold focus:outline-none focus:ring-2 focus:ring-emerald-500"
+                  onChange={setToStation}
+                  placeholder="e.g. MMCT, Mumbai, Bhopal..."
                 />
               </div>
 
-              <div className="flex items-end">
+              <div className="sm:col-span-1">
                 <button
                   type="submit"
                   disabled={searchLoading}
-                  className="w-full py-2.5 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer transition-colors"
+                  className="w-full h-11 bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 text-white text-xs font-semibold rounded-xl shadow-md shadow-emerald-600/20 flex items-center justify-center gap-2 cursor-pointer transition-colors"
                 >
                   {searchLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4" />}
                   Find Trains

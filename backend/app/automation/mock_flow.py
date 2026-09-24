@@ -59,27 +59,36 @@ async def run_mock_booking_flow(db: Session, booking_id: int, session_state: Boo
         await asyncio.sleep(0.3)
 
         # Step 6: Challenge Detection -> Human-in-the-Loop PAUSE
-        session_state.set_stage("WAITING_MANUAL")
-        prompt_text = "Security Verification: Please solve the visual CAPTCHA and review passenger details."
-        session_state.pause_for_user(prompt_text, is_payment=False, input_type="CAPTCHA")
-        booking.status = "WAITING_MANUAL"
-        db.commit()
-        log_event(db, "WARNING", "AUTOMATION", f"Mock: {prompt_text}", ref)
-
         from app.utils.image_gen import generate_mock_captcha_image, generate_mock_upi_qr_image
         from app.notifications.telegram import send_telegram_photo
+        from app.automation.captcha_solver import fast_solve_captcha
 
         sample_captcha_chars = "".join(random.choices("ABCDEFGHJKLMNPQRSTUVWXYZ23456789", k=5))
         captcha_png = generate_mock_captcha_image(sample_captcha_chars)
         session_state.captured_data["captcha_expected"] = sample_captcha_chars
 
+        session_state.set_stage("WAITING_MANUAL")
+        prompt_text = f"Security Verification: Please verify CAPTCHA '{sample_captcha_chars}'."
+        session_state.pause_for_user(prompt_text, is_payment=False, input_type="CAPTCHA", screenshot_bytes=captcha_png, suggested_value=sample_captcha_chars)
+        booking.status = "WAITING_MANUAL"
+        db.commit()
+        log_event(db, "WARNING", "AUTOMATION", f"Mock: {prompt_text}", ref)
+
         if settings.TELEGRAM_ENABLED:
+            t_keyboard = {
+                "inline_keyboard": [
+                    [{"text": f"⚡ Confirm '{sample_captcha_chars}'", "callback_data": f"action_captcha_{sample_captcha_chars}"}],
+                    [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
+                ]
+            }
             await send_telegram_photo(
                 photo_bytes=captcha_png,
                 caption=(
                     f"📸 *IRCTC CAPTCHA Check* (Ref: `{ref}`)\n\n"
-                    f"Kripya ye photo dekh kar text reply karein (e.g. `{sample_captcha_chars}`):"
-                )
+                    f"⚡ *Auto-Detected Text:* `{sample_captcha_chars}`\n"
+                    f"👉 Agar sahi hai to *'Confirm'* dabayein ya 'OK' reply karein. Agar galat hai to sahi text type karein:"
+                ),
+                reply_markup=t_keyboard
             )
 
         # Wait for user input from Telegram text reply or Web dashboard
@@ -111,24 +120,34 @@ async def run_mock_booking_flow(db: Session, booking_id: int, session_state: Boo
         db.commit()
         log_event(db, "WARNING", "AUTOMATION", f"Mock: {pay_prompt}", ref)
 
+        from app.utils.image_gen import get_mock_upi_url
+        mock_upi_url = get_mock_upi_url(fare_amt, ref)
+        booking.payment_upi_url = mock_upi_url
+        session_state.captured_data["upi_intent_url"] = mock_upi_url
+        db.commit()
+
         qr_png = generate_mock_upi_qr_image(fare_amt, ref)
         if settings.TELEGRAM_ENABLED:
+            base_url = settings.get_server_base_url()
+            bridge_url = f"{base_url}/api/bookings/pay-redirect/{ref}"
             qr_keyboard = {
                 "inline_keyboard": [
-                    [
-                        {"text": "✅ Payment Ho Gayi (Continue)", "callback_data": "action_continue"},
-                        {"text": "❌ Cancel", "callback_data": "action_cancel"}
-                    ]
+                    [{"text": "⚡ Pay Now (GPay / PhonePe / Paytm)", "url": bridge_url}],
+                    [{"text": "✅ Payment Ho Gayi (Continue)", "callback_data": "action_continue"}],
+                    [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
                 ]
             }
+            caption = (
+                f"💳 *IRCTC Payment Gateway — UPI QR*\n\n"
+                f"• *Amount:* Rs. {fare_amt:,.2f} (₹{fare_amt:,.2f})\n"
+                f"• *Booking Ref:* `{ref}`\n\n"
+                f"⚡ *ONE-CLICK MOBILE PAYMENT:*\n"
+                f"👉 [📲 CLICK HERE TO PAY IN UPI APP]({mock_upi_url})\n\n"
+                f"Apne kisi bhi UPI app (GPay / PhonePe / Paytm / BHIM) se scan ya upar diye button se pay karein, phir neeche *'✅ Payment Ho Gayi'* par tap karein."
+            )
             await send_telegram_photo(
                 photo_bytes=qr_png,
-                caption=(
-                    f"💳 *IRCTC Payment Gateway — UPI QR*\n\n"
-                    f"• *Amount:* Rs. {fare_amt:,.2f} (₹{fare_amt:,.2f})\n"
-                    f"• *Booking Ref:* `{ref}`\n\n"
-                    f"Apne kisi bhi UPI app (GPay / PhonePe / Paytm / BHIM) se scan karke pay karein, phir neeche *'✅ Payment Ho Gayi'* par tap karein."
-                ),
+                caption=caption,
                 reply_markup=qr_keyboard
             )
 

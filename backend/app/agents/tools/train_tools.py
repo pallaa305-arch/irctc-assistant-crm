@@ -7,85 +7,20 @@ import hashlib
 from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from app.services.railway_service import RailwayService, KNOWN_TRAINS, STATION_NAMES
+from app.services.station_cache import station_cache
 
 railway_service = RailwayService()
-
-# Common city/station name alias dictionary
-STATION_ALIASES: Dict[str, str] = {
-    "DELHI": "NDLS",
-    "NEW DELHI": "NDLS",
-    "OLD DELHI": "DLI",
-    "NDLS": "NDLS",
-    "DLI": "DLI",
-    "MUMBAI": "MMCT",
-    "BOMBAY": "MMCT",
-    "MUMBAI CENTRAL": "MMCT",
-    "MMCT": "MMCT",
-    "CSMT": "CSMT",
-    "BORIVALI": "BVI",
-    "JAIPUR": "JP",
-    "JP": "JP",
-    "JAMMU": "JAT",
-    "JAMMU TAWI": "JAT",
-    "JAT": "JAT",
-    "VARANASI": "BSB",
-    "BANARAS": "BSB",
-    "BSB": "BSB",
-    "LUCKNOW": "LKO",
-    "LKO": "LKO",
-    "KANPUR": "CNB",
-    "CNB": "CNB",
-    "PRAYAGRAJ": "PRYJ",
-    "ALLAHABAD": "PRYJ",
-    "PRYJ": "PRYJ",
-    "HOWRAH": "HWH",
-    "KOLKATA": "HWH",
-    "CALCUTTA": "HWH",
-    "HWH": "HWH",
-    "BENGALURU": "SBC",
-    "BANGALORE": "SBC",
-    "SBC": "SBC",
-    "AGRA": "AGC",
-    "AGC": "AGC",
-    "PATNA": "PNBE",
-    "PNBE": "PNBE",
-    "CHANDIGARH": "CDG",
-    "CDG": "CDG",
-    "AMRITSAR": "ASR",
-    "ASR": "ASR",
-    "AHMEDABAD": "ADI",
-    "ADI": "ADI",
-    "PUNE": "PUNE",
-    "HYDERABAD": "HYB",
-    "HYB": "HYB",
-    "SECUNDERABAD": "SC",
-    "SC": "SC",
-    "CHENNAI": "MAS",
-    "MADRAS": "MAS",
-    "MAS": "MAS",
-    "KOTA": "KOTA",
-    "SURAT": "ST",
-    "ST": "ST",
-    "VADODARA": "BRC",
-    "BRC": "BRC",
-    "GUWAHATI": "GHY",
-    "GHY": "GHY",
-    "DIBRUGARH": "DBRG",
-    "DBRG": "DBRG"
-}
+STATION_ALIASES = station_cache.station_alias_map
 
 def resolve_station_code(query: str) -> str:
-    """Normalize any station name or city into an official IRCTC station code."""
-    cleaned = re.sub(r'[^A-Za-z0-9]', '', query or "").upper().strip()
-    if not cleaned:
+    """Normalize any station name or city into an official IRCTC station code using master cache."""
+    if not query:
         return ""
-    if cleaned in STATION_ALIASES:
-        return STATION_ALIASES[cleaned]
-    # Check partial contains
-    for alias, code in STATION_ALIASES.items():
-        if alias in cleaned or cleaned in alias:
-            return code
-    return cleaned[:4]
+    resolved = station_cache.resolve_station_code(query)
+    if resolved:
+        return resolved
+    cleaned = re.sub(r'[^A-Za-z0-9]', '', query).upper().strip()
+    return cleaned[:5]
 
 async def tool_search_trains(origin: str, destination: str, travel_date: str) -> Dict[str, Any]:
     """

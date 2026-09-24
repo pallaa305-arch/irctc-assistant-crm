@@ -11,7 +11,13 @@ def focus_browser_window():
         try:
             import ctypes
             user32 = ctypes.windll.user32
-            # Allow foreground window switching
+            kernel32 = ctypes.windll.kernel32
+            
+            current_thread = kernel32.GetCurrentThreadId()
+            fg_window = user32.GetForegroundWindow()
+            fg_thread = user32.GetWindowThreadProcessId(fg_window, None)
+            
+            user32.AttachThreadInput(current_thread, fg_thread, True)
             user32.AllowSetForegroundWindow(-1)
             
             def enum_callback(hwnd, _):
@@ -22,12 +28,14 @@ def focus_browser_window():
                         user32.GetWindowTextW(hwnd, buff, length + 1)
                         title = buff.value.lower()
                         if "irctc" in title or "chrome" in title or "chromium" in title:
-                            user32.ShowWindow(hwnd, 9)  # 9 = SW_RESTORE
+                            user32.ShowWindow(hwnd, 3)  # 3 = SW_MAXIMIZE
                             user32.SetForegroundWindow(hwnd)
+                            user32.BringWindowToTop(hwnd)
                 return True
 
             WNDENUMPROC = ctypes.WINFUNCTYPE(ctypes.c_bool, ctypes.c_void_p, ctypes.c_void_p)
             user32.EnumWindows(WNDENUMPROC(enum_callback), 0)
+            user32.AttachThreadInput(current_thread, fg_thread, False)
         except Exception:
             pass
 
@@ -67,15 +75,21 @@ class BrowserManager:
                 "user_data_dir": profile_dir,
                 "headless": settings.BROWSER_HEADLESS,
                 "slow_mo": settings.BROWSER_SLOW_MO,
-                "viewport": {"width": 1366, "height": 768},
+                "bypass_csp": True,
+                "ignore_https_errors": True,
+                "no_viewport": not settings.BROWSER_HEADLESS,
+                "ignore_default_args": ["--enable-automation"],
                 "args": [
                     "--start-maximized",
-                    "--window-size=1366,768",
                     "--disable-blink-features=AutomationControlled",
-                    "--no-sandbox"
+                    "--no-first-run",
+                    "--disable-infobars"
                 ],
-                "user_agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+                "locale": "en-US"
             }
+            if settings.BROWSER_HEADLESS:
+                launch_args["viewport"] = {"width": 1366, "height": 768}
+
             # Attempt to launch with real installed Google Chrome for visible window & recognition
             try:
                 self.context = await self.playwright.chromium.launch_persistent_context(
@@ -92,6 +106,13 @@ class BrowserManager:
             self.page = self.context.pages[0]
         else:
             self.page = await self.context.new_page()
+
+        # Attach auto-accept dialog handler to prevent Playwright freezes
+        try:
+            self.page.on("dialog", lambda d: asyncio.create_task(d.accept()))
+            self.context.on("page", lambda p: p.on("dialog", lambda d: asyncio.create_task(d.accept())))
+        except Exception:
+            pass
 
         try:
             await self.page.bring_to_front()

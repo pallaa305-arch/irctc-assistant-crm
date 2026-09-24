@@ -1,13 +1,26 @@
 import React, { useState } from 'react';
 import { ShieldAlert, ArrowRight, X } from 'lucide-react';
 
-export default function CaptchaFallbackDrawer({ challengeType = 'CAPTCHA', imageSrc, onSubmit, onCancel }) {
-  const [inputVal, setInputVal] = useState('');
+export default function CaptchaFallbackDrawer({ challengeType = 'CAPTCHA', imageSrc, suggestedValue = '', onSubmit, onCancel }) {
+  const [inputVal, setInputVal] = useState(suggestedValue || '');
+
+  React.useEffect(() => {
+    if (suggestedValue) {
+      setInputVal(suggestedValue);
+    }
+  }, [suggestedValue]);
 
   const handleSubmit = (e) => {
     e.preventDefault();
     if (inputVal.trim() && onSubmit) {
       onSubmit(inputVal.trim());
+      setInputVal('');
+    }
+  };
+
+  const handleQuickConfirm = () => {
+    if (suggestedValue && onSubmit) {
+      onSubmit(suggestedValue.trim());
       setInputVal('');
     }
   };
@@ -29,7 +42,7 @@ export default function CaptchaFallbackDrawer({ challengeType = 'CAPTCHA', image
       </div>
 
       <p className="text-xs text-zinc-500 dark:text-zinc-400 mt-2">
-        IRCTC portal ne verification request kiya hai. Kripya dekh kar turant enter karein:
+        IRCTC challenge required. Review image or use high-speed auto-detection:
       </p>
 
       {imageSrc && (
@@ -39,6 +52,21 @@ export default function CaptchaFallbackDrawer({ challengeType = 'CAPTCHA', image
             alt="IRCTC Challenge"
             className="h-12 object-contain rounded-lg"
           />
+        </div>
+      )}
+
+      {suggestedValue && (
+        <div className="mt-2.5 flex items-center justify-between px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-950/40 border border-emerald-200 dark:border-emerald-800/50">
+          <span className="text-[11px] text-emerald-700 dark:text-emerald-300 font-medium">
+            ⚡ AI Predicted: <strong className="font-mono tracking-wider">{suggestedValue}</strong>
+          </span>
+          <button
+            type="button"
+            onClick={handleQuickConfirm}
+            className="text-[11px] font-bold text-emerald-600 dark:text-emerald-400 hover:underline cursor-pointer"
+          >
+            Confirm (1-Click)
+          </button>
         </div>
       )}
 

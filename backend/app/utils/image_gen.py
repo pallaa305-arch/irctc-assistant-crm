@@ -38,42 +38,28 @@ def generate_mock_captcha_image(text: str) -> bytes:
     image.save(buf, format='PNG')
     return buf.getvalue()
 
+def get_mock_upi_url(amount: float, ref: str) -> str:
+    return f"upi://pay?pa=irctc.pay@hdfcbank&pn=IRCTC%20Official&am={amount:.2f}&cu=INR&tr={ref}&tn=IRCTC%20Tatkal%20Ticket"
+
 def generate_mock_upi_qr_image(amount: float, ref: str) -> bytes:
     """
-    Generates a mock UPI Payment QR display image.
+    Generates a genuine, scannable UPI Payment QR image.
     """
-    width, height = 280, 320
-    image = Image.new('RGB', (width, height), color=(255, 255, 255))
-    draw = ImageDraw.Draw(image)
-
-    # Top Header
-    draw.rectangle([0, 0, width, 55], fill=(30, 90, 50))
-    draw.text((20, 15), "BHARAT UPI / IRCTC PAY", fill=(255, 255, 255))
-    draw.text((20, 32), f"Amount: Rs. {amount:.2f}", fill=(200, 240, 210))
-
-    # Mock QR pattern box
-    qr_box = [40, 75, 240, 275]
-    draw.rectangle(qr_box, outline=(0, 0, 0), width=3)
-
-    # Draw pseudo-QR grid pattern
-    random.seed(hash(ref))
-    grid_size = 10
-    for r in range(45, 235, grid_size):
-        for c in range(80, 270, grid_size):
-            if random.random() > 0.45:
-                draw.rectangle([r, c, r + grid_size - 1, c + grid_size - 1], fill=(0, 0, 0))
-
-    # Corner anchors
-    draw.rectangle([45, 80, 85, 120], fill=(0, 0, 0))
-    draw.rectangle([55, 90, 75, 110], fill=(255, 255, 255))
-    draw.rectangle([195, 80, 235, 120], fill=(0, 0, 0))
-    draw.rectangle([205, 90, 225, 110], fill=(255, 255, 255))
-    draw.rectangle([45, 230, 85, 270], fill=(0, 0, 0))
-    draw.rectangle([55, 240, 75, 260], fill=(255, 255, 255))
-
-    # Footer note
-    draw.text((40, 290), f"Ref: {ref}", fill=(100, 100, 100))
-
-    buf = io.BytesIO()
-    image.save(buf, format='PNG')
-    return buf.getvalue()
+    upi_url = get_mock_upi_url(amount, ref)
+    try:
+        import qrcode
+        qr = qrcode.QRCode(box_size=8, border=3)
+        qr.add_data(upi_url)
+        qr.make(fit=True)
+        img = qr.make_image(fill_color="black", back_color="white")
+        buf = io.BytesIO()
+        img.save(buf, format='PNG')
+        return buf.getvalue()
+    except Exception:
+        width, height = 280, 280
+        image = Image.new('RGB', (width, height), color=(255, 255, 255))
+        draw = ImageDraw.Draw(image)
+        draw.text((20, 20), f"UPI Pay: Rs {amount:.2f}", fill=(0, 0, 0))
+        buf = io.BytesIO()
+        image.save(buf, format='PNG')
+        return buf.getvalue()
