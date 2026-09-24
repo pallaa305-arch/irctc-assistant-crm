@@ -748,67 +748,126 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             log_event(db, "WARNING", "AUTOMATION", "Session not logged in before search. Re-authenticating...", ref)
             await ensure_authenticated_session(page, ref, db, session_state, booking)
 
-        # Ensure search inputs are ready
-        has_search_inputs = await page.locator("p-autocomplete input").count() > 0
-        if not has_search_inputs:
-            if "/train-search" not in page.url and "/nget/" not in page.url:
-                await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=30000)
-                await asyncio.sleep(1.5)
-            await dismiss_overlays(page)
-
         search_success = False
+        date_str = booking.journey_date.strftime("%d/%m/%Y")
+
         for search_attempt in range(3):
             try:
+                # If train list already loaded, break out immediately
+                if "/train-list" in page.url or await page.locator("app-train-list, div.train-heading, app-train-avl-enq").count() > 0:
+                    log_event(db, "INFO", "AUTOMATION", "Train search results already visible.", ref)
+                    search_success = True
+                    break
+
                 # Ensure search inputs are ready
+                has_search_inputs = await page.locator("p-autocomplete input").count() > 0
+                if not has_search_inputs:
+                    if "/train-search" not in page.url:
+                        await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=30000)
+                        await asyncio.sleep(2)
+                    await dismiss_overlays(page)
+
                 await page.wait_for_selector("p-autocomplete input", timeout=15000)
                 autocomplete_inputs = page.locator("p-autocomplete input")
                 
                 from_input = autocomplete_inputs.nth(0)
-                to_input = page.locator("p-autocomplete input").nth(1)
+                to_input = autocomplete_inputs.nth(1)
 
                 # 1. From station — use resolved code
                 await _fill_station_autocomplete(page, from_input, booking.from_station, "FROM", db, ref)
-
-                # Close any lingering dropdown
                 await page.keyboard.press("Escape")
                 await asyncio.sleep(0.3)
 
                 # 2. To station — use resolved code
                 await _fill_station_autocomplete(page, to_input, booking.to_station, "TO", db, ref)
-
-                # Close any lingering dropdown overlays with Escape
                 await page.keyboard.press("Escape")
                 await asyncio.sleep(0.3)
 
-                # 3. Date
-                date_str = booking.journey_date.strftime("%d/%m/%Y")
+                # 3. Date — Set via JS and direct keyboard
+                await page.evaluate(f'''() => {{
+                    const dInput = document.querySelector("p-calendar input, #jDate input, input[placeholder*='Date' i]");
+                    if (dInput) {{
+                        dInput.value = "{date_str}";
+                        dInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
+                        dInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
+                    }}
+                }}''')
+
                 date_input = page.locator("p-calendar input, #jDate input, input[placeholder*='Date' i]").first
                 if await date_input.count() > 0:
-                    await date_input.scroll_into_view_if_needed()
-                    await date_input.click(force=True)
-                    await page.keyboard.press("Control+A")
-                    await page.keyboard.press("Backspace")
-                    await date_input.press_sequentially(date_str, delay=60)
-                    await page.keyboard.press("Enter")
-                    await page.keyboard.press("Escape")
-                    await asyncio.sleep(0.5)
+                    try:
+                        await date_input.click(force=True)
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
+                        await date_input.press_sequentially(date_str, delay=50)
+                        await page.keyboard.press("Enter")
+                    except Exception:
+                        pass
+                await page.keyboard.press("Escape")
+                await asyncio.sleep(0.3)
+                # Dismiss calendar overlay if blocking UI
+                await page.evaluate('''() => {
+                    document.querySelectorAll(".ui-datepicker, .p-datepicker").forEach(el => el.style.display = 'none');
+                }''')
 
-                # 4. Click Search Button
-                search_btn = page.locator("button.search_btn, button[type='submit']:has-text('Search'), button:has-text('Search')").first
-                if await search_btn.count() > 0:
-                    await search_btn.scroll_into_view_if_needed()
-                    await search_btn.click(force=True)
+                # 4. Click Search Button (using comprehensive selector list + JS fallback)
+                search_selectors = [
+                    "button.train_Search",
+                    "button.search_btn",
+                    "button[type='submit']:has-text('Search')",
+                    "button:has-text('Search')",
+                    "button:has-text('SEARCH')",
+                    "button:has-text('खोजें')",
+                    "button[type='submit']",
+                    ".train_Search",
+                    ".search_btn",
+                    "button.btnDefault"
+                ]
+
+                clicked_search = False
+                for sel in search_selectors:
+                    btn = page.locator(sel).first
+                    if await btn.count() > 0 and await btn.is_visible():
+                        try:
+                            await btn.scroll_into_view_if_needed()
+                            await btn.click(force=True)
+                            clicked_search = True
+                            break
+                        except Exception:
+                            pass
+
+                if not clicked_search:
+                    clicked_search = await page.evaluate('''() => {
+                        const btn = document.querySelector("button.train_Search, button.search_btn, button[type='submit'], .train_Search, .search_btn");
+                        if (btn) {
+                            btn.click();
+                            return true;
+                        }
+                        const form = document.querySelector("form");
+                        if (form) {
+                            form.submit();
+                            return true;
+                        }
+                        return false;
+                    }''')
+
+                if clicked_search:
                     log_event(db, "INFO", "AUTOMATION", f"Submitted search for {booking.from_station} to {booking.to_station} on {date_str} (attempt {search_attempt+1}).", ref)
-                    await asyncio.sleep(3)
-                    search_success = True
-                    break
-                    
+                    # Wait up to 15s for train-list or URL navigation
+                    for _ in range(15):
+                        await asyncio.sleep(1)
+                        if "/train-list" in page.url or await page.locator("app-train-list, div.train-heading, app-train-avl-enq").count() > 0:
+                            search_success = True
+                            break
+                    if search_success:
+                        break
+
             except Exception as e:
                 log_event(db, "WARNING", "AUTOMATION", f"Search attempt {search_attempt+1} failed: {str(e)}", ref)
                 await asyncio.sleep(1)
 
         if not search_success:
-            log_event(db, "WARNING", "AUTOMATION", "Search form could not be submitted after 3 attempts. Continuing to check if train list loaded...", ref)
+            log_event(db, "WARNING", "AUTOMATION", "Search form could not be submitted after 3 attempts. Checking if train list loaded...", ref)
 
         # ══════════════════════════════════════════════════
         # Step 5: Train & Class Selection
@@ -820,7 +879,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         train_list_found = False
         for _ in range(20):
             await dismiss_overlays(page)
-            if await page.locator("app-train-list, div.train-heading, div.form-group:has(.train-name)").count() > 0:
+            if await page.locator("app-train-list, div.train-heading, div.form-group:has(.train-name), app-train-avl-enq").count() > 0:
                 train_list_found = True
                 break
             # Check for IRCTC daily maintenance downtime
@@ -850,7 +909,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 return false;
             }''')
             if no_trains:
-                log_event(db, "WARNING", "AUTOMATION", "No trains found for this route/date.", ref)
+                log_event(db, "WARNING", "AUTOMATION", "No trains found for this route/date on IRCTC.", ref)
                 break
             await asyncio.sleep(1)
 
@@ -886,6 +945,17 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
         if not target_train_card or await target_train_card.count() == 0:
             target_train_card = page.locator("app-train-avl-enq").first
+
+        if await target_train_card.count() == 0:
+            err_msg = f"No train cards (app-train-avl-enq) found on search results page for {booking.from_station} ➔ {booking.to_station} on {date_str}."
+            log_event(db, "ERROR", "AUTOMATION", err_msg, ref)
+            session_state.set_stage("FAILED", "FAILED")
+            session_state.error_message = err_msg
+            booking.status = "FAILED"
+            db.commit()
+            if settings.TELEGRAM_ENABLED:
+                await send_telegram_message(f"❌ *Booking Failed* (Ref: `{ref}`)\n\n{err_msg}")
+            return
 
         await target_train_card.scroll_into_view_if_needed()
         await asyncio.sleep(0.5)
