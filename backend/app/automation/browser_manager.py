@@ -83,7 +83,11 @@ class BrowserManager:
                     "--start-maximized",
                     "--disable-blink-features=AutomationControlled",
                     "--no-first-run",
-                    "--disable-infobars"
+                    "--disable-infobars",
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage",
+                    "--disable-gpu"
                 ],
                 "locale": "en-US"
             }

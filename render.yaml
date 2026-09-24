@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: irctc-assistant-crm
+    runtime: docker
+    dockerfilePath: Dockerfile
+    plan: free
+    region: singapore
+    healthCheckPath: /api/health
+    envVars:
+      - key: TELEGRAM_BOT_TOKEN
+        value: 8620217080:AAFUlVeFp-IqLvWmH5u4mI-Em3_9pZptTP4
+      - key: TELEGRAM_CHAT_ID
+        value: "7875481582"
+      - key: TELEGRAM_ENABLED
+        value: "true"
+      - key: DEMO_MODE
+        value: "false"
+      - key: BROWSER_HEADLESS
+        value: "true"
+      - key: IRCTC_USERNAME
+        value: randisumandalladeepak
+      - key: IRCTC_PASSWORD
+        value: Gandusuman@7323
