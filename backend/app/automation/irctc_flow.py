@@ -1928,9 +1928,11 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 await send_telegram_message(f"⚠️ *Payment Timed Out* (Ref: `{ref}`)\n\n180 seconds payment window expired without confirmed PNR.")
 
     except Exception as e:
+        import traceback
+        tb_str = traceback.format_exc()
         err_msg = str(e) or repr(e)
         session_state.set_stage("FAILED", "FAILED")
         session_state.error_message = err_msg
         booking.status = "FAILED"
         db.commit()
-        log_event(db, "ERROR", "AUTOMATION", f"Real IRCTC Flow error: {err_msg}", ref)
+        log_event(db, "ERROR", "AUTOMATION", f"Real IRCTC Flow error: {err_msg} | Details: {tb_str[-250:]}", ref)

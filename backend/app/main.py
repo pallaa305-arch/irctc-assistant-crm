@@ -7,6 +7,11 @@ from contextlib import asynccontextmanager
 # On Windows, Playwright requires ProactorEventLoop to launch subprocesses
 if sys.platform == 'win32':
     asyncio.set_event_loop_policy(asyncio.WindowsProactorEventLoopPolicy())
+    try:
+        import uvicorn.loops.asyncio
+        uvicorn.loops.asyncio.asyncio_loop_factory = lambda use_subprocess=False: asyncio.ProactorEventLoop
+    except Exception:
+        pass
 
 def proactor_loop_factory():
     return asyncio.ProactorEventLoop()
