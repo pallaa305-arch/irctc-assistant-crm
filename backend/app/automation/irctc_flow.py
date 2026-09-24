@@ -140,6 +140,20 @@ async def dismiss_overlays(page):
                         action = true;
                     }
                 }
+
+                // Dismiss beta banner close button (x) if visible
+                const bannerClose = document.querySelector('.close-banner, .fa-close, .close-icon, span.fa-close, a.fa-close, .h_head button.close');
+                if (bannerClose && bannerClose.offsetParent !== null && !bannerClose.closest('app-login')) {
+                    bannerClose.click();
+                    action = true;
+                }
+
+                // Dismiss sidebar backdrop if open and not in login dialog
+                const overlay = document.querySelector('.ui-sidebar-mask, .ui-widget-overlay');
+                if (overlay && overlay.offsetParent !== null && !document.querySelector('app-login')) {
+                    overlay.click();
+                    action = true;
+                }
                 
                 return action;
             }''')
@@ -374,38 +388,85 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
         # Try opening login modal if not already open
         user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
         if not (await user_input.count() > 0 and await user_input.is_visible()):
-            # If navbar is collapsed into hamburger menu
-            hamburger = page.locator("a.sidebar-menu-btn, button.navbar-toggler, .fa-bars, [aria-label*='menu' i]").first
-            if await hamburger.count() > 0 and await hamburger.is_visible():
-                try:
-                    await hamburger.click(timeout=1500)
-                    await asyncio.sleep(0.5)
-                except Exception:
-                    pass
-
-            # Try native DOM evaluation click
+            # 1. Close any stray sidebar/backdrop overlay first
             await page.evaluate('''() => {
-                const btn = Array.from(document.querySelectorAll('a, button, span')).find(e => {
-                    const t = (e.innerText || '').trim().toUpperCase();
-                    return t === 'LOGIN' || t === 'LOGIN / REGISTER' || t.startsWith('LOGIN');
-                });
-                if (btn) btn.click();
+                const overlay = document.querySelector('.ui-sidebar-mask, .ui-widget-overlay');
+                if (overlay) overlay.click();
             }''')
 
-            login_btn = page.locator("a.loginText, a:has-text('LOGIN / REGISTER'), a:has-text('LOGIN'), button:has-text('LOGIN')").first
-            if await login_btn.count() > 0 and await login_btn.is_visible():
+            # 2. Try SmartBrowserActions click on LOGIN button directly
+            clicked_login = await SmartBrowserActions.smart_click(
+                page=page,
+                selectors=[
+                    "a.loginText",
+                    "a.search_btn.loginText",
+                    "a:has-text('LOGIN / REGISTER')",
+                    "a:has-text('LOGIN')",
+                    "button:has-text('LOGIN / REGISTER')",
+                    "button:has-text('LOGIN')"
+                ],
+                text_keywords=["LOGIN / REGISTER", "LOGIN"],
+                wait_after_sec=1.5
+            )
+
+            # 3. Direct mouse coordinate click fallback
+            if not clicked_login:
                 try:
-                    await login_btn.click(timeout=3000, force=True)
+                    login_loc = page.locator("a.loginText, a:has-text('LOGIN / REGISTER'), a:has-text('LOGIN')").first
+                    if await login_loc.count() > 0:
+                        box = await login_loc.bounding_box()
+                        if box:
+                            await page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
+                            await asyncio.sleep(1.5)
                 except Exception:
                     pass
-            await asyncio.sleep(2)
+
+            # 4. If still not visible, only check hamburger if on mobile/narrow screen
+            if not (await page.locator("input[formcontrolname='userid'], #userId").count() > 0):
+                hamburger = page.locator("a.sidebar-menu-btn, button.navbar-toggler").first
+                if await hamburger.count() > 0 and await hamburger.is_visible():
+                    try:
+                        await hamburger.click(timeout=1500)
+                        await asyncio.sleep(0.8)
+                        side_login = page.locator("a.loginText, a:has-text('LOGIN')").first
+                        if await side_login.count() > 0 and await side_login.is_visible():
+                            await side_login.click(force=True)
+                            await asyncio.sleep(1.5)
+                    except Exception:
+                        pass
 
         # Wait for user input selector
-        try:
-            await page.wait_for_selector("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]", timeout=6000)
+        for _ in range(8):
             user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
             pass_input = page.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
-        except Exception:
+            if await user_input.count() > 0 and await user_input.is_visible():
+                break
+            await asyncio.sleep(0.5)
+
+        # Fallback if login modal still didn't open: user intervention
+        if not (await user_input.count() > 0 and await user_input.is_visible()):
+            snap = await page.screenshot(full_page=False)
+            session_state.latest_screenshot_bytes = snap
+            try:
+                (DATA_DIR / "latest_captcha.png").write_bytes(snap)
+            except Exception:
+                pass
+            login_prompt = "IRCTC Login modal open nahi hua. Kripya browser window me 'LOGIN' par click karein."
+            session_state.pause_for_user(login_prompt, is_payment=False, input_type="CONFIRMATION", screenshot_bytes=snap)
+            log_event(db, "WARNING", "AUTOMATION", f"Login attempt {attempt}: Modal did not open automatically. Requesting manual confirmation.", ref)
+            if settings.TELEGRAM_ENABLED and snap:
+                t_keyboard = {
+                    "inline_keyboard": [
+                        [{"text": "✅ Login Modal Open Ho Gaya (Continue)", "callback_data": "action_continue"}],
+                        [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
+                    ]
+                }
+                await send_telegram_photo(
+                    photo_bytes=snap,
+                    caption=f"⚠️ *IRCTC Login Prompt* (Ref: `{ref}`)\n\nBrowser window me 'LOGIN / REGISTER' button par click karein, phir neeche 'Continue' dabayein.",
+                    reply_markup=t_keyboard
+                )
+            await _wait_for_user_or_cancel(session_state, timeout_seconds=60)
             user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
             pass_input = page.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
 
