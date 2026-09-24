@@ -374,10 +374,31 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
         # Try opening login modal if not already open
         user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
         if not (await user_input.count() > 0 and await user_input.is_visible()):
+            # If navbar is collapsed into hamburger menu
+            hamburger = page.locator("a.sidebar-menu-btn, button.navbar-toggler, .fa-bars, [aria-label*='menu' i]").first
+            if await hamburger.count() > 0 and await hamburger.is_visible():
+                try:
+                    await hamburger.click(timeout=1500)
+                    await asyncio.sleep(0.5)
+                except Exception:
+                    pass
+
+            # Try native DOM evaluation click
+            await page.evaluate('''() => {
+                const btn = Array.from(document.querySelectorAll('a, button, span')).find(e => {
+                    const t = (e.innerText || '').trim().toUpperCase();
+                    return t === 'LOGIN' || t === 'LOGIN / REGISTER' || t.startsWith('LOGIN');
+                });
+                if (btn) btn.click();
+            }''')
+
             login_btn = page.locator("a.loginText, a:has-text('LOGIN / REGISTER'), a:has-text('LOGIN'), button:has-text('LOGIN')").first
             if await login_btn.count() > 0 and await login_btn.is_visible():
-                await login_btn.click(timeout=3000, force=True)
-                await asyncio.sleep(1.5)
+                try:
+                    await login_btn.click(timeout=3000, force=True)
+                except Exception:
+                    pass
+            await asyncio.sleep(2)
 
         # Wait for user input selector
         try:
@@ -530,6 +551,12 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
         return True
     else:
         err = "Mandatory IRCTC Login failed after 3 attempts. Guest booking is strictly prohibited."
+        try:
+            snap = await page.screenshot(full_page=False)
+            session_state.latest_screenshot_bytes = snap
+            (DATA_DIR / "latest_captcha.png").write_bytes(snap)
+        except Exception:
+            pass
         log_event(db, "ERROR", "AUTOMATION", err, ref)
         raise RuntimeError(err)
 

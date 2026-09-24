@@ -47,3 +47,23 @@ async def get_system_status(db: Session = Depends(get_db)):
         "demo_mode": settings.DEMO_MODE,
         "app_env": settings.APP_ENV
     }
+
+@router.get("/diagnostics/page")
+async def get_page_diagnostics():
+    import base64
+    try:
+        page = await browser_manager.get_page()
+        if not page.url or "irctc" not in page.url:
+            await page.goto("https://www.irctc.co.in/nget/train-search", timeout=35000)
+        title = await page.title()
+        url = page.url
+        body_text = await page.evaluate("() => document.body ? document.body.innerText.substring(0, 800) : ''")
+        screenshot_bytes = await page.screenshot(full_page=False)
+        return {
+            "title": title,
+            "url": url,
+            "text": body_text,
+            "screenshot_b64": base64.b64encode(screenshot_bytes).decode('ascii')
+        }
+    except Exception as e:
+        return {"error": str(e)}
