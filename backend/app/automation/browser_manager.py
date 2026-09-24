@@ -90,9 +90,16 @@ class BrowserManager:
                     "--disable-gpu"
                 ],
                 "locale": "en-US"
-            }
             if settings.BROWSER_HEADLESS:
                 launch_args["viewport"] = {"width": 1366, "height": 768}
+
+            if settings.PROXY_SERVER:
+                proxy_dict = {"server": settings.PROXY_SERVER}
+                if settings.PROXY_USERNAME:
+                    proxy_dict["username"] = settings.PROXY_USERNAME
+                if settings.PROXY_PASSWORD:
+                    proxy_dict["password"] = settings.PROXY_PASSWORD
+                launch_args["proxy"] = proxy_dict
 
             # Attempt to launch with real installed Google Chrome for visible window & recognition
             try:

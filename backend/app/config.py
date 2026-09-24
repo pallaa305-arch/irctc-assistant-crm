@@ -48,6 +48,11 @@ class Settings(BaseSettings):
     IRCTC_USERNAME: str = "randisumandalladeepak"
     IRCTC_PASSWORD: str = "Gandusuman@7323"
     
+    # Proxy Settings (for cloud deployments to bypass Akamai geo-blocking)
+    PROXY_SERVER: str = ""    # e.g. "http://host:port" or "socks5://host:port"
+    PROXY_USERNAME: str = ""
+    PROXY_PASSWORD: str = ""
+
     # Network & Public URLs
     PUBLIC_BASE_URL: str = ""  # If using ngrok/tunnel, e.g. "https://xxxx.ngrok-free.app", otherwise auto-detected local IP
     
