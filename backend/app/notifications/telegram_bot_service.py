@@ -1080,11 +1080,11 @@ class TelegramBotService:
                         return
                 else:
                     if lang == "hi":
-                        err_d = "⚠️ कृपया वैध तारीख लिखें (जैसे: `15 Oct`, `25/10/2026`, या `कल`) या नीचे दिए गए बटन पर टैप करें:"
+                        err_d = "⚠️ कृपया वैध तारीख लिखें, जैसे: `15 Oct`, `25/10/2026`, या `कल`:"
                     elif lang == "en":
-                        err_d = "⚠️ Please type a valid date (e.g. `15 Oct`, `25/10/2026`, or `Tomorrow`) or tap a button below:"
+                        err_d = "⚠️ Please type a valid date, e.g.: `15 Oct`, `25/10/2026`, or `Tomorrow`:"
                     else:
-                        err_d = "⚠️ Kripya valid date likhein (jaise: `15 Oct`, `25/10/2026`, ya `Kal`) ya neeche diye gaye button par tap karein:"
+                        err_d = "⚠️ Kripya valid date likhein, jaise: `15 Oct`, `25/10/2026`, ya `Kal`:"
                     await send_telegram_message(err_d, chat_id=chat_id)
                     await self._ask_date(chat_id)
                     return
@@ -1775,40 +1775,35 @@ class TelegramBotService:
 
     async def _ask_date(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
-        today = date.today()
-        d1 = (today + timedelta(days=1)).strftime("%d/%m")
-        d2 = (today + timedelta(days=2)).strftime("%d/%m")
-        d7 = (today + timedelta(days=7)).strftime("%d/%m")
+        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
 
         if lang == "hi":
-            t_d1, t_d2, t_d7, cancel_txt = f"कल ({d1})", f"परसों ({d2})", f"अगले हफ्ते ({d7})", "❌ रद्द करें"
             msg = (
-                "📅 *यात्रा की तारीख क्या है?*\n\n"
-                "👉 *विकल्प 1 (बटन):* त्वरित तारीख चुनें।\n"
-                "💬 *विकल्प 2 (चैट):* तारीख लिखें जैसे: `15 Oct`, `25/10/2026`, या `कल`"
+                "📅 *कब जाना है आपको? (यात्रा की तारीख)*\n\n"
+                "चैट में यात्रा की तारीख लिखें, जैसे:\n"
+                "• `कल` या `परसों`\n"
+                "• `15 Oct`\n"
+                "• `25/10/2026`"
             )
         elif lang == "en":
-            t_d1, t_d2, t_d7, cancel_txt = f"Tomorrow ({d1})", f"Day After ({d2})", f"Next Week ({d7})", "❌ Cancel"
             msg = (
-                "📅 *What is your journey date?*\n\n"
-                "👉 *Option 1 (Buttons):* Tap a quick date button.\n"
-                "💬 *Option 2 (Chat):* Type date, e.g.: `15 Oct`, `25/10/2026`, or `Tomorrow`"
+                "📅 *When would you like to travel? (Journey Date)*\n\n"
+                "Type your travel date in chat, e.g.:\n"
+                "• `Tomorrow` or `Day after`\n"
+                "• `15 Oct`\n"
+                "• `25/10/2026`"
             )
         else:
-            t_d1, t_d2, t_d7, cancel_txt = f"Kal ({d1})", f"Parso ({d2})", f"Next Week ({d7})", "❌ Cancel"
             msg = (
-                "📅 *Journey Date kya hai?*\n\n"
-                "👉 *Option 1 (Button):* Quick date button dabayein.\n"
-                "💬 *Option 2 (Manual Chat):* Date likhein jaise: `15 Oct`, `25/10/2026`, ya `Kal`"
+                "📅 *Kab jaana hai aapko? (Journey Date)*\n\n"
+                "Chat me seedha travel date likhein, jaise:\n"
+                "• `Kal` ya `Parso`\n"
+                "• `15 Oct`\n"
+                "• `25/10/2026`"
             )
 
         keyboard = {
             "inline_keyboard": [
-                [
-                    {"text": t_d1, "callback_data": "date_1"},
-                    {"text": t_d2, "callback_data": "date_2"},
-                    {"text": t_d7, "callback_data": "date_7"}
-                ],
                 [
                     {"text": cancel_txt, "callback_data": "cancel_book"}
                 ]
