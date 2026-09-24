@@ -90,6 +90,7 @@ class BrowserManager:
                     "--disable-gpu"
                 ],
                 "locale": "en-US"
+            }
             if settings.BROWSER_HEADLESS:
                 launch_args["viewport"] = {"width": 1366, "height": 768}
 
