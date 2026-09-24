@@ -431,29 +431,82 @@ class RailwayService:
             "coaches": coaches
         }
 
-    async def search_trains(self, from_code: str, to_code: str) -> List[Dict[str, Any]]:
+    async def search_trains(self, from_code: str, to_code: str, journey_date: Optional[str] = None) -> List[Dict[str, Any]]:
         """
-        Find trains running between two station codes, augmented with timing slots,
-        tatkal windows, and live coach availability/pricing.
+        Find trains running between two station codes, queried from live railway feeds
+        and augmented with timing slots, coach availability, and IRCTC pricing.
         """
         fc = from_code.upper().strip()
         tc = to_code.upper().strip()
+        j_date = journey_date or (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
 
         matched: List[Dict[str, Any]] = []
-        all_trains = dict(KNOWN_TRAINS)
-        all_trains.update(station_cache.get_all_trains())
 
-        for t_no, t_data in all_trains.items():
-            if t_data.get("from_station") == fc and t_data.get("to_station") == tc:
-                if t_data not in matched:
-                    matched.append(dict(t_data))
-            elif "stops" in t_data and fc in t_data["stops"] and tc in t_data["stops"]:
-                fc_idx = t_data["stops"].index(fc)
-                tc_idx = t_data["stops"].index(tc)
-                if fc_idx < tc_idx and t_data not in matched:
-                    matched.append(dict(t_data))
+        # 1. Try Live Indian Railways feed from erail
+        try:
+            url = f"https://erail.in/rail/getTrains.aspx?Station_From={fc}&Station_To={tc}"
+            headers = {
+                "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36",
+                "Referer": "https://erail.in/"
+            }
+            async with httpx.AsyncClient(timeout=4.0) as client:
+                resp = await client.get(url, headers=headers)
+                if resp.status_code == 200 and "^" in resp.text:
+                    parts = resp.text.split("^")
+                    for p in parts[1:]:
+                        fields = p.split("~")
+                        if len(fields) >= 14:
+                            t_no = fields[0].strip()
+                            t_name = fields[1].strip()
+                            dep_raw = fields[10].strip() if len(fields) > 10 else "08.00"
+                            arr_raw = fields[11].strip() if len(fields) > 11 else "18.00"
+                            dur_raw = fields[12].strip() if len(fields) > 12 else ""
+                            dep = dep_raw.replace(".", ":")
+                            arr = arr_raw.replace(".", ":")
+                            dur = f"{dur_raw.replace('.', 'h ')}m" if dur_raw else "--"
 
-        # If direct known match not found, synthesize top express options
+                            # Extract available classes if present in field 62
+                            classes = []
+                            if len(fields) > 62 and fields[62]:
+                                for c_cand in ["1A", "2A", "3A", "3E", "CC", "EC", "SL", "2S"]:
+                                    if f"{c_cand}:" in fields[62]:
+                                        classes.append(c_cand)
+                            if not classes:
+                                classes = ["SL", "3A", "2A", "1A"]
+
+                            matched.append({
+                                "train_number": t_no,
+                                "train_name": t_name,
+                                "from_station": fc,
+                                "from_station_name": fields[2].strip() if len(fields) > 2 else station_cache.get_station_name(fc),
+                                "to_station": tc,
+                                "to_station_name": fields[4].strip() if len(fields) > 4 else station_cache.get_station_name(tc),
+                                "departure_time": dep,
+                                "arrival_time": arr,
+                                "duration": dur,
+                                "classes": classes
+                            })
+                            if len(matched) >= 6:
+                                break
+        except Exception:
+            pass
+
+        # 2. If live query empty, use built-in catalog & station_cache
+        if not matched:
+            all_trains = dict(KNOWN_TRAINS)
+            all_trains.update(station_cache.get_all_trains())
+
+            for t_no, t_data in all_trains.items():
+                if t_data.get("from_station") == fc and t_data.get("to_station") == tc:
+                    if t_data not in matched:
+                        matched.append(dict(t_data))
+                elif "stops" in t_data and fc in t_data["stops"] and tc in t_data["stops"]:
+                    fc_idx = t_data["stops"].index(fc)
+                    tc_idx = t_data["stops"].index(tc)
+                    if fc_idx < tc_idx and t_data not in matched:
+                        matched.append(dict(t_data))
+
+        # 3. Fallback synthesis if no match
         if not matched:
             fn = station_cache.get_station_name(fc)
             tn = station_cache.get_station_name(tc)
@@ -485,8 +538,7 @@ class RailwayService:
             ]
 
         # Augment each train with timing slots, Tatkal metadata, and live coach availability
-        today_str = (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
-        for tr in matched:
+        for tr in matched[:6]:
             dep = tr.get("departure_time", "08:00")
             slot_info = self._get_timing_slot(dep)
             tr["timing_slot"] = slot_info["slot"]
@@ -494,17 +546,17 @@ class RailwayService:
             tr["tatkal_ac_open"] = "10:00 AM"
             tr["tatkal_nonac_open"] = "11:00 AM"
 
-            # Generate live coach availability & pricing for this train
+            # Generate live coach availability & pricing for this train on the specified date
             avail = self.get_seat_availability(
                 train_number=tr.get("train_number", "12002"),
                 from_code=fc,
                 to_code=tc,
-                journey_date=today_str,
+                journey_date=j_date,
                 quota="GN"
             )
             tr["coaches"] = avail.get("coaches", [])
 
-        return matched
+        return matched[:6]
 
     # ---------------- Telegram Formatters in 3 Languages ---------------- #
 
