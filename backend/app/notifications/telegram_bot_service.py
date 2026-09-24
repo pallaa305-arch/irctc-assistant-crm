@@ -2052,6 +2052,7 @@ class TelegramBotService:
         matched_tr = next((tr for tr in train_list if tr.get("train_number") == t_num), None)
         tr_classes = matched_tr.get("classes") if matched_tr else None
         tr_name = matched_tr.get("train_name") if matched_tr else None
+        tr_fares = matched_tr.get("real_fares") if matched_tr else None
 
         avail = railway_service.get_seat_availability(
             train_number=t_num,
@@ -2060,7 +2061,8 @@ class TelegramBotService:
             journey_date=j_date,
             quota=quota,
             classes=tr_classes,
-            train_name=tr_name
+            train_name=tr_name,
+            real_fares=tr_fares
         )
         t_name = avail.get("train_name", f"Express #{t_num}")
         coaches = avail.get("coaches", [])

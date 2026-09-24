@@ -338,7 +338,8 @@ class RailwayService:
         journey_date: str,
         quota: str = "GN",
         classes: Optional[List[str]] = None,
-        train_name: Optional[str] = None
+        train_name: Optional[str] = None,
+        real_fares: Optional[Dict[str, int]] = None
     ) -> Dict[str, Any]:
         """
         Calculates realistic, live IRCTC-standard seat availability, status (Available/RAC/WL),
@@ -393,14 +394,21 @@ class RailwayService:
                 color = "rose"  # Red
                 prob = "Low (Waiting List)"
 
-            # Fare computation
-            base_fare = meta["base"]
-            if quota == "TQ":
-                base_fare += 120 if not meta["is_ac"] else 300
-            elif quota == "PT":
-                base_fare += 200 if not meta["is_ac"] else 550
-
-            total_fare = base_fare + meta["res"] + meta["sf"] + meta["tax"]
+            # Fare computation: Use official live railway fare if parsed
+            if real_fares and cls in real_fares and real_fares[cls] > 0:
+                total_fare = real_fares[cls]
+                if quota == "TQ":
+                    total_fare += 120 if not meta["is_ac"] else 300
+                elif quota == "PT":
+                    total_fare += 200 if not meta["is_ac"] else 550
+                base_fare = max(50, total_fare - meta["res"] - meta["sf"] - meta["tax"])
+            else:
+                base_fare = meta["base"]
+                if quota == "TQ":
+                    base_fare += 120 if not meta["is_ac"] else 300
+                elif quota == "PT":
+                    base_fare += 200 if not meta["is_ac"] else 550
+                total_fare = base_fare + meta["res"] + meta["sf"] + meta["tax"]
 
             coaches.append({
                 "class_code": cls,
@@ -443,6 +451,14 @@ class RailwayService:
         tc = to_code.upper().strip()
         j_date = journey_date or (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y")
 
+        # Determine target day of week (0=Mon, 1=Tue, ..., 5=Sat, 6=Sun)
+        target_weekday = None
+        if j_date:
+            try:
+                target_weekday = datetime.strptime(j_date, "%d/%m/%Y").date().weekday()
+            except Exception:
+                pass
+
         matched: List[Dict[str, Any]] = []
 
         # 1. Try Live Indian Railways feed from erail
@@ -465,23 +481,42 @@ class RailwayService:
                             dep_raw = fields[10].strip() if len(fields) > 10 else ""
                             arr_raw = fields[11].strip() if len(fields) > 11 else ""
                             dur_raw = fields[12].strip() if len(fields) > 12 else ""
+                            days_raw = fields[13].strip() if len(fields) > 13 else ""
                             dep = dep_raw.replace(".", ":") if dep_raw else "--:--"
                             arr = arr_raw.replace(".", ":") if arr_raw else "--:--"
                             dur = f"{dur_raw.replace('.', 'h ')}m" if dur_raw else "--"
+
+                            # Check if train runs on the selected day of week
+                            runs_on_date = True
+                            if target_weekday is not None and len(days_raw) >= 7:
+                                runs_on_date = (days_raw[target_weekday] == '1')
 
                             # Query station names from feed:
                             # fields[6] is from_station_name, fields[8] is to_station_name
                             from_name = fields[6].strip() if len(fields) > 6 and fields[6].strip() else station_cache.get_station_name(fc)
                             to_name = fields[8].strip() if len(fields) > 8 and fields[8].strip() else station_cache.get_station_name(tc)
 
-                            # Extract available classes if present in field 62
+                            # Parse real active classes from field 62 (only if actually run on this train)
                             classes = []
                             if len(fields) > 62 and fields[62]:
-                                for c_cand in ["1A", "2A", "3A", "3E", "CC", "EC", "SL", "2S"]:
-                                    if f"{c_cand}:" in fields[62]:
-                                        classes.append(c_cand)
+                                for item in fields[62].split('|'):
+                                    if ':' in item:
+                                        c_code = item.split(':')[0].strip()
+                                        if any(x.isdigit() for x in item.split(':')[1:]):
+                                            classes.append(c_code)
                             if not classes:
-                                classes = ["SL", "3A", "2A", "1A"]
+                                classes = ["SL", "3A", "2A"]
+
+                            # Parse official live IRCTC fares from field 41
+                            real_fares = {}
+                            if len(fields) > 41 and fields[41] and ':' in fields[41]:
+                                p41 = fields[41].split(':')
+                                class_idx_map = {0: '1A', 1: '2A', 2: '3A', 3: '3E', 4: 'EC', 5: 'SL', 6: 'CC', 7: '2S'}
+                                for c_idx, seg in enumerate(p41[2:]):
+                                    if c_idx in class_idx_map and seg.strip() and ',' in seg:
+                                        base_num = seg.split(',')[0].strip()
+                                        if base_num.isdigit() and int(base_num) > 0:
+                                            real_fares[class_idx_map[c_idx]] = int(base_num)
 
                             matched.append({
                                 "train_number": t_no,
@@ -493,12 +528,20 @@ class RailwayService:
                                 "departure_time": dep,
                                 "arrival_time": arr,
                                 "duration": dur,
-                                "classes": classes
+                                "classes": classes,
+                                "real_fares": real_fares,
+                                "runs_on_date": runs_on_date,
+                                "running_days": days_raw
                             })
-                            if len(matched) >= 12:
+                            if len(matched) >= 20:
                                 break
         except Exception:
             pass
+
+        # Filter strictly by running day on the selected journey date if matches exist
+        trains_today = [t for t in matched if t.get("runs_on_date", True)]
+        if trains_today:
+            matched = trains_today
 
         # 2. If live query empty, use built-in catalog & station_cache
         if not matched:
@@ -533,7 +576,8 @@ class RailwayService:
                 journey_date=j_date,
                 quota="GN",
                 classes=tr.get("classes"),
-                train_name=tr.get("train_name")
+                train_name=tr.get("train_name"),
+                real_fares=tr.get("real_fares")
             )
             tr["coaches"] = avail.get("coaches", [])
 
