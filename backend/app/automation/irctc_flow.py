@@ -783,91 +783,116 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 await page.keyboard.press("Escape")
                 await asyncio.sleep(0.3)
 
-                # 3. Date — Set via JS and direct keyboard
-                await page.evaluate(f'''() => {{
-                    const dInput = document.querySelector("p-calendar input, #jDate input, input[placeholder*='Date' i]");
-                    if (dInput) {{
-                        dInput.value = "{date_str}";
-                        dInput.dispatchEvent(new Event('input', {{ bubbles: true }}));
-                        dInput.dispatchEvent(new Event('change', {{ bubbles: true }}));
-                    }}
-                }}''')
+                # 3. Date — Set via JS and direct input without conflicting Enter key
+                await page.evaluate('''(dStr) => {
+                    const dInputs = Array.from(document.querySelectorAll("p-calendar input, #jDate input, input[placeholder*='Date' i]"));
+                    for (const d of dInputs) {
+                        d.value = dStr;
+                        d.dispatchEvent(new Event('input', { bubbles: true }));
+                        d.dispatchEvent(new Event('change', { bubbles: true }));
+                        d.dispatchEvent(new Event('blur', { bubbles: true }));
+                    }
+                    // Remove any leftover datepicker overlay that could block clicks
+                    document.querySelectorAll(".ui-datepicker, .p-datepicker, .ui-widget-overlay").forEach(el => el.remove());
+                }''', date_str)
 
-                date_input = page.locator("p-calendar input, #jDate input, input[placeholder*='Date' i]").first
+                date_input = page.locator("p-calendar input:visible, #jDate input:visible, input[placeholder*='Date' i]:visible").first
                 if await date_input.count() > 0:
                     try:
-                        await date_input.click(force=True)
-                        await page.keyboard.press("Control+A")
-                        await page.keyboard.press("Backspace")
-                        await date_input.press_sequentially(date_str, delay=50)
-                        await page.keyboard.press("Enter")
+                        await date_input.fill(date_str)
+                        await date_input.dispatch_event("change")
+                        await date_input.dispatch_event("blur")
                     except Exception:
                         pass
                 await page.keyboard.press("Escape")
                 await asyncio.sleep(0.3)
-                # Dismiss calendar overlay if blocking UI
-                await page.evaluate('''() => {
-                    document.querySelectorAll(".ui-datepicker, .p-datepicker").forEach(el => el.style.display = 'none');
-                }''')
 
-                # 4. Click Search Button (using comprehensive selector list + JS fallback)
+                # 4. Click Search Button (using SmartBrowserActions + visible selectors + JS fallback)
                 search_selectors = [
+                    "button.train_Search:visible",
+                    "button.search_btn:visible",
+                    "button[type='submit']:has-text('Search'):visible",
+                    "button:has-text('Search'):visible",
+                    "button:has-text('SEARCH'):visible",
+                    "button.btnDefault:has-text('Search'):visible",
+                    "button[type='submit']:visible",
+                    ".train_Search:visible",
+                    ".search_btn:visible",
                     "button.train_Search",
-                    "button.search_btn",
-                    "button[type='submit']:has-text('Search')",
-                    "button:has-text('Search')",
-                    "button:has-text('SEARCH')",
-                    "button:has-text('खोजें')",
-                    "button[type='submit']",
-                    ".train_Search",
-                    ".search_btn",
-                    "button.btnDefault"
+                    "button.search_btn"
                 ]
 
-                clicked_search = False
-                for sel in search_selectors:
-                    btn = page.locator(sel).first
-                    if await btn.count() > 0 and await btn.is_visible():
-                        try:
-                            await btn.scroll_into_view_if_needed()
-                            await btn.click(force=True)
-                            clicked_search = True
-                            break
-                        except Exception:
-                            pass
+                clicked_search = await SmartBrowserActions.smart_click(
+                    page=page,
+                    selectors=search_selectors,
+                    text_keywords=["Search", "SEARCH", "Find Trains"],
+                    timeout_ms=4000,
+                    wait_after_sec=0.8
+                )
 
                 if not clicked_search:
                     clicked_search = await page.evaluate('''() => {
-                        const btn = document.querySelector("button.train_Search, button.search_btn, button[type='submit'], .train_Search, .search_btn");
-                        if (btn) {
-                            btn.click();
-                            return true;
+                        const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
+                        for (const b of allBtns) {
+                            const isVisible = b.offsetWidth > 0 && b.offsetHeight > 0 && window.getComputedStyle(b).display !== 'none';
+                            const txt = (b.innerText || b.value || '').trim().toLowerCase();
+                            const cls = b.className || '';
+                            if (isVisible && (txt === 'search' || cls.includes('train_Search') || cls.includes('search_btn'))) {
+                                b.scrollIntoView({ behavior: 'instant', block: 'center' });
+                                b.click();
+                                return true;
+                            }
                         }
-                        const form = document.querySelector("form");
+                        const form = document.querySelector('form');
                         if (form) {
-                            form.submit();
-                            return true;
+                            const btn = form.querySelector("button[type='submit'], button.train_Search, button");
+                            if (btn) {
+                                btn.click();
+                                return true;
+                            }
                         }
                         return false;
                     }''')
 
                 if clicked_search:
                     log_event(db, "INFO", "AUTOMATION", f"Submitted search for {booking.from_station} to {booking.to_station} on {date_str} (attempt {search_attempt+1}).", ref)
-                    # Wait up to 15s for train-list or URL navigation
-                    for _ in range(15):
+                    # Wait up to 20s for train-list or URL navigation
+                    for _ in range(20):
                         await asyncio.sleep(1)
+                        await dismiss_overlays(page)
                         if "/train-list" in page.url or await page.locator("app-train-list, div.train-heading, app-train-avl-enq").count() > 0:
                             search_success = True
                             break
+                        # Accept any informational advisory popups
+                        try:
+                            await page.evaluate('''() => {
+                                const dialogBtn = Array.from(document.querySelectorAll('.ui-dialog button, p-confirmdialog button, div[role="dialog"] button')).find(b => {
+                                    const t = (b.innerText || '').trim().toLowerCase();
+                                    return t.includes('ok') || t.includes('yes') || t.includes('agree') || t.includes('proceed');
+                                });
+                                if (dialogBtn) dialogBtn.click();
+                            }''')
+                        except Exception:
+                            pass
                     if search_success:
                         break
+                else:
+                    log_event(db, "WARNING", "AUTOMATION", f"Could not find visible search button on attempt {search_attempt+1}.", ref)
 
             except Exception as e:
                 log_event(db, "WARNING", "AUTOMATION", f"Search attempt {search_attempt+1} failed: {str(e)}", ref)
                 await asyncio.sleep(1)
 
         if not search_success:
-            log_event(db, "WARNING", "AUTOMATION", "Search form could not be submitted after 3 attempts. Checking if train list loaded...", ref)
+            err_msg = f"Could not navigate to Train List page for route {booking.from_station} ➔ {booking.to_station} on {date_str}. Search form submission failed or no results loaded."
+            log_event(db, "ERROR", "AUTOMATION", err_msg, ref)
+            session_state.set_stage("FAILED", "FAILED")
+            session_state.error_message = err_msg
+            booking.status = "FAILED"
+            db.commit()
+            if settings.TELEGRAM_ENABLED:
+                await send_telegram_message(f"❌ *Booking Failed* (Ref: `{ref}`)\n\n{err_msg}")
+            return
 
         # ══════════════════════════════════════════════════
         # Step 5: Train & Class Selection
@@ -903,14 +928,25 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             # Check for "No trains found"
             no_trains = await page.evaluate(r'''() => {
                 const body = document.body.innerText || '';
-                if (body.includes('No trains found') || body.includes('no direct train')) {
+                if (body.includes('No direct trains found') || body.includes('No trains found') || body.includes('no direct train')) {
+                    return true;
+                }
+                const modal = document.querySelector('.ui-dialog, p-confirmdialog');
+                if (modal && (modal.innerText.includes('No direct') || modal.innerText.includes('No train'))) {
                     return true;
                 }
                 return false;
             }''')
             if no_trains:
-                log_event(db, "WARNING", "AUTOMATION", "No trains found for this route/date on IRCTC.", ref)
-                break
+                err_msg = f"IRCTC reports: No direct trains found for {booking.from_station} ➔ {booking.to_station} on {date_str}."
+                log_event(db, "WARNING", "AUTOMATION", err_msg, ref)
+                session_state.set_stage("FAILED", "FAILED")
+                session_state.error_message = err_msg
+                booking.status = "FAILED"
+                db.commit()
+                if settings.TELEGRAM_ENABLED:
+                    await send_telegram_message(f"❌ *Booking Notice* (Ref: `{ref}`)\n\n{err_msg}")
+                return
             await asyncio.sleep(1)
 
         train_pref = (booking.train_number or "").strip()
