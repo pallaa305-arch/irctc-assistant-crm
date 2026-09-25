@@ -1223,44 +1223,102 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Passenger auto-fill note: {str(e)}", ref)
 
-        # Contact mobile
-        if booking.contact_mobile:
-            try:
-                mob_input = page.locator("input[formcontrolname='mobileNumber'], input[placeholder*='Mobile Number' i]").first
-                if await mob_input.count() > 0:
-                    await SmartBrowserActions.smart_type(page, mob_input, booking.contact_mobile, delay_ms=30, clear_first=True)
-            except Exception:
-                pass
+        # Contact mobile - Mandatory 10-digit number for IRCTC validation!
+        mob_raw = str(booking.contact_mobile or "").strip()
+        digits = "".join(c for c in mob_raw if c.isdigit())
+        if len(digits) == 12 and digits.startswith("91"):
+            digits = digits[2:]
+        if len(digits) != 10 or not (digits[0] in "6789"):
+            digits = getattr(settings, "DEFAULT_CONTACT_MOBILE", None) or "9876543210"
+
+        try:
+            mob_input = page.locator("input[formcontrolname='mobileNumber'], input#mobileNumber, input[name='mobileNumber'], input[placeholder*='Mobile Number' i]").first
+            if await mob_input.count() > 0:
+                await SmartBrowserActions.smart_type(page, mob_input, digits, delay_ms=30, clear_first=True)
+            
+            # Ensure Angular form control updates value & validity via JS event dispatch
+            await page.evaluate('''(mobile) => {
+                const inputs = Array.from(document.querySelectorAll("input[formcontrolname='mobileNumber'], input#mobileNumber, input[name='mobileNumber'], input[placeholder*='Mobile Number' i]"));
+                for (const inp of inputs) {
+                    inp.value = mobile;
+                    inp.dispatchEvent(new Event('input', { bubbles: true }));
+                    inp.dispatchEvent(new Event('change', { bubbles: true }));
+                    inp.dispatchEvent(new Event('blur', { bubbles: true }));
+                }
+            }''', digits)
+            log_event(db, "INFO", "AUTOMATION", f"Set contact mobile: {digits[:3]}****{digits[-3:]}", ref)
+        except Exception as e:
+            log_event(db, "WARNING", "AUTOMATION", f"Mobile number entry note: {e}", ref)
 
         # Select Payment Mode: BHIM/UPI (Convenience Fee: ₹20 + GST)
         try:
-            await SmartBrowserActions.smart_click(
-                page=page,
-                selectors=["p-radiobutton[value='2']", "input[value='2']", "label:has-text('BHIM/UPI')", "div:has-text('Pay through BHIM/UPI')"],
-                text_keywords=["BHIM/UPI", "Pay through BHIM/UPI"],
-                wait_after_sec=0.5
-            )
-        except Exception:
-            pass
-
-        # Travel Insurance: Yes (Mandatory on IRCTC to proceed!)
-        try:
             await page.evaluate('''() => {
-                const labels = Array.from(document.querySelectorAll('label, p-radiobutton, div'));
-                const insYes = labels.find(l => {
-                    const t = (l.innerText || '').toLowerCase();
-                    return t.includes('yes, and i accept') || (t.includes('accept') && t.includes('terms') && !t.includes('no'));
-                });
-                if (insYes) {
-                    const box = insYes.querySelector('.ui-radiobutton-box') || insYes;
-                    box.click();
+                const allRadios = Array.from(document.querySelectorAll('p-radiobutton, input[type="radio"], div.ui-radiobutton'));
+                let upiFound = false;
+                for (const r of allRadios) {
+                    const text = (r.closest('div, label, tr, p-radiobutton')?.innerText || '').toLowerCase();
+                    const val = r.getAttribute('value') || '';
+                    if (text.includes('bhim') || text.includes('upi') || val === '2' || val === '3') {
+                        const box = r.querySelector('.ui-radiobutton-box') || r.querySelector('label') || r;
+                        box.click();
+                        const inp = r.querySelector('input') || (r.tagName === 'INPUT' ? r : null);
+                        if (inp) {
+                            inp.checked = true;
+                            inp.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        upiFound = true;
+                        break;
+                    }
+                }
+                if (!upiFound) {
+                    const payRadio = document.querySelector("p-radiobutton[name='paymentType'], input[name='paymentType']");
+                    if (payRadio) {
+                        const box = payRadio.querySelector('.ui-radiobutton-box') || payRadio;
+                        box.click();
+                    }
                 }
             }''')
             await SmartBrowserActions.smart_click(
                 page=page,
-                selectors=["p-radiobutton[id='1']", "label:has-text('Yes, and I accept')"],
+                selectors=["p-radiobutton[value='2']", "input[value='2']", "label:has-text('BHIM/UPI')", "div:has-text('Pay through BHIM/UPI')"],
+                text_keywords=["BHIM/UPI", "Pay through BHIM/UPI"],
+                wait_after_sec=0.4
+            )
+        except Exception as e:
+            log_event(db, "WARNING", "AUTOMATION", f"Payment mode selection note: {e}", ref)
+
+        # Travel Insurance: Yes (or No fallback) - Mandatory on IRCTC to proceed!
+        try:
+            await page.evaluate('''() => {
+                const allElements = Array.from(document.querySelectorAll('p-radiobutton, label, div.ui-radiobutton, input[type="radio"]'));
+                let clicked = false;
+                for (const el of allElements) {
+                    const t = (el.innerText || el.getAttribute('label') || '').toLowerCase();
+                    if ((t.includes('yes') && (t.includes('accept') || t.includes('insurance'))) || t.includes('terms & conditions') || t.includes('terms and conditions')) {
+                        const box = el.querySelector('.ui-radiobutton-box') || el;
+                        box.click();
+                        const inp = el.querySelector('input') || (el.tagName === 'INPUT' ? el : null);
+                        if (inp) {
+                            inp.checked = true;
+                            inp.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
+                        clicked = true;
+                        break;
+                    }
+                }
+                if (!clicked) {
+                    const insRadio = Array.from(document.querySelectorAll("p-radiobutton[name='travelInsuranceOpted'], input[name='travelInsuranceOpted'], p-radiobutton[formcontrolname='travelInsuranceOpted']")).shift();
+                    if (insRadio) {
+                        const box = insRadio.querySelector('.ui-radiobutton-box') || insRadio;
+                        box.click();
+                    }
+                }
+            }''')
+            await SmartBrowserActions.smart_click(
+                page=page,
+                selectors=["p-radiobutton[id='1']", "label:has-text('Yes, and I accept')", "p-radiobutton[name='travelInsuranceOpted']"],
                 text_keywords=["Yes, and I accept"],
-                wait_after_sec=0.5
+                wait_after_sec=0.4
             )
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Travel insurance selection note: {e}", ref)
@@ -1268,11 +1326,15 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         # Auto-upgradation checkbox
         try:
             await page.evaluate('''() => {
-                const cb = document.querySelector('#autoUpgradation') || document.querySelector('input[name="autoUpgradation"]');
+                const cb = document.querySelector('#autoUpgradation') || document.querySelector('input[name="autoUpgradation"]') || document.querySelector("p-checkbox[formcontrolname='autoUpgradation']");
                 if (cb) {
-                    const lbl = document.querySelector("label[for='autoUpgradation']") || cb.closest('div').querySelector('label');
+                    const lbl = document.querySelector("label[for='autoUpgradation']") || cb.querySelector('.ui-chkbox-box') || cb.closest('div')?.querySelector('label');
                     if (lbl) lbl.click();
-                    else { cb.checked = true; cb.dispatchEvent(new Event('change', {bubbles: true})); }
+                    else {
+                        const inp = cb.querySelector('input') || cb;
+                        inp.checked = true;
+                        inp.dispatchEvent(new Event('change', {bubbles: true}));
+                    }
                 }
             }''')
         except Exception:
@@ -1287,11 +1349,34 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
         # Click Continue to Review Page
         try:
-            cont_btn = page.locator("button:has-text('Continue'), button[type='submit']:has-text('Continue'), button.btn-primary:has-text('Continue'), button.train_Search:has-text('Continue')").first
-            if await cont_btn.count() > 0:
+            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            await asyncio.sleep(0.5)
+
+            # Check if there are visible validation notices on page
+            v_errs = await page.evaluate('''() => {
+                const errs = Array.from(document.querySelectorAll('.ui-message-error, .text-danger, .error-msg, span.help-block, .ui-messages-error'));
+                return errs.map(e => (e.innerText || '').trim()).filter(t => t.length > 0);
+            }''')
+            if v_errs:
+                log_event(db, "WARNING", "AUTOMATION", f"Visible form notices: {'; '.join(v_errs[:3])}", ref)
+
+            # Click Continue button
+            clicked_continue = False
+            cont_btn = page.locator("button:has-text('Continue'), button[type='submit']:has-text('Continue'), button.btn-primary:has-text('Continue'), button.train_Search").first
+            if await cont_btn.count() > 0 and await cont_btn.is_visible():
                 await cont_btn.scroll_into_view_if_needed()
-                await cont_btn.click(timeout=4000, force=True)
-                await asyncio.sleep(2)
+                await cont_btn.click(timeout=5000, force=True)
+                clicked_continue = True
+
+            if not clicked_continue:
+                await page.evaluate('''() => {
+                    const btn = Array.from(document.querySelectorAll('button')).find(b => {
+                        const t = (b.innerText || '').trim().toLowerCase();
+                        return t === 'continue' || t.includes('continue');
+                    });
+                    if (btn) btn.click();
+                }''')
+            await asyncio.sleep(1.5)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Passenger Continue note: {e}", ref)
 
@@ -1301,20 +1386,20 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         session_state.set_stage("REVIEW_BOOKING")
         log_event(db, "INFO", "AUTOMATION", "Navigating to Review Booking page...", ref)
 
-        # Wait up to 30s for Review page, handling any confirmation dialogs (Yes/OK/Agree)
+        # Wait up to 35s for Review page, aggressively handling any confirmation dialogs (Yes/OK/Agree/Proceed)
         arrived_at_review = False
-        for s in range(30):
+        for s in range(35):
             await dismiss_overlays(page)
 
-            # Auto-click confirmation dialogs
+            # Auto-click confirmation dialogs & alerts
             try:
                 await page.evaluate('''() => {
-                    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, p-confirmdialog, .ui-confirmdialog, div[role="dialog"]')).filter(d => d.offsetParent !== null);
+                    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, p-confirmdialog, .ui-confirmdialog, div[role="dialog"], .modal, app-review-booking-dialog')).filter(d => d.offsetParent !== null);
                     for (const d of dialogs) {
-                        const btns = Array.from(d.querySelectorAll('button, span.ui-button-text')).filter(b => b.offsetParent !== null);
+                        const btns = Array.from(d.querySelectorAll('button, span.ui-button-text, a.btn, input[type="button"]')).filter(b => b.offsetParent !== null);
                         const b = btns.find(x => {
-                            const t = (x.innerText || '').trim().toLowerCase();
-                            return t.includes('yes') || t.includes('agree') || t.includes('ok') || t.includes('continue');
+                            const t = (x.innerText || x.value || '').trim().toLowerCase();
+                            return t.includes('yes') || t.includes('agree') || t.includes('ok') || t.includes('continue') || t.includes('proceed') || t.includes('confirm');
                         });
                         if (b) b.click();
                     }
@@ -1325,13 +1410,30 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if "review" in page.url.lower() or "payment" in page.url.lower():
                 arrived_at_review = True
                 break
-            if await page.locator("app-review-booking, #nlpAnswer, app-captcha, app-payment").count() > 0:
+            if await page.locator("app-review-booking, #nlpAnswer, app-captcha, app-payment, div:has-text('Review Booking')").count() > 0:
                 arrived_at_review = True
                 break
 
-            # If still on passenger page after 6 and 14 seconds, re-click Continue
-            if s in (6, 14):
+            # If still on passenger page after 4, 8, 14, 20, 26 seconds, re-trigger Continue & dialog acceptance
+            if s in (4, 8, 14, 20, 26):
                 try:
+                    await page.evaluate('''() => {
+                        const dialogBtn = Array.from(document.querySelectorAll('.ui-dialog button, p-confirmdialog button, div[role="dialog"] button')).find(b => {
+                            const t = (b.innerText || '').trim().toLowerCase();
+                            return t.includes('yes') || t.includes('agree') || t.includes('ok') || t.includes('confirm');
+                        });
+                        if (dialogBtn) {
+                            dialogBtn.click();
+                            return;
+                        }
+                        const btns = Array.from(document.querySelectorAll('button')).filter(b => (b.innerText || '').toLowerCase().includes('continue'));
+                        for (const b of btns) {
+                            if (b.offsetParent !== null) {
+                                b.click();
+                                break;
+                            }
+                        }
+                    }''')
                     cont_retry = page.locator("button:has-text('Continue'):visible, button[type='submit']:has-text('Continue'):visible").first
                     if await cont_retry.count() > 0:
                         await cont_retry.scroll_into_view_if_needed()
@@ -1341,9 +1443,21 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
             await asyncio.sleep(1)
 
-        # If not arrived at review booking or payment, raise informative error
+        # If not arrived at review booking or payment, raise informative error with debug info
         if not arrived_at_review:
-            err = "Could not transition from Passenger page to Review Booking page. Please check passenger details or browser dialog."
+            current_url = page.url
+            page_diagnostics = ""
+            try:
+                page_diagnostics = await page.evaluate('''() => {
+                    const dialog = document.querySelector('.ui-dialog, p-confirmdialog, div[role="dialog"]');
+                    if (dialog && dialog.offsetParent !== null) return 'Dialog visible: ' + dialog.innerText.slice(0, 150);
+                    const err = document.querySelector('.ui-message-error, .text-danger, .error-msg, .ui-messages-error');
+                    if (err) return 'Form error: ' + err.innerText.slice(0, 150);
+                    return 'URL: ' + window.location.href;
+                }''')
+            except Exception:
+                pass
+            err = f"Could not transition from Passenger page to Review Booking page ({page_diagnostics or current_url}). Please check passenger details or browser dialog."
             session_state.set_stage("FAILED", "FAILED")
             session_state.error_message = err
             booking.status = "FAILED"

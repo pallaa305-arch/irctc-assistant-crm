@@ -47,6 +47,7 @@ class Settings(BaseSettings):
     DEMO_MODE: bool = False         # Live Official IRCTC Mode by default
     IRCTC_USERNAME: str = "randisumandalladeepak"
     IRCTC_PASSWORD: str = "Gandusuman@7323"
+    DEFAULT_CONTACT_MOBILE: str = "9876543210"
     
     # Proxy Settings (for cloud deployments to bypass Akamai geo-blocking)
     PROXY_SERVER: str = ""    # e.g. "http://host:port" or "socks5://host:port"

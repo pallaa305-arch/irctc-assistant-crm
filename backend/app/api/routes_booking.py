@@ -10,6 +10,7 @@ from app.database.connection import get_db, SessionLocal
 from app.database.models import Booking, BookingPassenger
 from app.automation.flow_state import get_or_create_session, get_session
 from app.automation.irctc_flow import run_real_irctc_booking_flow
+from app.automation.mock_flow import run_mock_booking_flow
 from app.crm.crm_service import log_event
 from app.services.pdf_service import pdf_service
 from app.config import settings
@@ -35,6 +36,7 @@ class BookingCreateRequest(BaseModel):
     contact_email: Optional[str] = None
     passengers: List[PassengerInput] = Field(..., min_length=1)
     allow_duplicate: bool = False
+    demo_mode: bool = False
 
 class ActionRequest(BaseModel):
     action: str = Field(..., pattern="^(continue|pause|cancel)$")
@@ -99,7 +101,7 @@ async def start_booking(
         train_number=payload.train_preference or "",
         train_name="Auto-Selected Train",
         passenger_count=len(payload.passengers),
-        contact_mobile=payload.contact_mobile,
+        contact_mobile=payload.contact_mobile or getattr(settings, "DEFAULT_CONTACT_MOBILE", "9876543210"),
         contact_email=payload.contact_email,
         status="INITIATED",
         payment_status="PENDING"
@@ -128,15 +130,17 @@ async def start_booking(
     session_state = get_or_create_session(ref)
     session_state.set_stage("PREPARING", "INITIATED")
 
-    # 5. Dispatch Live Official IRCTC Automation
-    asyncio.create_task(_run_flow_wrapper(run_real_irctc_booking_flow, booking.id, session_state))
+    # 5. Dispatch Automation (Mock for Demo Mode / Tests, Real IRCTC for Live Bookings)
+    is_demo = bool(payload.demo_mode or settings.DEMO_MODE)
+    flow_fn = run_mock_booking_flow if is_demo else run_real_irctc_booking_flow
+    asyncio.create_task(_run_flow_wrapper(flow_fn, booking.id, session_state))
 
     return {
         "success": True,
         "booking_id": booking.id,
         "booking_ref": ref,
-        "mode": "LIVE_IRCTC",
-        "message": "Official IRCTC Booking session initialized. Monitor visible browser or dashboard."
+        "mode": "DEMO" if is_demo else "LIVE_IRCTC",
+        "message": "Demo mode simulated booking initialized." if is_demo else "Official IRCTC Booking session initialized. Monitor visible browser or dashboard."
     }
 
 @router.get("/state/{booking_ref}")

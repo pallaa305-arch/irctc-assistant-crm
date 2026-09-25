@@ -2292,6 +2292,8 @@ class TelegramBotService:
         except Exception:
             j_date = date.today() + timedelta(days=7)
 
+        contact_mobile = data.get("contact_mobile") or data.get("mobile") or data.get("phone") or getattr(settings, "DEFAULT_CONTACT_MOBILE", "9876543210")
+
         booking = Booking(
             booking_ref=ref,
             from_station=data.get("from_station", "NDLS"),
@@ -2303,6 +2305,7 @@ class TelegramBotService:
             train_number=data.get("train_number") or "",
             train_name=data.get("train_name") or "Auto-Selected Train",
             passenger_count=len(data.get("passengers", [])),
+            contact_mobile=contact_mobile,
             status="INITIATED",
             payment_status="PENDING"
         )
