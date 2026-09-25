@@ -72,6 +72,26 @@ STATION_CODE_MAP = {
     "VISAKHAPATNAM": "VSKP", "VSKP": "VSKP",
     "VIJAYAWADA": "BZA", "BZA": "BZA",
     "GUHAD ROAD GOA": "MAO",
+    "AMBALA": "UMB", "UMB": "UMB", "AMBALA CANTT": "UMB",
+    "LUDHIANA": "LDH", "LDH": "LDH",
+    "KALKA": "KLK", "KLK": "KLK",
+    "PATHANKOT": "PTK", "PTK": "PTK",
+    "JALANDHAR": "JUC", "JUC": "JUC", "JALANDHAR CITY": "JUC",
+    "SAHARANPUR": "SRE", "SRE": "SRE",
+    "MEERUT": "MTC", "MTC": "MTC",
+    "BAREILLY": "BE", "BE": "BE",
+    "MORADABAD": "MB", "MB": "MB",
+    "RAIPUR": "R", "DURG": "DURG",
+    "BILASPUR": "BSP", "BSP": "BSP",
+    "JABALPUR": "JBP", "JBP": "JBP",
+    "GAYA": "GAYA",
+    "DHANBAD": "DHN", "DHN": "DHN",
+    "BOKARO": "BKSC", "BKSC": "BKSC",
+    "JAMSHEDPUR": "TATA", "TATA": "TATA", "TATANAGAR": "TATA",
+    "KOTA": "KOTA",
+    "AJMER": "AII", "AII": "AII",
+    "BIKANER": "BKN", "BKN": "BKN",
+    "ABU ROAD": "ABR", "ABR": "ABR",
 }
 
 def resolve_station_code(station_text: str) -> str:
@@ -623,7 +643,7 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
 
 
 async def _fill_station_autocomplete(page, input_locator, station_text: str, label: str, db: Session, ref: str):
-    """Robustly fills IRCTC station autocomplete with retry logic."""
+    """Robustly fills IRCTC station autocomplete with dropdown verification."""
     station_code = resolve_station_code(station_text)
     
     for attempt in range(3):
@@ -639,26 +659,66 @@ async def _fill_station_autocomplete(page, input_locator, station_text: str, lab
             
             # Type station code sequentially
             await input_locator.press_sequentially(station_code, delay=60)
-            await asyncio.sleep(1.0)
+            await asyncio.sleep(1.2)
             
-            # Wait for dropdown suggestion
-            dropdown_item = page.locator("ul.ui-autocomplete-items li, li.ui-autocomplete-list-item, div.ui-autocomplete-panel li").first
+            # Wait for dropdown suggestions
+            dropdown_items = page.locator("ul.ui-autocomplete-items li, li.ui-autocomplete-list-item, div.ui-autocomplete-panel li")
             
             item_found = False
-            for _ in range(6):
-                if await dropdown_item.count() > 0 and await dropdown_item.is_visible():
+            for _ in range(8):
+                if await dropdown_items.count() > 0 and await dropdown_items.first.is_visible():
                     item_found = True
                     break
                 await asyncio.sleep(0.4)
             
             if item_found:
-                try:
-                    await dropdown_item.click()
-                except Exception:
-                    await dropdown_item.click(force=True)
-                log_event(db, "INFO", "AUTOMATION", f"{label} station selected: {station_code} (dropdown click)", ref)
+                # Search all dropdown items for one that contains our station code
+                item_count = await dropdown_items.count()
+                matched_item = None
+                for i in range(min(item_count, 10)):
+                    try:
+                        item_text = (await dropdown_items.nth(i).inner_text()).strip().upper()
+                        # Match: "NDLS - NEW DELHI" or "NEW DELHI - NDLS" or contains station code
+                        if station_code.upper() in item_text:
+                            matched_item = dropdown_items.nth(i)
+                            log_event(db, "INFO", "AUTOMATION", f"{label} dropdown match found: '{item_text}' for code {station_code}", ref)
+                            break
+                    except Exception:
+                        continue
+                
+                if matched_item:
+                    try:
+                        await matched_item.click()
+                    except Exception:
+                        await matched_item.click(force=True)
+                else:
+                    # No exact match — click first item but log a warning
+                    first_text = ""
+                    try:
+                        first_text = (await dropdown_items.first.inner_text()).strip()
+                    except Exception:
+                        pass
+                    log_event(db, "WARNING", "AUTOMATION", f"{label} no exact match for '{station_code}' in dropdown. First item: '{first_text}'. Clicking first item.", ref)
+                    try:
+                        await dropdown_items.first.click()
+                    except Exception:
+                        await dropdown_items.first.click(force=True)
+                
                 await asyncio.sleep(0.6)
-                return True
+                
+                # Verify the input value after selection
+                try:
+                    selected_val = (await input_locator.input_value()).strip().upper()
+                    if station_code.upper() in selected_val:
+                        log_event(db, "INFO", "AUTOMATION", f"{label} station verified: {selected_val}", ref)
+                        return True
+                    else:
+                        log_event(db, "WARNING", "AUTOMATION", f"{label} station mismatch after selection! Expected '{station_code}', got '{selected_val}'. Retrying...", ref)
+                        # Clear and retry
+                        continue
+                except Exception:
+                    log_event(db, "INFO", "AUTOMATION", f"{label} station selected: {station_code} (dropdown click)", ref)
+                    return True
             else:
                 # Keyboard selection fallback: ArrowDown + Enter
                 await input_locator.press("ArrowDown")
@@ -1494,6 +1554,22 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if await page.locator("app-review-booking, #nlpAnswer, app-captcha, app-payment, div:has-text('Review Booking')").count() > 0:
                 arrived_at_review = True
                 break
+
+            # Early detect IRCTC error page — fail fast instead of wasting 35 seconds
+            if "/nget/error" in page.url.lower():
+                err = f"IRCTC redirected to error page ({page.url}). This usually means passenger details validation failed or session expired on IRCTC side."
+                log_event(db, "ERROR", "AUTOMATION", err, ref)
+                session_state.set_stage("FAILED", "FAILED")
+                session_state.error_message = err
+                booking.status = "FAILED"
+                db.commit()
+                if settings.TELEGRAM_ENABLED:
+                    await send_telegram_message(f"❌ *Booking Error* (Ref: `{ref}`)\n\n{err}")
+                try:
+                    await page.screenshot(path="data/irctc_error_page.png")
+                except Exception:
+                    pass
+                return
 
             # If still on passenger page after 4, 8, 14, 20, 26 seconds, re-trigger Continue & dialog acceptance
             if s in (4, 8, 14, 20, 26):
