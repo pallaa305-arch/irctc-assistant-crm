@@ -623,42 +623,48 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
 
 
 async def _fill_station_autocomplete(page, input_locator, station_text: str, label: str, db: Session, ref: str):
-    """Robustly fills IRCTC station autocomplete with retry logic using SmartBrowserActions."""
+    """Robustly fills IRCTC station autocomplete with retry logic."""
     station_code = resolve_station_code(station_text)
     
     for attempt in range(3):
         try:
             await input_locator.scroll_into_view_if_needed()
-            await SmartBrowserActions.smart_click(page, selectors=[], scope_locator=input_locator)
-            await SmartBrowserActions.smart_type(page, input_locator, station_code, delay_ms=70, clear_first=True)
-            await asyncio.sleep(1.2)
+            await input_locator.click(force=True)
+            await asyncio.sleep(0.1)
             
-            # Wait for dropdown to appear
+            # Clear input completely
+            await page.keyboard.press("Control+A")
+            await page.keyboard.press("Backspace")
+            await asyncio.sleep(0.1)
+            
+            # Type station code sequentially
+            await input_locator.press_sequentially(station_code, delay=60)
+            await asyncio.sleep(1.0)
+            
+            # Wait for dropdown suggestion
             dropdown_item = page.locator("ul.ui-autocomplete-items li, li.ui-autocomplete-list-item, div.ui-autocomplete-panel li").first
             
-            for wait_tick in range(6):
+            item_found = False
+            for _ in range(6):
                 if await dropdown_item.count() > 0 and await dropdown_item.is_visible():
+                    item_found = True
                     break
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.4)
             
-            # Click the matching dropdown option with smart_click
-            if await dropdown_item.count() > 0 and await dropdown_item.is_visible():
-                clicked = await SmartBrowserActions.smart_click(
-                    page,
-                    selectors=["ul.ui-autocomplete-items li", "li.ui-autocomplete-list-item"],
-                    scope_locator=dropdown_item
-                )
-                if not clicked:
+            if item_found:
+                try:
+                    await dropdown_item.click()
+                except Exception:
                     await dropdown_item.click(force=True)
                 log_event(db, "INFO", "AUTOMATION", f"{label} station selected: {station_code} (dropdown click)", ref)
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.6)
                 return True
             else:
-                # Fallback: ArrowDown + Enter
+                # Keyboard selection fallback: ArrowDown + Enter
                 await input_locator.press("ArrowDown")
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.3)
                 await input_locator.press("Enter")
-                await asyncio.sleep(0.8)
+                await asyncio.sleep(0.6)
                 log_event(db, "INFO", "AUTOMATION", f"{label} station selected: {station_code} (ArrowDown+Enter)", ref)
                 return True
                 
@@ -768,44 +774,51 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     await dismiss_overlays(page)
 
                 await page.wait_for_selector("p-autocomplete input", timeout=15000)
-                autocomplete_inputs = page.locator("p-autocomplete input")
                 
-                from_input = autocomplete_inputs.nth(0)
-                to_input = autocomplete_inputs.nth(1)
+                # Use targeted selectors for FROM and TO station autocompletes
+                from_input = page.locator("p-autocomplete[formcontrolname='origin'] input, #origin input, input[placeholder*='From*' i], input[placeholder*='From' i]").first
+                if await from_input.count() == 0:
+                    from_input = page.locator("p-autocomplete input").nth(0)
+
+                to_input = page.locator("p-autocomplete[formcontrolname='destination'] input, #destination input, input[placeholder*='To*' i], input[placeholder*='To' i]").first
+                if await to_input.count() == 0:
+                    to_input = page.locator("p-autocomplete input").nth(1)
 
                 # 1. From station — use resolved code
                 await _fill_station_autocomplete(page, from_input, booking.from_station, "FROM", db, ref)
-                await page.keyboard.press("Escape")
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.5)
 
                 # 2. To station — use resolved code
                 await _fill_station_autocomplete(page, to_input, booking.to_station, "TO", db, ref)
-                await page.keyboard.press("Escape")
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.5)
 
-                # 3. Date — Set via JS and direct input without conflicting Enter key
+                # 3. Date — Fill via keyboard into PrimeNG calendar input and commit with Tab (no DOM removal)
+                date_input = page.locator("p-calendar[formcontrolname='journeyDate'] input, p-calendar input:visible, #jDate input:visible, input[placeholder*='Date' i]:visible").first
+                if await date_input.count() > 0 and await date_input.is_visible():
+                    try:
+                        await date_input.click()
+                        await asyncio.sleep(0.1)
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
+                        await date_input.press_sequentially(date_str, delay=40)
+                        await asyncio.sleep(0.2)
+                        await page.keyboard.press("Tab")
+                        await asyncio.sleep(0.3)
+                    except Exception as e:
+                        log_event(db, "WARNING", "AUTOMATION", f"Failed to type date into calendar input: {e}", ref)
+
+                # Sync JS value without deleting any PrimeNG DOM nodes
                 await page.evaluate('''(dStr) => {
                     const dInputs = Array.from(document.querySelectorAll("p-calendar input, #jDate input, input[placeholder*='Date' i]"));
                     for (const d of dInputs) {
-                        d.value = dStr;
-                        d.dispatchEvent(new Event('input', { bubbles: true }));
-                        d.dispatchEvent(new Event('change', { bubbles: true }));
-                        d.dispatchEvent(new Event('blur', { bubbles: true }));
+                        if (d.value !== dStr) {
+                            d.value = dStr;
+                            d.dispatchEvent(new Event('input', { bubbles: true }));
+                            d.dispatchEvent(new Event('change', { bubbles: true }));
+                        }
                     }
-                    // Remove any leftover datepicker overlay that could block clicks
-                    document.querySelectorAll(".ui-datepicker, .p-datepicker, .ui-widget-overlay").forEach(el => el.remove());
                 }''', date_str)
-
-                date_input = page.locator("p-calendar input:visible, #jDate input:visible, input[placeholder*='Date' i]:visible").first
-                if await date_input.count() > 0:
-                    try:
-                        await date_input.fill(date_str)
-                        await date_input.dispatch_event("change")
-                        await date_input.dispatch_event("blur")
-                    except Exception:
-                        pass
-                await page.keyboard.press("Escape")
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.4)
 
                 # 4. Click Search Button (using SmartBrowserActions + visible selectors + JS fallback)
                 search_selectors = [
@@ -827,57 +840,89 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     selectors=search_selectors,
                     text_keywords=["Search", "SEARCH", "Find Trains"],
                     timeout_ms=4000,
-                    wait_after_sec=0.8
+                    wait_after_sec=0.5
                 )
 
-                if not clicked_search:
-                    clicked_search = await page.evaluate('''() => {
-                        const allBtns = Array.from(document.querySelectorAll('button, input[type="submit"], a.btn'));
-                        for (const b of allBtns) {
-                            const isVisible = b.offsetWidth > 0 && b.offsetHeight > 0 && window.getComputedStyle(b).display !== 'none';
-                            const txt = (b.innerText || b.value || '').trim().toLowerCase();
-                            const cls = b.className || '';
-                            if (isVisible && (txt === 'search' || cls.includes('train_Search') || cls.includes('search_btn'))) {
-                                b.scrollIntoView({ behavior: 'instant', block: 'center' });
-                                b.click();
-                                return true;
+                # Also trigger native form submission as fallback
+                await page.evaluate('''() => {
+                    const form = document.querySelector('form');
+                    if (form) {
+                        try {
+                            if (typeof form.requestSubmit === 'function') {
+                                form.requestSubmit();
+                            } else {
+                                const btn = form.querySelector("button.train_Search, button.search_btn, button[type='submit'], button");
+                                if (btn) btn.click();
                             }
+                        } catch (e) {
+                            console.error("Form submit error:", e);
                         }
-                        const form = document.querySelector('form');
-                        if (form) {
-                            const btn = form.querySelector("button[type='submit'], button.train_Search, button");
-                            if (btn) {
-                                btn.click();
-                                return true;
-                            }
-                        }
-                        return false;
-                    }''')
+                    }
+                }''')
 
-                if clicked_search:
-                    log_event(db, "INFO", "AUTOMATION", f"Submitted search for {booking.from_station} to {booking.to_station} on {date_str} (attempt {search_attempt+1}).", ref)
-                    # Wait up to 20s for train-list or URL navigation
-                    for _ in range(20):
-                        await asyncio.sleep(1)
-                        await dismiss_overlays(page)
-                        if "/train-list" in page.url or await page.locator("app-train-list, div.train-heading, app-train-avl-enq").count() > 0:
-                            search_success = True
-                            break
-                        # Accept any informational advisory popups
+                log_event(db, "INFO", "AUTOMATION", f"Submitted search for {booking.from_station} to {booking.to_station} on {date_str} (attempt {search_attempt+1}).", ref)
+
+                # Wait up to 25s for train-list or URL navigation
+                for wait_sec in range(25):
+                    await asyncio.sleep(1)
+                    await dismiss_overlays(page)
+                    if "/train-list" in page.url or await page.locator("app-train-list, div.train-heading, div.form-group:has(.train-name), app-train-avl-enq").count() > 0:
+                        search_success = True
+                        break
+                    
+                    # Accept any informational / disclaimer / popup dialogs that block navigation
+                    try:
+                        await page.evaluate('''() => {
+                            const dialogBtns = Array.from(document.querySelectorAll('.ui-dialog button, p-confirmdialog button, div[role="dialog"] button, .modal button'));
+                            for (const b of dialogBtns) {
+                                const t = (b.innerText || '').trim().toLowerCase();
+                                if (t === 'ok' || t === 'yes' || t === 'agree' || t === 'proceed' || t === 'continue' || t === 'theek hai' || t === 'स्वीकार') {
+                                    b.click();
+                                    break;
+                                }
+                            }
+                        }''')
+                    except Exception:
+                        pass
+
+                    # At 6 seconds, if still on /train-search, re-trigger search button click
+                    if wait_sec == 6 and "/train-search" in page.url:
                         try:
                             await page.evaluate('''() => {
-                                const dialogBtn = Array.from(document.querySelectorAll('.ui-dialog button, p-confirmdialog button, div[role="dialog"] button')).find(b => {
-                                    const t = (b.innerText || '').trim().toLowerCase();
-                                    return t.includes('ok') || t.includes('yes') || t.includes('agree') || t.includes('proceed');
-                                });
-                                if (dialogBtn) dialogBtn.click();
+                                const btn = document.querySelector('button.train_Search, button.search_btn, button[type="submit"]');
+                                if (btn) btn.click();
                             }''')
                         except Exception:
                             pass
-                    if search_success:
-                        break
+
+                if search_success:
+                    break
                 else:
-                    log_event(db, "WARNING", "AUTOMATION", f"Could not find visible search button on attempt {search_attempt+1}.", ref)
+                    # Diagnostic dump if search didn't navigate
+                    diag = await page.evaluate('''() => {
+                        const origin = document.querySelector("p-autocomplete[formcontrolname='origin'] input, #origin input");
+                        const dest = document.querySelector("p-autocomplete[formcontrolname='destination'] input, #destination input");
+                        const date = document.querySelector("p-calendar[formcontrolname='journeyDate'] input, #jDate input");
+                        const errors = Array.from(document.querySelectorAll('.ui-message-error, .ui-messages-error, div.error-msg, span.ui-message-text, .alert-danger, .ui-state-error'))
+                            .map(e => (e.innerText || '').trim())
+                            .filter(Boolean);
+                        const dialogs = Array.from(document.querySelectorAll('.ui-dialog:not([style*="none"]), p-dialog:not([style*="none"]), div[role="dialog"]'))
+                            .map(d => (d.innerText || '').trim().replace(/\\s+/g, ' '))
+                            .filter(Boolean);
+                        return {
+                            origin: origin ? origin.value : null,
+                            dest: dest ? dest.value : null,
+                            date: date ? date.value : null,
+                            errors: errors,
+                            dialogs: dialogs,
+                            url: window.location.href
+                        };
+                    }''')
+                    log_event(db, "WARNING", "AUTOMATION", f"Search attempt {search_attempt+1} did not navigate. Form state: {diag}", ref)
+                    try:
+                        await page.screenshot(path="data/search_failed.png")
+                    except Exception:
+                        pass
 
             except Exception as e:
                 log_event(db, "WARNING", "AUTOMATION", f"Search attempt {search_attempt+1} failed: {str(e)}", ref)
