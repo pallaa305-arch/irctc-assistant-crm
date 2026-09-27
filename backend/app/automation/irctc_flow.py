@@ -1328,20 +1328,30 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         await SmartBrowserActions.smart_click(page, selectors=["a:has-text('+ Add Passenger')", "button:has-text('Add Passenger')"], text_keywords=["+ Add Passenger", "Add Passenger"])
                         await asyncio.sleep(0.8)
 
-                # Name — use SmartBrowserActions.smart_type for robust Angular form binding
+                # Name — type then Tab to commit (do NOT press Escape — it kills PrimeNG autocomplete binding)
                 name_inputs = page.locator("input[placeholder*='Passenger Name' i], p-autocomplete[formcontrolname='passengerName'] input")
                 if await name_inputs.count() > idx:
                     name_input = name_inputs.nth(idx)
-                    await SmartBrowserActions.smart_type(page, name_input, p.name, delay_ms=30, clear_first=True)
-                    await asyncio.sleep(0.2)
-                    # Dismiss autocomplete dropdown if it appeared
-                    await page.keyboard.press("Escape")
+                    await name_input.click(force=True)
+                    await asyncio.sleep(0.1)
+                    await page.keyboard.press("Control+A")
+                    await page.keyboard.press("Backspace")
+                    await name_input.press_sequentially(p.name, delay=30)
+                    await asyncio.sleep(0.5)
+                    # Tab out to commit the value and close any autocomplete dropdown
+                    await page.keyboard.press("Tab")
+                    await asyncio.sleep(0.3)
 
-                # Age — use SmartBrowserActions.smart_type
+                # Age
                 age_inputs = page.locator("input[placeholder*='Age' i], input[formcontrolname='passengerAge']")
                 if await age_inputs.count() > idx:
                     age_input = age_inputs.nth(idx)
-                    await SmartBrowserActions.smart_type(page, age_input, str(p.age), delay_ms=30, clear_first=True)
+                    await age_input.click(force=True)
+                    await page.keyboard.press("Control+A")
+                    await page.keyboard.press("Backspace")
+                    await age_input.press_sequentially(str(p.age), delay=30)
+                    await page.keyboard.press("Tab")
+                    await asyncio.sleep(0.2)
 
                 # Gender — handle both native select and PrimeNG p-dropdown
                 gender_selects = page.locator("select[formcontrolname='passengerGender']")
@@ -1359,7 +1369,48 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             await SmartBrowserActions.smart_click(page, selectors=[], scope_locator=g_opt)
                             await asyncio.sleep(0.3)
 
-                log_event(db, "INFO", "AUTOMATION", f"Filled passenger {idx+1}: {p.name}, {p.age}, {p.gender}", ref)
+                # Berth Preference — select "No Preference" (NP) to avoid IRCTC validation issues
+                berth_val = getattr(p, 'berth_preference', 'NONE') or 'NONE'
+                berth_map = {"LB": "LB", "MB": "MB", "UB": "UB", "SL": "SL", "SU": "SU", "NONE": "NP", "NP": "NP"}
+                berth_irctc = berth_map.get(berth_val.upper(), "NP")
+                try:
+                    berth_selects = page.locator("select[formcontrolname='passengerBerthChoice']")
+                    if await berth_selects.count() > idx:
+                        await berth_selects.nth(idx).select_option(value=berth_irctc)
+                    else:
+                        berth_dropdown = page.locator("p-dropdown[formcontrolname='passengerBerthChoice']").nth(idx)
+                        if await berth_dropdown.count() > 0:
+                            await SmartBrowserActions.smart_click(page, selectors=[], scope_locator=berth_dropdown)
+                            await asyncio.sleep(0.3)
+                            bp_opt = page.locator("li[aria-label*='No Preference' i], li[aria-label*='NP' i], span:has-text('No Preference')").first
+                            if await bp_opt.count() > 0:
+                                await bp_opt.click()
+                                await asyncio.sleep(0.2)
+                except Exception:
+                    pass
+
+                # Nationality — ensure "Indian" is set via JS (formcontrolname='passengerNationality')
+                try:
+                    await page.evaluate(f'''(idx) => {{
+                        const sels = document.querySelectorAll("select[formcontrolname='passengerNationality']");
+                        if (sels.length > idx) {{
+                            sels[idx].value = 'IN';
+                            sels[idx].dispatchEvent(new Event('change', {{bubbles: true}}));
+                        }}
+                    }}''', idx)
+                except Exception:
+                    pass
+
+                # Food preference (for Rajdhani/Shatabdi/Duronto)
+                food_val = getattr(p, 'food_preference', 'D') or 'D'
+                try:
+                    food_selects = page.locator("select[formcontrolname='passengerFoodChoice']")
+                    if await food_selects.count() > idx:
+                        await food_selects.nth(idx).select_option(value=food_val)
+                except Exception:
+                    pass
+
+                log_event(db, "INFO", "AUTOMATION", f"Filled passenger {idx+1}: {p.name}, {p.age}, {p.gender}, berth={berth_irctc}", ref)
 
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Passenger auto-fill note: {str(e)}", ref)
@@ -1493,6 +1544,31 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
             await asyncio.sleep(0.5)
 
+            # Check Angular form validity before clicking Continue
+            form_state = await page.evaluate('''() => {
+                const result = {valid: null, errors: [], fields: {}};
+                // Check each passenger field
+                const names = document.querySelectorAll("p-autocomplete[formcontrolname='passengerName'] input, input[placeholder*='Passenger Name' i]");
+                const ages = document.querySelectorAll("input[formcontrolname='passengerAge'], input[placeholder*='Age' i]");
+                const genders = document.querySelectorAll("select[formcontrolname='passengerGender'], p-dropdown[formcontrolname='passengerGender']");
+                const mobiles = document.querySelectorAll("input[formcontrolname='mobileNumber'], input#mobileNumber");
+                result.fields.names = Array.from(names).map(n => n.value || '');
+                result.fields.ages = Array.from(ages).map(a => a.value || '');
+                result.fields.genderCount = genders.length;
+                result.fields.mobile = mobiles.length > 0 ? mobiles[0].value : '';
+                // Check visible validation errors
+                const errs = Array.from(document.querySelectorAll('.ui-message-error, .text-danger, .error-msg, span.help-block, .ui-messages-error, .ng-invalid.ng-touched'));
+                result.errors = errs.slice(0, 5).map(e => (e.innerText || e.className || '').trim().slice(0, 100)).filter(t => t.length > 0);
+                return result;
+            }''')
+            log_event(db, "INFO", "AUTOMATION", f"Pre-Continue form state: {form_state}", ref)
+
+            # Save diagnostic screenshot
+            try:
+                await page.screenshot(path="data/pre_continue_screenshot.png")
+            except Exception:
+                pass
+
             # Check if there are visible validation notices on page
             v_errs = await page.evaluate('''() => {
                 const errs = Array.from(document.querySelectorAll('.ui-message-error, .text-danger, .error-msg, span.help-block, .ui-messages-error'));
@@ -1501,13 +1577,18 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if v_errs:
                 log_event(db, "WARNING", "AUTOMATION", f"Visible form notices: {'; '.join(v_errs[:3])}", ref)
 
-            # Click Continue button
+            # Click Continue button — first try without force to respect Angular validation
             clicked_continue = False
             cont_btn = page.locator("button:has-text('Continue'), button[type='submit']:has-text('Continue'), button.btn-primary:has-text('Continue'), button.train_Search").first
             if await cont_btn.count() > 0 and await cont_btn.is_visible():
                 await cont_btn.scroll_into_view_if_needed()
-                await cont_btn.click(timeout=5000, force=True)
-                clicked_continue = True
+                try:
+                    await cont_btn.click(timeout=5000)
+                    clicked_continue = True
+                except Exception:
+                    # If normal click fails (e.g. overlay), try force click
+                    await cont_btn.click(timeout=5000, force=True)
+                    clicked_continue = True
 
             if not clicked_continue:
                 await page.evaluate('''() => {
