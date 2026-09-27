@@ -1129,76 +1129,152 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
         log_event(db, "INFO", "AUTOMATION", f"Clicked '{journey_cls}' class tab via SmartBrowserActions. Awaiting availability slots...", ref)
 
-        # 2. Wait up to 15s for availability date slots (AVAILABLE / WL / RAC) to load
+        # 2. Wait for availability slots and handle NOT AVAILABLE gracefully
         date_clicked = False
-        slot_selectors = [
-            "div.pre-avl:has-text('AVAILABLE')",
-            "div.pre-avl:has-text('AVL')",
-            "div.pre-avl:has-text('WL')",
-            "div.pre-avl:has-text('RAC')",
-            "td:has-text('AVAILABLE')",
-            "td:has-text('WL')",
-            "td:has-text('RAC')"
-        ]
-        for wait_slot in range(30):
-            await asyncio.sleep(0.5)
-            await dismiss_overlays(page)
-
-            # Check if slots appeared inside this train card
-            slot_loc = target_train_card.locator(", ".join(slot_selectors)).first
-            if await slot_loc.count() > 0 and await slot_loc.is_visible():
-                await SmartBrowserActions.smart_click(
-                    page=page,
-                    selectors=slot_selectors,
-                    scope_locator=target_train_card,
-                    wait_after_sec=0.8
-                )
-                date_clicked = True
-                log_event(db, "INFO", "AUTOMATION", f"Availability date slot clicked (attempt {wait_slot+1})!", ref)
-                await asyncio.sleep(1)
-                break
-
-        # Extract live fare
-        live_fare = await extract_live_fare_from_page(page)
-        if live_fare:
-            booking.fare = live_fare
-            db.commit()
-            log_event(db, "INFO", "AUTOMATION", f"Official IRCTC Live Fare: ₹{live_fare:,.2f}", ref)
-
-        # Strict check: ID must remain logged in before booking
-        if not await check_logged_in_state(page):
-            log_event(db, "WARNING", "AUTOMATION", "Session logged out before clicking Book Now. Re-authenticating...", ref)
-            await ensure_authenticated_session(page, ref, db, session_state, booking)
-
-        # 3. Click active enabled 'Book Now' (without .disable-book)
         book_now_clicked = False
-        bn_selectors = [
-            "button.train_Search:not(.disable-book)",
-            "button:has-text('Book Now'):not(.disable-book)",
-            "button[label='Book Now']:not(.disable-book)"
-        ]
-        try:
-            for _ in range(20):
-                bn = target_train_card.locator(", ".join(bn_selectors)).first
-                if await bn.count() == 0:
-                    bn = page.locator(", ".join(bn_selectors)).first
 
-                if await bn.count() > 0 and await bn.is_visible():
-                    clicked = await SmartBrowserActions.smart_click(
-                        page=page,
-                        selectors=bn_selectors,
-                        text_keywords=["Book Now"],
-                        scope_locator=target_train_card if await target_train_card.locator(", ".join(bn_selectors)).count() > 0 else None,
-                        wait_after_sec=1.0
+        # Classes to try in priority order: requested class first, then fallbacks
+        classes_to_try = [journey_cls]
+        class_priority = ["3A", "2A", "SL", "1A", "3E", "CC", "EC", "2S"]
+        for cp in class_priority:
+            if cp != journey_cls and cp not in classes_to_try:
+                classes_to_try.append(cp)
+
+        for try_cls in classes_to_try:
+            cls_keys_try = cls_map.get(try_cls, [try_cls])
+
+            # Click class tab if not the first attempt (first was already clicked above)
+            if try_cls != journey_cls:
+                cls_selectors_try = [f"div.pre-avl:has-text('{k}')" for k in cls_keys_try] + [f"span:has-text('{k}')" for k in cls_keys_try]
+                try:
+                    clicked_alt = await SmartBrowserActions.smart_click(
+                        page=page, selectors=cls_selectors_try, text_keywords=cls_keys_try,
+                        scope_locator=target_train_card, wait_after_sec=0.5
                     )
-                    if clicked:
-                        book_now_clicked = True
-                        log_event(db, "INFO", "AUTOMATION", "Clicked active enabled 'Book Now' button!", ref)
-                        break
-                await asyncio.sleep(0.5)
+                    if not clicked_alt:
+                        continue
+                    log_event(db, "INFO", "AUTOMATION", f"Trying alternate class '{try_cls}' (requested '{journey_cls}' unavailable)...", ref)
+                except Exception:
+                    continue
 
-        except Exception as e:
-            log_event(db, "WARNING", "AUTOMATION", f"Book now click note: {e}", ref)
+            # Wait for availability rows to appear
+            for wait_slot in range(20):
+                await asyncio.sleep(0.5)
+                await dismiss_overlays(page)
+
+                # First try clicking Refresh buttons if visible (stale availability data)
+                try:
+                    refresh_btn = target_train_card.locator("a:has-text('Refresh'), button:has-text('Refresh'), span:has-text('Refresh')").first
+                    if await refresh_btn.count() > 0 and await refresh_btn.is_visible():
+                        await refresh_btn.click(force=True)
+                        await asyncio.sleep(2)
+                except Exception:
+                    pass
+
+                # Check for actual bookable slots — EXCLUDE "NOT AVAILABLE"
+                slot_found = False
+                try:
+                    slot_found = await page.evaluate('''(cardSelector) => {
+                        const cards = document.querySelectorAll('app-train-avl-enq');
+                        for (const card of cards) {
+                            // Find availability status divs
+                            const slots = card.querySelectorAll('div.pre-avl, td.pre-avl, div[class*="avl"]');
+                            for (const slot of slots) {
+                                const text = (slot.innerText || '').trim().toUpperCase();
+                                // Must contain availability info but NOT be "NOT AVAILABLE" or "REGRET"
+                                if ((text.includes('AVAILABLE') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL') || text.match(/AVL-\\d+/)) &&
+                                    !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL')) {
+                                    slot.click();
+                                    return true;
+                                }
+                            }
+                        }
+                        return false;
+                    }''', None)
+                except Exception:
+                    pass
+
+                if slot_found:
+                    date_clicked = True
+                    log_event(db, "INFO", "AUTOMATION", f"Availability slot clicked for class '{try_cls}' (attempt {wait_slot+1})!", ref)
+                    await asyncio.sleep(1.5)
+                    break
+
+            if not date_clicked:
+                # Check if this class shows "NOT AVAILABLE"
+                try:
+                    not_avail = await target_train_card.evaluate('''(el) => {
+                        const texts = Array.from(el.querySelectorAll('div.pre-avl, td, span')).map(e => (e.innerText || '').trim().toUpperCase());
+                        return texts.some(t => t.includes('NOT AVAILABLE') || t.includes('REGRET'));
+                    }''')
+                    if not_avail:
+                        log_event(db, "INFO", "AUTOMATION", f"Class '{try_cls}' is NOT AVAILABLE. Trying next class...", ref)
+                        continue
+                except Exception:
+                    pass
+                continue
+
+            # Extract live fare
+            live_fare = await extract_live_fare_from_page(page)
+            if live_fare:
+                booking.fare = live_fare
+                db.commit()
+                log_event(db, "INFO", "AUTOMATION", f"Official IRCTC Live Fare: ₹{live_fare:,.2f}", ref)
+
+            # Update class if we switched
+            if try_cls != journey_cls:
+                booking.journey_class = try_cls
+                db.commit()
+                log_event(db, "INFO", "AUTOMATION", f"Auto-switched class from '{journey_cls}' to '{try_cls}' (original unavailable)", ref)
+
+            # Strict check: ID must remain logged in before booking
+            if not await check_logged_in_state(page):
+                log_event(db, "WARNING", "AUTOMATION", "Session logged out before clicking Book Now. Re-authenticating...", ref)
+                await ensure_authenticated_session(page, ref, db, session_state, booking)
+
+            # 3. Click active enabled 'Book Now' (without .disable-book)
+            bn_selectors = [
+                "button.train_Search:not(.disable-book)",
+                "button:has-text('Book Now'):not(.disable-book)",
+                "button[label='Book Now']:not(.disable-book)"
+            ]
+            try:
+                for bn_wait in range(20):
+                    bn = target_train_card.locator(", ".join(bn_selectors)).first
+                    if await bn.count() == 0:
+                        bn = page.locator(", ".join(bn_selectors)).first
+
+                    if await bn.count() > 0 and await bn.is_visible():
+                        clicked = await SmartBrowserActions.smart_click(
+                            page=page, selectors=bn_selectors, text_keywords=["Book Now"],
+                            scope_locator=target_train_card if await target_train_card.locator(", ".join(bn_selectors)).count() > 0 else None,
+                            wait_after_sec=1.0
+                        )
+                        if clicked:
+                            book_now_clicked = True
+                            log_event(db, "INFO", "AUTOMATION", f"Clicked active enabled 'Book Now' button (class: {try_cls})!", ref)
+                            break
+                    await asyncio.sleep(0.5)
+            except Exception as e:
+                log_event(db, "WARNING", "AUTOMATION", f"Book now click note: {e}", ref)
+
+            if book_now_clicked:
+                break
+            else:
+                log_event(db, "WARNING", "AUTOMATION", f"Book Now button disabled/missing for class '{try_cls}'. Trying next class...", ref)
+                date_clicked = False
+                continue
+
+        if not book_now_clicked:
+            err_msg = f"No available class found for train {booking.train_name or booking.train_number} on route {booking.from_station} ➔ {booking.to_station} on {date_str}. All classes show NOT AVAILABLE."
+            log_event(db, "ERROR", "AUTOMATION", err_msg, ref)
+            session_state.set_stage("FAILED", "FAILED")
+            session_state.error_message = err_msg
+            booking.status = "FAILED"
+            db.commit()
+            if settings.TELEGRAM_ENABLED:
+                await send_telegram_message(f"❌ *Booking Failed* (Ref: `{ref}`)\n\n{err_msg}")
+            return
 
         # 4. Handle PrimeNG Confirmation Dialogs & Wait for Passenger Input page
         arrived_at_passenger = False
@@ -1237,56 +1313,24 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 break
             await asyncio.sleep(1)
 
-        # Pause only if passenger page not reached
+        # If passenger page not reached, retry Book Now clicks and dialog handling
         if not arrived_at_passenger:
-            train_bytes = None
-            try:
-                await page.evaluate("window.scrollTo(0, 200)")
-                await asyncio.sleep(0.5)
-                train_bytes = await page.screenshot(full_page=False)
-                if train_bytes:
-                    session_state.latest_screenshot_bytes = train_bytes
-                    (DATA_DIR / "latest_captcha.png").write_bytes(train_bytes)
-            except Exception:
-                pass
-
-            select_prompt = f"Train Selection: Please select your train / class and click 'Book Now' in browser."
-            session_state.pause_for_user(select_prompt, is_payment=False, input_type="NONE", screenshot_bytes=train_bytes)
-            booking.status = "WAITING_MANUAL"
-            db.commit()
-            log_event(db, "INFO", "AUTOMATION", select_prompt, ref)
-
-            try:
-                await page.bring_to_front()
-                focus_browser_window()
-            except Exception:
-                pass
-
-            if settings.TELEGRAM_ENABLED:
-                t_keyboard = {
-                    "inline_keyboard": [
-                        [{"text": "✅ Maine 'Book Now' Click Kar Diya (Continue)", "callback_data": "action_continue"}],
-                        [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
-                    ]
-                }
-                caption = (
-                    f"🚆 *IRCTC Train & Class Selection* (Ref: `{ref}`)\n\n"
-                    f"Route: `{booking.from_station}` ➔ `{booking.to_station}` ({booking.journey_class})\n"
-                    f"Kripya browser me apni train par *'Book Now'* click karein aur phir neeche button dabayein:"
-                )
-                if train_bytes:
-                    await send_telegram_photo(photo_bytes=train_bytes, caption=caption, reply_markup=t_keyboard)
-                else:
-                    await send_telegram_message(caption, reply_markup=t_keyboard)
-
-            result = await _wait_for_user_or_cancel(session_state, timeout_seconds=300)
-            if result == "cancel" or session_state.cancel_event.is_set():
-                booking.status = "CANCELLED"
-                db.commit()
-                return
-
-            # Wait for passenger form to load after manual click
-            for _ in range(15):
+            log_event(db, "WARNING", "AUTOMATION", "Passenger page not reached after Book Now. Retrying dialog handling...", ref)
+            # Extra retry: try clicking any visible dialogs and Book Now again
+            for retry in range(15):
+                try:
+                    await page.evaluate('''() => {
+                        const dialogs = Array.from(document.querySelectorAll('.ui-dialog, p-confirmdialog, div[role="dialog"]')).filter(d => d.offsetParent !== null);
+                        for (const d of dialogs) {
+                            const btn = Array.from(d.querySelectorAll('button, span.ui-button-text')).find(b => {
+                                const t = (b.innerText || '').trim().toLowerCase();
+                                return t === 'yes' || t === 'i agree' || t === 'ok' || t === 'continue' || t === 'confirm' || t === 'proceed';
+                            });
+                            if (btn) btn.click();
+                        }
+                    }''')
+                except Exception:
+                    pass
                 await dismiss_overlays(page)
                 if "psgn-input" in page.url or await page.locator("input[placeholder*='Passenger Name' i], p-autocomplete[formcontrolname='passengerName'] input").count() > 0:
                     arrived_at_passenger = True
