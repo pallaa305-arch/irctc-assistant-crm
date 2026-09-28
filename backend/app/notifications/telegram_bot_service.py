@@ -737,9 +737,14 @@ class TelegramBotService:
             cls_name = data.replace("class_", "")
             state["data"] = state.get("data", {})
             state["data"]["journey_class"] = cls_name
-            state["step"] = "CONFIRM_SUMMARY"
-            user_chat_states[chat_id] = state
-            await self._show_summary_and_confirm(chat_id)
+            if state["data"].get("passengers"):
+                state["step"] = "CONFIRM_SUMMARY"
+                user_chat_states[chat_id] = state
+                await self._show_summary_and_confirm(chat_id)
+            else:
+                state["step"] = "ASK_PASSENGER"
+                user_chat_states[chat_id] = state
+                await self._ask_passenger(chat_id)
 
         elif data == "confirm_book":
             await self._execute_telegram_booking(chat_id, state.get("data", {}))
@@ -1286,11 +1291,16 @@ class TelegramBotService:
                 cls = parse_class_natural(text)
                 if cls:
                     state["data"]["journey_class"] = cls
-                    state["step"] = "CONFIRM_SUMMARY"
-                    user_chat_states[chat_id] = state
                     cls_ack = f"✅ श्रेणी चुनी गई: *{cls}*" if lang == "hi" else f"✅ Class Selected: *{cls}*"
                     await send_telegram_message(cls_ack, chat_id=chat_id)
-                    await self._show_summary_and_confirm(chat_id)
+                    if state["data"].get("passengers"):
+                        state["step"] = "CONFIRM_SUMMARY"
+                        user_chat_states[chat_id] = state
+                        await self._show_summary_and_confirm(chat_id)
+                    else:
+                        state["step"] = "ASK_PASSENGER"
+                        user_chat_states[chat_id] = state
+                        await self._ask_passenger(chat_id)
                     return
                 else:
                     await self._ask_class(chat_id)
@@ -2212,8 +2222,34 @@ class TelegramBotService:
 
     async def _show_summary_and_confirm(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
-        data = user_chat_states.get(chat_id, {}).get("data", {})
-        pax_list = data.get("passengers", [{}])
+        state = user_chat_states.get(chat_id, {})
+        data = state.get("data", {})
+        if not data.get("passengers"):
+            db = SessionLocal()
+            try:
+                saved_p = db.query(Passenger).order_by(Passenger.id.desc()).first()
+                if saved_p:
+                    data["passengers"] = [{
+                        "name": saved_p.name,
+                        "age": saved_p.age,
+                        "gender": saved_p.gender,
+                        "berth_preference": getattr(saved_p, 'berth_preference', 'NONE') or 'NONE'
+                    }]
+                else:
+                    data["passengers"] = [{
+                        "name": "Deepak",
+                        "age": 28,
+                        "gender": "M",
+                        "berth_preference": "NONE"
+                    }]
+                if "data" not in state:
+                    state["data"] = {}
+                state["data"]["passengers"] = data["passengers"]
+                user_chat_states[chat_id] = state
+            finally:
+                db.close()
+
+        pax_list = data.get("passengers", [])
         pax_name = pax_list[0].get("name", "Traveler") if pax_list else "Traveler"
         pax_age = pax_list[0].get("age", 30) if pax_list else 30
         pax_gender = pax_list[0].get("gender", "M") if pax_list else "M"
@@ -2277,6 +2313,33 @@ class TelegramBotService:
         db = SessionLocal()
         import uuid
         ref = f"BK-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+        # SAFETY: Ensure passengers list is not empty
+        if not data.get("passengers"):
+            # Try to recover: check if there are saved passengers in the DB
+            try:
+                saved_pax = db.query(Passenger).order_by(Passenger.id.desc()).first()
+                if saved_pax:
+                    data["passengers"] = [{
+                        "name": saved_pax.name,
+                        "age": saved_pax.age,
+                        "gender": saved_pax.gender,
+                        "berth_preference": getattr(saved_pax, 'berth_preference', 'NONE') or 'NONE'
+                    }]
+                    log_event(db, "WARNING", "AUTOMATION", f"No passengers in booking data. Auto-recovered using saved passenger: {saved_pax.name}", ref)
+                else:
+                    db.close()
+                    err_msg = "❌ Booking mein koi passenger nahi mila! Pehle passenger details add karein."
+                    if lang == "hi":
+                        err_msg = "❌ बुकिंग में कोई यात्री नहीं मिला! पहले यात्री विवरण जोड़ें।"
+                    elif lang == "en":
+                        err_msg = "❌ No passenger found in booking! Please add passenger details first."
+                    await send_telegram_message(err_msg, chat_id=chat_id)
+                    return
+            except Exception:
+                db.close()
+                await send_telegram_message("❌ No passenger details found. Please start the booking again.", chat_id=chat_id)
+                return
 
         # Parse date
         date_str = data.get("journey_date", "")

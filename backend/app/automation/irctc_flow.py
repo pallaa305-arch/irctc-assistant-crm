@@ -1394,6 +1394,27 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         booking.status = "IN_PROGRESS"
         db.commit()
         passengers = db.query(BookingPassenger).filter(BookingPassenger.booking_id == booking.id).all()
+        if not passengers:
+            from app.database.models import Passenger
+            saved_p = db.query(Passenger).order_by(Passenger.id.desc()).first()
+            p_name = saved_p.name if saved_p else "Deepak"
+            p_age = saved_p.age if saved_p else 28
+            p_gender = saved_p.gender if saved_p else "M"
+            p_berth = getattr(saved_p, 'berth_preference', 'NONE') or 'NONE'
+            bp = BookingPassenger(
+                booking_id=booking.id,
+                name=p_name,
+                age=p_age,
+                gender=p_gender,
+                berth_preference=p_berth,
+                status="CNF"
+            )
+            db.add(bp)
+            booking.passenger_count = 1
+            db.commit()
+            passengers = [bp]
+            log_event(db, "WARNING", "AUTOMATION", f"No passengers linked to booking {ref}. Auto-added passenger: {p_name} ({p_age}/{p_gender})", ref)
+
         log_event(db, "INFO", "AUTOMATION", f"Entering details for {len(passengers)} passenger(s)...", ref)
 
         try:
