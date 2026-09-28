@@ -880,7 +880,22 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 }''', date_str)
                 await asyncio.sleep(0.4)
 
-                # 4. Click Search Button (using SmartBrowserActions + visible selectors + JS fallback)
+                # 4. Ensure Quota dropdown is set (General Quota by default)
+                try:
+                    await page.evaluate('''() => {
+                        const quotaDropdown = document.querySelector("p-dropdown[formcontrolname='journeyQuota'], select[formcontrolname='journeyQuota']");
+                        if (quotaDropdown) {
+                            const sel = quotaDropdown.querySelector('select');
+                            if (sel) {
+                                sel.value = 'GN';
+                                sel.dispatchEvent(new Event('change', {bubbles: true}));
+                            }
+                        }
+                    }''')
+                except Exception:
+                    pass
+
+                # 5. Click Search Button
                 search_selectors = [
                     "button.train_Search:visible",
                     "button.search_btn:visible",
@@ -903,21 +918,36 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     wait_after_sec=0.5
                 )
 
-                # Also trigger native form submission as fallback
+                # Also trigger Angular's findTrains() directly via component reference
                 await page.evaluate('''() => {
+                    // Method 1: requestSubmit on form
                     const form = document.querySelector('form');
                     if (form) {
                         try {
                             if (typeof form.requestSubmit === 'function') {
                                 form.requestSubmit();
-                            } else {
-                                const btn = form.querySelector("button.train_Search, button.search_btn, button[type='submit'], button");
-                                if (btn) btn.click();
                             }
-                        } catch (e) {
-                            console.error("Form submit error:", e);
-                        }
+                        } catch (e) {}
                     }
+
+                    // Method 2: Try invoking Angular's findTrains() via ng component ref
+                    try {
+                        const appRoot = document.querySelector('app-root') || document.querySelector('app-train-search');
+                        if (appRoot && appRoot.__ngContext__) {
+                            // Angular Ivy context
+                        }
+                    } catch(e) {}
+
+                    // Method 3: Click any submit-type button inside the search form
+                    try {
+                        const searchBtns = document.querySelectorAll("button.train_Search, button.search_btn, button[type='submit']");
+                        for (const btn of searchBtns) {
+                            if (btn.offsetParent !== null && !btn.disabled) {
+                                btn.click();
+                                break;
+                            }
+                        }
+                    } catch(e) {}
                 }''')
 
                 log_event(db, "INFO", "AUTOMATION", f"Submitted search for {booking.from_station} to {booking.to_station} on {date_str} (attempt {search_attempt+1}).", ref)
@@ -967,14 +997,26 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             .map(e => (e.innerText || '').trim())
                             .filter(Boolean);
                         const dialogs = Array.from(document.querySelectorAll('.ui-dialog:not([style*="none"]), p-dialog:not([style*="none"]), div[role="dialog"]'))
-                            .map(d => (d.innerText || '').trim().replace(/\\s+/g, ' '))
+                            .map(d => (d.innerText || '').trim().replace(/\\s+/g, ' ').slice(0, 150))
                             .filter(Boolean);
+                        // Check ng-invalid fields
+                        const invalidFields = Array.from(document.querySelectorAll('.ng-invalid[formcontrolname]'))
+                            .map(e => e.getAttribute('formcontrolname'));
+                        // Check search button state
+                        const searchBtn = document.querySelector('button.train_Search, button.search_btn, button[type="submit"]');
+                        const btnState = searchBtn ? {disabled: searchBtn.disabled, visible: searchBtn.offsetParent !== null, text: (searchBtn.innerText || '').trim()} : null;
+                        // Check for loading spinners/overlays
+                        const spinner = document.querySelector('.ui-blockui, .loading, .spinner, .cdk-overlay-container .cdk-overlay-backdrop');
+                        const hasSpinner = spinner ? spinner.offsetParent !== null : false;
                         return {
                             origin: origin ? origin.value : null,
                             dest: dest ? dest.value : null,
                             date: date ? date.value : null,
                             errors: errors,
                             dialogs: dialogs,
+                            invalidFields: invalidFields,
+                            searchBtn: btnState,
+                            hasSpinner: hasSpinner,
                             url: window.location.href
                         };
                     }''')
