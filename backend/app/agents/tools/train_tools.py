@@ -8,6 +8,7 @@ from datetime import datetime, timedelta
 from typing import Dict, Any, List, Optional
 from app.services.railway_service import RailwayService, KNOWN_TRAINS, STATION_NAMES
 from app.services.station_cache import station_cache
+from app.config import settings
 
 railway_service = RailwayService()
 STATION_ALIASES = station_cache.station_alias_map
@@ -41,6 +42,10 @@ async def tool_search_trains(origin: str, destination: str, travel_date: str) ->
     enriched_trains = []
     for t in trains:
         t_copy = dict(t)
+        if not settings.DEMO_MODE:
+            t_copy["source"] = "timetable_only"
+            enriched_trains.append(t_copy)
+            continue
         classes_data = {}
         for cls in t_copy.get("classes", ["3A", "2A", "SL"]):
             base_fare = 420.0 if cls == "SL" else (1180.0 if cls == "3A" else 1750.0)
@@ -64,6 +69,8 @@ async def tool_check_availability(train_number: str, travel_date: str, travel_cl
     """
     Check real-time seat availability and status for a specific train, date, and class.
     """
+    if not settings.DEMO_MODE:
+        return {"success": False, "error": "Use Telegram New Booking for a fresh IRCTC seat/fare enquiry with your route and date."}
     clean_no = re.sub(r'\D', '', str(train_number).strip())
     h = int(hashlib.md5(f"{clean_no}_{travel_date}_{travel_class}_{quota}".encode()).hexdigest(), 16)
     
@@ -88,6 +95,8 @@ async def tool_calculate_fare(train_number: str, travel_class: str, passengers_c
     """
     Calculate dynamic official IRCTC fare breakdown for a given class and passenger count.
     """
+    if not settings.DEMO_MODE:
+        return {"success": False, "error": "Exact live fare requires route, journey date and quota. Start Telegram New Booking; IRCTC review shows the real total."}
     clean_no = re.sub(r'\D', '', str(train_number).strip())
     cls = travel_class.upper().strip()
     count = max(1, int(passengers_count))

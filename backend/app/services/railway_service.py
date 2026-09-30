@@ -198,7 +198,10 @@ class RailwayService:
             except Exception:
                 pass  # Fall through to reliable offline generator
 
-        # 2. Deterministic & realistic fallback based on PNR hash
+        if not settings.DEMO_MODE:
+            return {"success": False, "error": "A verified PNR provider is unavailable. Check Indian Railways / IRCTC; no generated status was used."}
+
+        # Demo-only data; never substitute this for a failed live lookup.
         h = int(hashlib.md5(clean_pnr.encode()).hexdigest(), 16)
         train_keys = list(KNOWN_TRAINS.keys())
         chosen_train = KNOWN_TRAINS[train_keys[h % len(train_keys)]]
@@ -239,7 +242,7 @@ class RailwayService:
 
         return {
             "success": True,
-            "source": "live_railway_engine",
+            "source": "demo",
             "pnr": clean_pnr,
             "train_number": chosen_train["train_number"],
             "train_name": chosen_train["train_name"],
@@ -267,7 +270,10 @@ class RailwayService:
                 "error": "Invalid train number. Indian train numbers are 5 digits (e.g. 12952, 22436)."
             }
 
-        # Look up known train or create a profile
+        if not settings.DEMO_MODE:
+            return {"success": False, "error": "Live running-status feed is not configured. Check NTES / Indian Railways for the current position."}
+
+        # Demo-only profile.
         train_info = KNOWN_TRAINS.get(clean_no)
         if not train_info:
             train_info = {
@@ -345,6 +351,8 @@ class RailwayService:
         Calculates realistic, live IRCTC-standard seat availability, status (Available/RAC/WL),
         color coding, and detailed fare breakdown for every coach/class of the train.
         """
+        if not settings.DEMO_MODE:
+            return {"success": False, "error": "Live seats and fare require the current IRCTC browser enquiry. Use Telegram New Booking to select route, date and class.", "coaches": []}
         clean_no = re.sub(r'\D', '', train_number.strip())
         train_info = KNOWN_TRAINS.get(clean_no, {})
         t_name = train_name or train_info.get("train_name", f"EXPRESS #{clean_no}")

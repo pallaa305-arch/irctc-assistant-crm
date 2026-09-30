@@ -50,6 +50,19 @@ class BrowserManager:
     context: Optional[BrowserContext] = None
     page: Optional[Page] = None
     is_busy: bool = False
+    owner: Optional[str] = None
+
+    def claim(self, owner: str):
+        # No await between checking and assigning: atomic on the application event loop.
+        if self.owner and self.owner != owner:
+            raise RuntimeError("IRCTC browser is already reserved by another booking. Finish or cancel it first.")
+        self.owner = owner
+        self.is_busy = True
+
+    def release(self, owner: str):
+        if self.owner == owner:
+            self.owner = None
+            self.is_busy = False
 
     @classmethod
     def get_instance(cls) -> 'BrowserManager':
@@ -57,11 +70,14 @@ class BrowserManager:
             cls._instance = cls()
         return cls._instance
 
-    async def get_page(self) -> Page:
+    async def get_page(self, *, owner: Optional[str] = None, foreground: bool = True) -> Page:
+        if self.owner and self.owner != owner:
+            raise RuntimeError("IRCTC browser belongs to another active booking.")
         if self.page and not self.page.is_closed():
             try:
-                await self.page.bring_to_front()
-                focus_browser_window()
+                if foreground:
+                    await self.page.bring_to_front()
+                    focus_browser_window()
             except Exception:
                 pass
             return self.page
@@ -109,10 +125,28 @@ class BrowserManager:
                     channel="chrome"
                 )
             except Exception:
-                # Fallback to bundled Playwright Chromium
-                self.context = await self.playwright.chromium.launch_persistent_context(
-                    **launch_args
-                )
+                try:
+                    # Fallback to bundled Playwright Chromium
+                    self.context = await self.playwright.chromium.launch_persistent_context(
+                        **launch_args
+                    )
+                except Exception as e_chromium:
+                    err_str = str(e_chromium)
+                    if "already in use" in err_str or "existing browser session" in err_str:
+                        lock_files = ["SingletonLock", "SingletonCookie", "SingletonSocket"]
+                        for lf in lock_files:
+                            lp = os.path.join(profile_dir, lf)
+                            if os.path.exists(lp):
+                                try:
+                                    os.remove(lp)
+                                except Exception:
+                                    pass
+                        await asyncio.sleep(1.0)
+                        self.context = await self.playwright.chromium.launch_persistent_context(
+                            **launch_args
+                        )
+                    else:
+                        raise e_chromium
 
         # Stealth and speed optimizer route
         async def _speed_optimizer_route(route):
@@ -143,8 +177,9 @@ class BrowserManager:
             pass
 
         try:
-            await self.page.bring_to_front()
-            focus_browser_window()
+            if foreground:
+                await self.page.bring_to_front()
+                focus_browser_window()
         except Exception:
             pass
 
@@ -166,5 +201,6 @@ class BrowserManager:
             self.browser = None
             self.playwright = None
             self.is_busy = False
+            self.owner = None
 
 browser_manager = BrowserManager.get_instance()

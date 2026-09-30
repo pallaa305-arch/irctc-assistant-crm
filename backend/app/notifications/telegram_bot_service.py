@@ -22,6 +22,7 @@ from app.services.railway_service import railway_service
 from app.services.station_cache import station_cache
 from app.services.pdf_service import pdf_service
 from app.notifications.telegram_channel_adapter import telegram_adapter
+from app.notifications.live_booking import live_booking
 
 # Common Indian Cities & Station Codes Map
 CITY_STATION_MAP = {
@@ -379,10 +380,12 @@ class TelegramBotService:
         if not settings.TELEGRAM_BOT_TOKEN:
             return
         self._is_running = True
+        live_booking.start_maintenance()
         self._poll_task = asyncio.create_task(self._poll_loop())
 
     def stop(self):
         self._is_running = False
+        live_booking.stop()
         if self._poll_task and not self._poll_task.done():
             self._poll_task.cancel()
 
@@ -392,6 +395,16 @@ class TelegramBotService:
 
         # Persistent connection pool for fast, low-latency updates
         async with httpx.AsyncClient(timeout=35.0, limits=httpx.Limits(max_keepalive_connections=5)) as client:
+            # A restart invalidates browser sessions and their old keyboards. Do
+            # not replay queued booking commands against the saved IRCTC account.
+            if self._offset == 0:
+                try:
+                    initial = await client.get(url, params={"offset": -1, "timeout": 0})
+                    updates = initial.json().get("result", []) if initial.status_code == 200 else []
+                    if updates:
+                        self._offset = updates[-1]["update_id"] + 1
+                except Exception:
+                    pass
             while self._is_running:
                 try:
                     params = {
@@ -436,6 +449,9 @@ class TelegramBotService:
         await send_telegram_message(greeting_text, chat_id=chat_id, reply_markup=keyboard)
 
     async def _handle_update(self, update: Dict[str, Any]):
+        message = update.get("callback_query", {}).get("message") or update.get("message", {})
+        if not live_booking.authorized(str(message.get("chat", {}).get("id", ""))):
+            return
         # 1. Handle Inline Button Clicks (callback_query)
         if "callback_query" in update:
             await self._handle_callback(update["callback_query"])
@@ -454,6 +470,8 @@ class TelegramBotService:
         chat_id = str(cb["message"]["chat"]["id"])
 
         await answer_callback_query(cb_id)
+        if await live_booking.handle(chat_id, callback=data):
+            return
 
         # Handle Language Selection & Switching
         if data == "cmd_lang":
@@ -662,6 +680,10 @@ class TelegramBotService:
                 await self._send_booking_invoice_pdf(chat_id)
             return
 
+        if data.startswith(("route_", "date_", "train_", "coach_", "class_", "pax_", "tfilter_")) or data in {"confirm_book", "cancel_book"}:
+            await send_telegram_message("This old booking menu expired. Tap New Booking to start a live IRCTC session.", chat_id=chat_id)
+            return
+
         # Handle conversational booking wizard button selections
         state = user_chat_states.get(chat_id, {})
 
@@ -774,6 +796,8 @@ class TelegramBotService:
             await self._show_summary_and_confirm(chat_id)
 
     async def _handle_text_message(self, chat_id: str, text: str):
+        if await live_booking.handle(chat_id, text=text):
+            return
         lang = user_languages.get(chat_id, "hinglish")
         clean = text.strip().lower()
 
@@ -981,66 +1005,7 @@ class TelegramBotService:
         # -------------------------------------------------------------
         one_shot = extract_one_shot_booking_data(text)
         if one_shot:
-            current_state = user_chat_states.get(chat_id, {})
-            current_data = current_state.get("data", {})
-            current_data.update(one_shot)
-
-            if current_data.get("passengers"):
-                for p in current_data["passengers"]:
-                    auto_save_passenger_to_db(p)
-
-            # Check for missing details step-by-step
-            if not current_data.get("journey_date"):
-                user_chat_states[chat_id] = {"step": "ASK_DATE", "data": current_data}
-                route_ack = f"🚆 मार्ग तय हुआ: *{current_data['from_station']} ➔ {current_data['to_station']}*" if lang == "hi" else f"🚆 Route Set: *{current_data['from_station']} ➔ {current_data['to_station']}*"
-                await send_telegram_message(route_ack, chat_id=chat_id)
-                await self._ask_date(chat_id)
-                return
-
-            if not current_data.get("passengers"):
-                user_chat_states[chat_id] = {"step": "ASK_PASSENGER", "data": current_data}
-                r_line = f"🚆 मार्ग: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 तारीख: *{current_data['journey_date']}*" if lang == "hi" else f"🚆 Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 Date: *{current_data['journey_date']}*"
-                await send_telegram_message(r_line, chat_id=chat_id)
-                await self._ask_passenger(chat_id)
-                return
-
-            if not current_data.get("journey_class"):
-                user_chat_states[chat_id] = {"step": "ASK_CLASS", "data": current_data}
-                pax_name = current_data['passengers'][0]['name']
-                r_line = f"🚆 मार्ग: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 तारीख: *{current_data['journey_date']}*\n👤 यात्री: *{pax_name}*" if lang == "hi" else f"🚆 Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n📅 Date: *{current_data['journey_date']}*\n👤 Passenger: *{pax_name}*"
-                await send_telegram_message(r_line, chat_id=chat_id)
-                await self._ask_class(chat_id)
-                return
-
-            # All 4 items present -> confirm summary
-            user_chat_states[chat_id] = {"step": "CONFIRM_SUMMARY", "data": current_data}
-            pax = current_data["passengers"][0]
-            if lang == "hi":
-                os_msg = (
-                    f"⚡ *त्वरित बुकिंग अनुरोध प्राप्त हुआ!*\n"
-                    f"• मार्ग: *{current_data['from_station']} ➔ {current_data['to_station']}*\n"
-                    f"• तारीख: *{current_data['journey_date']}*\n"
-                    f"• श्रेणी: *{current_data['journey_class']}*\n"
-                    f"• यात्री: *{pax['name']}* ({pax['age']}/{pax['gender']})"
-                )
-            elif lang == "en":
-                os_msg = (
-                    f"⚡ *One-Shot Booking Request Recognized!*\n"
-                    f"• Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n"
-                    f"• Date: *{current_data['journey_date']}*\n"
-                    f"• Class: *{current_data['journey_class']}*\n"
-                    f"• Traveler: *{pax['name']}* ({pax['age']}/{pax['gender']})"
-                )
-            else:
-                os_msg = (
-                    f"⚡ *One-Shot Booking Request Samjhi Gayi!*\n"
-                    f"• Route: *{current_data['from_station']} ➔ {current_data['to_station']}*\n"
-                    f"• Date: *{current_data['journey_date']}*\n"
-                    f"• Class: *{current_data['journey_class']}*\n"
-                    f"• Passenger: *{pax['name']}* ({pax['age']}/{pax['gender']})"
-                )
-            await send_telegram_message(os_msg, chat_id=chat_id)
-            await self._show_summary_and_confirm(chat_id)
+            await live_booking.handle(chat_id, callback="cmd_book")
             return
 
         # -------------------------------------------------------------
@@ -1723,8 +1688,8 @@ class TelegramBotService:
 
             passengers = db.query(BookingPassenger).filter(BookingPassenger.booking_id == booking.id).all()
             b_dict = {
-                "pnr": booking.pnr or "2451234567",
-                "train_number": booking.train_number or "12952",
+                "pnr": booking.pnr or "Not confirmed",
+                "train_number": booking.train_number or "Not captured",
                 "train_name": booking.train_name or "Rajdhani Express",
                 "from_station": booking.from_station,
                 "to_station": booking.to_station,
@@ -1740,8 +1705,8 @@ class TelegramBotService:
                     "name": p.name,
                     "age": p.age,
                     "gender": p.gender,
-                    "allocated_seat": p.allocated_seat or "B4-45 [MB]",
-                    "status": p.status or "CNF"
+                    "allocated_seat": p.allocated_seat or "Not captured",
+                    "status": p.status or "Not captured"
                 }
                 for p in passengers
             ]
@@ -1773,8 +1738,8 @@ class TelegramBotService:
 
             passengers = db.query(BookingPassenger).filter(BookingPassenger.booking_id == booking.id).all()
             b_dict = {
-                "pnr": booking.pnr or "2451234567",
-                "train_number": booking.train_number or "12952",
+                "pnr": booking.pnr or "Not confirmed",
+                "train_number": booking.train_number or "Not captured",
                 "train_name": booking.train_name or "Rajdhani Express",
                 "from_station": booking.from_station,
                 "to_station": booking.to_station,
@@ -1790,8 +1755,8 @@ class TelegramBotService:
                     "name": p.name,
                     "age": p.age,
                     "gender": p.gender,
-                    "allocated_seat": p.allocated_seat or "B4-45 [MB]",
-                    "status": p.status or "CNF"
+                    "allocated_seat": p.allocated_seat or "Not captured",
+                    "status": p.status or "Not captured"
                 }
                 for p in passengers
             ]
@@ -1854,38 +1819,7 @@ class TelegramBotService:
         await self._ask_route(chat_id)
 
     async def _ask_route(self, chat_id: str):
-        lang = user_languages.get(chat_id, "hinglish")
-        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
-        buttons = [[{"text": cancel_txt, "callback_data": "cancel_book"}]]
-
-        keyboard = {"inline_keyboard": buttons}
-        user_chat_states[chat_id] = {"step": "ASK_ROUTE_MANUAL", "data": {}}
-
-        if lang == "hi":
-            msg = (
-                "🚆 *कहाँ से कहाँ यात्रा करनी है?*\n\n"
-                "चैट में स्टेशन का नाम या कोड लिखें, जैसे:\n"
-                "• `Delhi to Varanasi`\n"
-                "• `NDLS to BSB`\n"
-                "• `Mumbai to Lucknow`"
-            )
-        elif lang == "en":
-            msg = (
-                "🚆 *Where would you like to travel?*\n\n"
-                "Type origin and destination in chat, e.g.:\n"
-                "• `Delhi to Varanasi`\n"
-                "• `NDLS to BSB`\n"
-                "• `Mumbai to Lucknow`"
-            )
-        else:
-            msg = (
-                "🚆 *Kahan se kahan travel karna hai?*\n\n"
-                "Chat me seedha likhein, jaise:\n"
-                "• `Delhi to Varanasi`\n"
-                "• `NDLS to BSB`\n"
-                "• `Mumbai to Lucknow`"
-            )
-        await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
+        await live_booking.handle(chat_id, callback="cmd_book")
 
     async def _ask_date(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
@@ -1930,199 +1864,10 @@ class TelegramBotService:
         await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
     async def _ask_train(self, chat_id: str, time_filter: str = "ALL"):
-        lang = user_languages.get(chat_id, "hinglish")
-        state = user_chat_states.get(chat_id, {})
-        from_stn = state.get("data", {}).get("from_station", "")
-        to_stn = state.get("data", {}).get("to_station", "")
-        j_date = state.get("data", {}).get("journey_date", (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y"))
-
-        trains = []
-        if from_stn and to_stn:
-            try:
-                res = await railway_service.search_trains(from_stn, to_stn, journey_date=j_date)
-                trains = res if isinstance(res, list) else res.get("trains", [])
-            except Exception:
-                pass
-
-        if not trains:
-            fn = station_cache.get_station_name(from_stn) or from_stn
-            tn = station_cache.get_station_name(to_stn) or to_stn
-            cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
-            keyboard = {"inline_keyboard": [[{"text": cancel_txt, "callback_data": "cancel_book"}]]}
-            if chat_id in user_chat_states:
-                user_chat_states[chat_id]["step"] = "ASK_ROUTE_MANUAL"
-
-            if lang == "hi":
-                msg = (
-                    f"⚠️ *कोई सीधी ट्रेन नहीं मिली (No Direct Trains Found)*\n\n"
-                    f"📍 मार्ग: *{fn} ({from_stn}) ➔ {tn} ({to_stn})*\n"
-                    f"📅 तारीख: `{j_date}`\n\n"
-                    f"इस मार्ग पर भारतीय रेलवे की कोई डायरेक्ट ट्रेन उपलब्ध नहीं है, या स्टेशन कोड में कोई त्रुटि हो सकती है।\n\n"
-                    f"👉 कृपया सही स्टेशन या नजदीकी मुख्य स्टेशन का नाम लिखें (जैसे: *Jaipur to Kuchaman*, *JP to KMNC*, *Delhi to Varanasi*):"
-                )
-            elif lang == "en":
-                msg = (
-                    f"⚠️ *No Direct Trains Found*\n\n"
-                    f"📍 Route: *{fn} ({from_stn}) ➔ {tn} ({to_stn})*\n"
-                    f"📅 Date: `{j_date}`\n\n"
-                    f"No direct trains found on this route, or station code might need verification.\n\n"
-                    f"👉 Please type your route with correct station name or code (e.g.: *Jaipur to Kuchaman*, *JP to KMNC*, *Delhi to Varanasi*):"
-                )
-            else:
-                msg = (
-                    f"⚠️ *Koi Direct Train Nahi Mili (No Direct Trains Found)*\n\n"
-                    f"📍 Route: *{fn} ({from_stn}) ➔ {tn} ({to_stn})*\n"
-                    f"📅 Date: `{j_date}`\n\n"
-                    f"Is route par koi direct train nahi mili. Kripya sahi station name ya code likhein (jaise: *Jaipur to Kuchaman*, *JP to KMNC*, *Delhi to Varanasi*):"
-                )
-            await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
-            return
-
-        # Save trains list into user state for serial number or name selection
-        if chat_id not in user_chat_states:
-            user_chat_states[chat_id] = {"step": "ASK_TRAIN_MANUAL", "data": {}}
-        user_chat_states[chat_id]["step"] = "ASK_TRAIN_MANUAL"
-        user_chat_states[chat_id]["data"]["train_list"] = trains
-
-        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
-        keyboard = {"inline_keyboard": [[{"text": cancel_txt, "callback_data": "cancel_book"}]]}
-
-        train_entries = []
-        for idx, t in enumerate(trains[:8], start=1):
-            t_num = t.get("train_number", "")
-            t_name = t.get("train_name", "")
-            dep = t.get("departure_time", "--")
-            arr = t.get("arrival_time", "--")
-            dur = t.get("duration", "")
-            time_info = f"⏰ {dep} ➔ {arr}" + (f" ({dur})" if dur else "")
-
-            # Format coach availability & fares
-            coach_lines = []
-            for c in t.get("coaches", []):
-                cls_code = c.get("class_code", "")
-                st_disp = c.get("status_display", c.get("status", "AVAILABLE"))
-                fare = c.get("fare", 0)
-                col_emoji = "🟢" if c.get("color") == "emerald" else ("🟡" if c.get("color") == "amber" else "🔴")
-                coach_lines.append(f"   • *{cls_code}:* {col_emoji} {st_disp} (₹{fare:,.0f})")
-
-            coach_text = "\n".join(coach_lines) if coach_lines else "   • सीटें: 🟢 उपलब्ध"
-            train_entries.append(
-                f"*{idx}.* 🚆 *{t_num} - {t_name}*\n"
-                f"   {time_info}\n"
-                f"{coach_text}"
-            )
-
-        trains_formatted = "\n\n".join(train_entries)
-
-        if lang == "hi":
-            msg = (
-                f"🚆 *उपलब्ध ट्रेनें और लाइव सीट स्थिति:*\n"
-                f"📍 मार्ग: *{from_stn} ➔ {to_stn}* | 📅 तारीख: `{j_date}`\n"
-                f"═════════════════════════\n\n"
-                f"{trains_formatted}\n\n"
-                f"═════════════════════════\n"
-                f"👉 *ट्रेन का चयन करने के लिए:*\n"
-                f"चैट में बस **नंबर (जैसे: `1`, `2`)** या **ट्रेन का नाम / नंबर (जैसे: `12302` या `Rajdhani`)** लिखें!"
-            )
-        elif lang == "en":
-            msg = (
-                f"🚆 *Available Trains & Live Seat Status:*\n"
-                f"📍 Route: *{from_stn} ➔ {to_stn}* | 📅 Date: `{j_date}`\n"
-                f"═════════════════════════\n\n"
-                f"{trains_formatted}\n\n"
-                f"═════════════════════════\n"
-                f"👉 *To choose a train:*\n"
-                f"Simply type the **Sr. No. (e.g. `1`, `2`)** or **Train Name/Number (e.g. `12302`)** in chat!"
-            )
-        else:
-            msg = (
-                f"🚆 *Available Trains & Live Seat Status:*\n"
-                f"📍 Route: *{from_stn} ➔ {to_stn}* | 📅 Date: `{j_date}`\n"
-                f"═════════════════════════\n\n"
-                f"{trains_formatted}\n\n"
-                f"═════════════════════════\n"
-                f"👉 *Train choose karne ke liye:*\n"
-                f"Chat me train ka **Sr. No. (jaise: `1`, `2`)** ya **Train Name / Number (jaise: `12302`)** likhein!"
-            )
-        await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
+        await live_booking.handle(chat_id, callback="cmd_book")
 
     async def _ask_coach(self, chat_id: str, train_no: Optional[str] = None):
-        lang = user_languages.get(chat_id, "hinglish")
-        state = user_chat_states.get(chat_id, {})
-        data = state.get("data", {})
-        from_stn = data.get("from_station", "NDLS")
-        to_stn = data.get("to_station", "BPL")
-        j_date = data.get("journey_date", (datetime.now() + timedelta(days=7)).strftime("%d/%m/%Y"))
-        quota = data.get("quota", "GN")
-        t_num = train_no or data.get("train_preference", "12628")
-        if t_num == "ANY":
-            t_num = "12628"
-
-        train_list = data.get("train_list", [])
-        matched_tr = next((tr for tr in train_list if tr.get("train_number") == t_num), None)
-        tr_classes = matched_tr.get("classes") if matched_tr else None
-        tr_name = matched_tr.get("train_name") if matched_tr else None
-        tr_fares = matched_tr.get("real_fares") if matched_tr else None
-
-        avail = railway_service.get_seat_availability(
-            train_number=t_num,
-            from_code=from_stn,
-            to_code=to_stn,
-            journey_date=j_date,
-            quota=quota,
-            classes=tr_classes,
-            train_name=tr_name,
-            real_fares=tr_fares
-        )
-        t_name = avail.get("train_name", f"Express #{t_num}")
-        coaches = avail.get("coaches", [])
-
-        buttons = []
-        for c in coaches:
-            code = c["class_code"]
-            status = c["status_display"]
-            fare = c["fare"]
-            color_icon = "🟢" if c["color"] == "emerald" else ("🟡" if c["color"] == "amber" else "🔴")
-            btn_txt = f"{color_icon} {code}: {status} • ₹{fare}"
-            buttons.append([{"text": btn_txt, "callback_data": f"coach_{code}_{fare}"}])
-
-        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
-        buttons.append([{"text": cancel_txt, "callback_data": "cancel_book"}])
-
-        keyboard = {"inline_keyboard": buttons}
-        user_chat_states[chat_id]["step"] = "ASK_COACH_MANUAL"
-
-        if lang == "hi":
-            msg = (
-                f"💺 *कोच / श्रेणी और लाइव सीट उपलब्धता:*\n"
-                f"🚆 *{t_num} - {t_name}*\n"
-                f"📅 तारीख: `{j_date}` | कोटा: `{quota}`\n\n"
-                f"• 🟢 = कन्फर्म सीट (Available)\n"
-                f"• 🟡 = आरएसी (RAC)\n"
-                f"• 🔴 = वेटिंग लिस्ट (Waiting List)\n\n"
-                f"👉 *अपनी मनपसंद श्रेणी चुनें (Live IRCTC Fare सहित):*"
-            )
-        elif lang == "en":
-            msg = (
-                f"💺 *Select Coach & Live Seat Availability:*\n"
-                f"🚆 *{t_num} - {t_name}*\n"
-                f"📅 Date: `{j_date}` | Quota: `{quota}`\n\n"
-                f"• 🟢 = Confirmed Seats (Available)\n"
-                f"• 🟡 = Reservation Against Cancellation (RAC)\n"
-                f"• 🔴 = Waiting List (WL)\n\n"
-                f"👉 *Choose your coach with live official IRCTC fare:*"
-            )
-        else:
-            msg = (
-                f"💺 *Coach & Live Seat Status chunein:*\n"
-                f"🚆 *{t_num} - {t_name}*\n"
-                f"📅 Date: `{j_date}` | Quota: `{quota}`\n\n"
-                f"• 🟢 = Confirmed Seat Available\n"
-                f"• 🟡 = RAC Status\n"
-                f"• 🔴 = Waiting List (WL)\n\n"
-                f"👉 *Apna Coach aur Price select karein:*"
-            )
-        await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
+        await live_booking.handle(chat_id, callback="cmd_book")
 
     async def _ask_passenger(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
@@ -2309,118 +2054,6 @@ class TelegramBotService:
         await send_telegram_message(summary, chat_id=chat_id, reply_markup=keyboard)
 
     async def _execute_telegram_booking(self, chat_id: str, data: Dict[str, Any]):
-        lang = user_languages.get(chat_id, "hinglish")
-        db = SessionLocal()
-        import uuid
-        ref = f"BK-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
-
-        # SAFETY: Ensure passengers list is not empty
-        if not data.get("passengers"):
-            # Try to recover: check if there are saved passengers in the DB
-            try:
-                saved_pax = db.query(Passenger).order_by(Passenger.id.desc()).first()
-                if saved_pax:
-                    data["passengers"] = [{
-                        "name": saved_pax.name,
-                        "age": saved_pax.age,
-                        "gender": saved_pax.gender,
-                        "berth_preference": getattr(saved_pax, 'berth_preference', 'NONE') or 'NONE'
-                    }]
-                    log_event(db, "WARNING", "AUTOMATION", f"No passengers in booking data. Auto-recovered using saved passenger: {saved_pax.name}", ref)
-                else:
-                    db.close()
-                    err_msg = "❌ Booking mein koi passenger nahi mila! Pehle passenger details add karein."
-                    if lang == "hi":
-                        err_msg = "❌ बुकिंग में कोई यात्री नहीं मिला! पहले यात्री विवरण जोड़ें।"
-                    elif lang == "en":
-                        err_msg = "❌ No passenger found in booking! Please add passenger details first."
-                    await send_telegram_message(err_msg, chat_id=chat_id)
-                    return
-            except Exception:
-                db.close()
-                await send_telegram_message("❌ No passenger details found. Please start the booking again.", chat_id=chat_id)
-                return
-
-        # Parse date
-        date_str = data.get("journey_date", "")
-        try:
-            if "/" in date_str:
-                parts = [int(x) for x in date_str.split("/")]
-                if len(parts) == 3:
-                    j_date = date(parts[2], parts[1], parts[0])
-                else:
-                    j_date = date.today() + timedelta(days=7)
-            else:
-                j_date = date.today() + timedelta(days=7)
-        except Exception:
-            j_date = date.today() + timedelta(days=7)
-
-        contact_mobile = data.get("contact_mobile") or data.get("mobile") or data.get("phone") or getattr(settings, "DEFAULT_CONTACT_MOBILE", "9876543210")
-
-        booking = Booking(
-            booking_ref=ref,
-            from_station=data.get("from_station", "NDLS"),
-            to_station=data.get("to_station", "BPL"),
-            boarding_station=data.get("from_station", "NDLS"),
-            journey_date=j_date,
-            journey_class=data.get("journey_class", "3A"),
-            quota="GN",
-            train_number=data.get("train_number") or "",
-            train_name=data.get("train_name") or "Auto-Selected Train",
-            passenger_count=len(data.get("passengers", [])),
-            contact_mobile=contact_mobile,
-            status="INITIATED",
-            payment_status="PENDING"
-        )
-        db.add(booking)
-        db.commit()
-        db.refresh(booking)
-
-        from app.database.models import BookingPassenger
-        for p in data.get("passengers", []):
-            auto_save_passenger_to_db(p)
-            bp = BookingPassenger(
-                booking_id=booking.id,
-                name=p["name"],
-                age=p.get("age", 30),
-                gender=p.get("gender", "M"),
-                berth_preference=p.get("berth_preference", "NONE"),
-                status="CNF"
-            )
-            db.add(bp)
-        db.commit()
-
-        session_state = get_or_create_session(ref)
-        session_state.set_stage("PREPARING", "INITIATED")
-
-        b_id = int(booking.id)
-        db.close()
-
-        # Start automation task — always Live Official IRCTC
-        async def runner():
-            db_inner = SessionLocal()
-            try:
-                await run_real_irctc_booking_flow(db_inner, b_id, session_state)
-            finally:
-                db_inner.close()
-
-        asyncio.create_task(runner())
-
-        if lang == "hi":
-            exec_msg = (
-                f"🚀 *IRCTC बुकिंग शुरू कर दी गई है!*\nसंदर्भ संख्या (Ref): `{ref}`\n"
-                f"IRCTC ब्राउज़र ऑटोमेशन प्रारंभ हो गया है। CAPTCHA आते ही आपको फोटो भेजी जाएगी।"
-            )
-        elif lang == "en":
-            exec_msg = (
-                f"🚀 *IRCTC Booking Initiated!*\nRef: `{ref}`\n"
-                f"Browser automation has started. A photo will be sent as soon as CAPTCHA appears."
-            )
-        else:
-            exec_msg = (
-                f"🚀 *IRCTC Booking Initiated!*\nRef: `{ref}`\n"
-                f"Browser automation shuru ho gayi hai. CAPTCHA aate hi main photo bhejunga."
-            )
-        await send_telegram_message(exec_msg, chat_id=chat_id)
+        await live_booking.handle(chat_id, callback="cmd_book")
 
 telegram_bot_service = TelegramBotService.get_instance()

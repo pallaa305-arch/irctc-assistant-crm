@@ -118,6 +118,8 @@ class AgentRouter:
             pax_count = int(pax_match.group(1)) if pax_match else 1
 
             fare_res = await tool_calculate_fare(train_no, travel_cls, pax_count)
+            if not fare_res.get("success"):
+                return AgentResponse(text=fare_res.get("error", "Fare enquiry unavailable."), action_type="ERROR")
             text = (
                 f"💰 *Official IRCTC Fare Breakdown*\n"
                 f"🚆 Train #{train_no} | Class: {travel_cls} | Passengers: {pax_count}\n\n"
@@ -145,6 +147,7 @@ class AgentRouter:
                     f"🏁 ETA Destination: {res.get('eta_destination')}"
                 )
                 return AgentResponse(text=text, action_type="LIVE_STATUS", payload=res)
+            return AgentResponse(text=res.get("error", "Live status unavailable."), action_type="ERROR")
 
         # D. Check for Train Search / Booking Intent
         # Patterns: "Delhi se Jammu", "Delhi to Mumbai", "search train", "train check"

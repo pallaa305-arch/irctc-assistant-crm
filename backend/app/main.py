@@ -43,7 +43,7 @@ async def lifespan(app: FastAPI):
     # Startup: Initialize Database tables, Excel file, and Telegram Bot if configured
     init_db()
     init_excel_workbook()
-    if settings.TELEGRAM_BOT_TOKEN:
+    if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_ENABLED:
         telegram_bot_service.start()
     yield
     # Shutdown: Stop Telegram Bot and clean up browser context

@@ -144,14 +144,14 @@ class PDFService:
         # 1. Header Banner
         elements.append(Paragraph("INDIAN RAILWAY CATERING AND TOURISM CORPORATION LTD.", self.title_style))
         elements.append(Spacer(1, 2))
-        elements.append(Paragraph("ELECTRONIC RESERVATION SLIP (ERS) - VALID FOR TRAVEL", self.subtitle_style))
+        elements.append(Paragraph("BOOKING RECORD - DOWNLOAD OFFICIAL ERS FROM IRCTC", self.subtitle_style))
         elements.append(Spacer(1, 8))
         elements.append(HRFlowable(width="100%", thickness=1.5, color=self.navy, spaceBefore=2, spaceAfter=8))
 
         # 2. PNR & Main Booking Summary Box
-        pnr = booking_data.get("pnr") or "2451234567"
-        train_no = booking_data.get("train_number") or "12952"
-        train_name = booking_data.get("train_name") or "NEW DELHI TEJAS RAJDHANI"
+        pnr = booking_data.get("pnr") or "Not confirmed"
+        train_no = booking_data.get("train_number") or "Not captured"
+        train_name = booking_data.get("train_name") or "Not captured"
         quota = booking_data.get("quota") or "GENERAL (GN)"
         j_class = booking_data.get("journey_class") or "3A"
         booking_ref = booking_data.get("booking_ref") or f"BK-{datetime.now().strftime('%Y%m%d')}-001"
@@ -192,11 +192,11 @@ class PDFService:
         elements.append(Spacer(1, 10))
 
         # 3. Journey Route Details
-        from_stn = booking_data.get("from_station") or "NDLS"
-        to_stn = booking_data.get("to_station") or "MMCT"
+        from_stn = booking_data.get("from_station") or "Not captured"
+        to_stn = booking_data.get("to_station") or "Not captured"
         j_date = booking_data.get("journey_date") or datetime.now().strftime("%d/%m/%Y")
-        dep_time = booking_data.get("departure_time") or "16:55"
-        arr_time = booking_data.get("arrival_time") or "08:35"
+        dep_time = booking_data.get("departure_time") or "Not captured"
+        arr_time = booking_data.get("arrival_time") or "Not captured"
 
         route_header = [
             [Paragraph("<b>JOURNEY DETAILS</b>", self.header_style), "", "", ""]
@@ -221,7 +221,7 @@ class PDFService:
                 Paragraph("<b>BOARDING DATE:</b>", self.cell_normal),
                 Paragraph(f"<b>{j_date}</b>", self.cell_bold),
                 Paragraph("<b>DISTANCE:</b>", self.cell_normal),
-                Paragraph("1386 KM", self.cell_normal)
+                Paragraph(str(booking_data.get("distance") or "Not captured"), self.cell_normal)
             ],
             [
                 Paragraph("<b>SCHEDULED DEP:</b>", self.cell_normal),
@@ -261,21 +261,19 @@ class PDFService:
             ]
         ]
 
-        if not passengers:
-            passengers = [{"name": "Deepak", "age": 28, "gender": "M", "allocated_seat": "B4, 45 [MB]", "status": "CNF"}]
 
         for idx, p in enumerate(passengers, 1):
             p_name = p.get("name", "Passenger")
             p_age = str(p.get("age", 30))
             p_gen = p.get("gender", "M")
-            seat = p.get("allocated_seat") or f"B4, {40 + idx} [MB]"
-            c_status = p.get("status") or "CNF"
+            seat = p.get("allocated_seat") or "Not captured"
+            c_status = p.get("status") or "Not captured"
             pax_table_data.append([
                 Paragraph(str(idx), self.cell_normal),
                 Paragraph(f"<b>{p_name}</b>", self.cell_normal),
                 Paragraph(p_age, self.cell_center),
                 Paragraph(p_gen, self.cell_center),
-                Paragraph("CNF", self.cell_status_cnf),
+                Paragraph(c_status, self.cell_status_cnf),
                 Paragraph(c_status, self.cell_status_cnf),
                 Paragraph(f"<b>{seat}</b>", self.cell_center)
             ])
@@ -294,9 +292,9 @@ class PDFService:
         elements.append(Spacer(1, 10))
 
         # 5. Fare Details
-        fare_base = float(booking_data.get("fare") or 2150.0)
-        convenience_fee = 35.40
-        insurance = 0.45 * len(passengers)
+        fare_base = float(booking_data.get("fare") or 0.0)
+        convenience_fee = 0.0  # Already included in the captured IRCTC total
+        insurance = 0.0  # Never invent optional charges
         total_fare = fare_base + convenience_fee + insurance
 
         elements.append(Table([[Paragraph("<b>FARE BREAKUP & PAYMENT DETAILS</b>", self.header_style), ""]], colWidths=[520, 0], style=[
@@ -307,11 +305,11 @@ class PDFService:
         ]))
 
         fare_table_data = [
-            [Paragraph("Ticket Base Fare:", self.cell_normal), Paragraph(f"Rs. {fare_base:,.2f}", self.cell_bold)],
-            [Paragraph("IRCTC Convenience Fee (Incl. of GST):", self.cell_normal), Paragraph(f"Rs. {convenience_fee:,.2f}", self.cell_normal)],
-            [Paragraph("Travel Insurance (Optional):", self.cell_normal), Paragraph(f"Rs. {insurance:,.2f}", self.cell_normal)],
+            [Paragraph("Captured IRCTC total:", self.cell_normal), Paragraph(f"Rs. {fare_base:,.2f}", self.cell_bold)],
+            [Paragraph("Additional convenience fee:", self.cell_normal), Paragraph(f"Rs. {convenience_fee:,.2f}", self.cell_normal)],
+            [Paragraph("Additional insurance charged:", self.cell_normal), Paragraph(f"Rs. {insurance:,.2f}", self.cell_normal)],
             [Paragraph("<b>Total Fare (Rupees):</b>", self.cell_bold), Paragraph(f"<b>Rs. {total_fare:,.2f}</b>", self.cell_bold)],
-            [Paragraph("Payment Mode / Status:", self.cell_normal), Paragraph("<font color='#15803D'><b>PAID (Online / UPI Verified)</b></font>", self.cell_bold)]
+            [Paragraph("Payment Mode / Status:", self.cell_normal), Paragraph("<font color='#15803D'><b>See IRCTC payment / booking status</b></font>", self.cell_bold)]
         ]
         t_fare = Table(fare_table_data, colWidths=[360, 160])
         t_fare.setStyle(TableStyle([
@@ -330,8 +328,8 @@ class PDFService:
         instructions = (
             "<b>IMPORTANT PASSENGER INSTRUCTIONS:</b><br/>"
             "1. One of the passengers must carry an original government-issued photo ID (Aadhaar, Voter ID, Driving License, Passport, PAN Card) during travel.<br/>"
-            "2. ERS ticket along with original ID is valid for travel without requiring a physical printout.<br/>"
-            "3. Charting status can be verified anytime using the Telegram Bot by entering PNR or clicking 'PNR Status Check'.<br/>"
+            "2. Download the official ERS and check travel instructions on IRCTC.<br/>"
+            "3. Check current PNR and charting status on Indian Railways / IRCTC.<br/>"
             "4. For customer assistance, call 139 (Railway Enquiry) or use our 24/7 AI Railway Assistant bot."
         )
         elements.append(Paragraph(instructions, self.note_style))
@@ -393,8 +391,8 @@ class PDFService:
 
         head_table = Table([
             [
-                Paragraph("<b>IRCTC ASSISTANT & TRAVEL SERVICES</b><br/><font size=8 color='#64748B'>Official Fast-Track Ticketing & Travel Agency</font>", inv_title),
-                Paragraph("<b>TAX INVOICE / BILL</b><br/><font size=8 color='#15803D'><b>ORIGINAL FOR RECIPIENT</b></font>", inv_badge)
+                Paragraph("<b>PERSONAL BOOKING ASSISTANT</b><br/><font size=8 color='#64748B'>Local booking record</font>", inv_title),
+                Paragraph("<b>EXPENSE SUMMARY</b><br/><font size=8>Not a supplier tax invoice</font>", inv_badge)
             ]
         ], colWidths=[320, 200])
         head_table.setStyle(TableStyle([
@@ -408,20 +406,19 @@ class PDFService:
         ref = booking_data.get("booking_ref") or f"BK-{datetime.now().strftime('%Y%m%d')}-001"
         inv_no = f"INV-{ref.replace('BK-', '')}"
         inv_date = datetime.now().strftime("%d/%m/%Y")
-        lead_pax = passengers[0].get("name", "Deepak") if passengers else "Deepak"
+        lead_pax = passengers[0].get("name", "Not captured") if passengers else "Not captured"
 
         meta_data = [
             [
-                Paragraph("<b>SUPPLIER DETAILS:</b><br/>"
-                          "<b>IRCTC Assistant Agency CRM</b><br/>"
-                          "GSTIN: 07AAACI1234F1Z5<br/>"
-                          "New Delhi, India - 110001<br/>"
-                          "Support: support@irctc-assistant.in", self.cell_normal),
+                Paragraph("<b>RECORD SOURCE:</b><br/>"
+                          "Personal booking database.<br/>"
+                          "Download official tickets and invoices from IRCTC.<br/>"
+                          "No agency charges have been added.", self.cell_normal),
                 Paragraph(f"<b>INVOICE DETAILS:</b><br/>"
                           f"<b>Invoice No:</b> {inv_no}<br/>"
                           f"<b>Date of Issue:</b> {inv_date}<br/>"
                           f"<b>Booking Ref:</b> {ref}<br/>"
-                          f"<b>PNR Number:</b> {booking_data.get('pnr', '2451234567')}", self.cell_normal)
+                          f"<b>PNR Number:</b> {booking_data.get('pnr') or 'Not confirmed'}", self.cell_normal)
             ],
             [
                 Paragraph(f"<b>BILLED TO (CUSTOMER):</b><br/>"
@@ -430,8 +427,8 @@ class PDFService:
                           f"<b>Journey Date:</b> {booking_data.get('journey_date', inv_date)}", self.cell_normal),
                 Paragraph("<b>PAYMENT INFORMATION:</b><br/>"
                           "<b>Payment Method:</b> Online UPI / Gateway<br/>"
-                          "<b>Payment Status:</b> <font color='#15803D'><b>PAID (100% Cleared)</b></font><br/>"
-                          f"<b>Transaction Ref:</b> TXN-{ref}", self.cell_normal)
+                          f"<b>Payment Status:</b> {booking_data.get('payment_status') or 'See IRCTC booking history'}<br/>"
+                          f"<b>Transaction Ref:</b> {booking_data.get('transaction_id') or 'Not captured'}", self.cell_normal)
             ]
         ]
 
@@ -449,9 +446,9 @@ class PDFService:
         elements.append(Spacer(1, 12))
 
         # 3. Itemized Billing Items Table
-        fare_base = float(booking_data.get("fare") or 2150.0)
+        fare_base = float(booking_data.get("fare") or 0.0)
         pax_count = len(passengers) if passengers else 1
-        agency_fee = 50.00
+        agency_fee = 0.0
         gst_fee = round((agency_fee * 0.18), 2)
         total_bill = fare_base + agency_fee + gst_fee
 
@@ -466,7 +463,7 @@ class PDFService:
             ],
             [
                 Paragraph("1", self.cell_center),
-                Paragraph(f"<b>Indian Railways Train Reservation</b><br/><font size=7 color='#64748B'>{booking_data.get('train_number', '12952')} {booking_data.get('train_name', 'Rajdhani')} ({booking_data.get('journey_class', '3A')})</font>", self.cell_normal),
+                Paragraph(f"<b>Indian Railways Train Reservation</b><br/><font size=7 color='#64748B'>{booking_data.get('train_number') or 'Not captured'} {booking_data.get('train_name') or 'Not captured'} ({booking_data.get('journey_class', '3A')})</font>", self.cell_normal),
                 Paragraph("996411", self.cell_center),
                 Paragraph(str(pax_count), self.cell_center),
                 Paragraph(f"{fare_base:,.2f}", self.cell_normal),
@@ -528,11 +525,11 @@ class PDFService:
         sign_table = Table([
             [
                 Paragraph("<b>Terms & Conditions:</b><br/>"
-                          "1. This is a computer-generated invoice and does not require a physical signature.<br/>"
+                          "1. This is a local expense summary. Get the supplier invoice from IRCTC.<br/>"
                           "2. Railway cancellations and refunds are subject to IRCTC refund rules.", self.note_style),
-                Paragraph("<b>For IRCTC Assistant Agency</b><br/><br/>"
-                          "<b>Authorized Signatory</b><br/>"
-                          "<font size=7 color='#15803D'>[Digitally Signed & Verified]</font>", ParagraphStyle('SignRight', parent=self.cell_normal, alignment=TA_RIGHT))
+                Paragraph("<b>Personal booking record</b><br/><br/>"
+                          "<b>Generated by local assistant</b><br/>"
+                          "<font size=7>Refer to official IRCTC records</font>", ParagraphStyle('SignRight', parent=self.cell_normal, alignment=TA_RIGHT))
             ]
         ], colWidths=[340, 180])
         elements.append(sign_table)

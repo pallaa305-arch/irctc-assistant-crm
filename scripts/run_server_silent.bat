@@ -1,4 +1,4 @@
 @echo off
 cd /d "%~dp0\..\backend"
-set PATH=C:\Users\Depk\AppData\Local\Programs\Python\Python314;C:\Users\Depk\AppData\Local\Programs\Python\Python314\Scripts;%PATH%
+if exist "%~dp0\..\.venv\Scripts\activate.bat" call "%~dp0\..\.venv\Scripts\activate.bat"
 python -m uvicorn app.main:app --host 127.0.0.1 --port 8000

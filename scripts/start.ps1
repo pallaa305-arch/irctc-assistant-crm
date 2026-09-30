@@ -1,6 +1,10 @@
 # PowerShell Launcher for IRCTC Assistant
 $scriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $projectRoot = Split-Path -Parent $scriptDir
+$irctcPython = Join-Path $projectRoot '.venv\Scripts\python.exe'
+if (-not (Test-Path -LiteralPath $irctcPython)) {
+    $irctcPython = (Get-Command python -ErrorAction Stop).Source
+}
 
 Write-Host "Starting Personal IRCTC Booking Assistant + CRM..." -ForegroundColor Green
 
@@ -12,7 +16,7 @@ if ($portProcess) {
 }
 
 # Start Unified FastAPI + UI Server
-Start-Process powershell -ArgumentList "-NoExit", "-Command", "Set-Location '$projectRoot\backend'; python -m uvicorn app.main:app --host 127.0.0.1 --port 8000"
+Start-Process -FilePath $irctcPython -ArgumentList '-m', 'uvicorn', 'app.main:app', '--host', '127.0.0.1', '--port', '8000' -WorkingDirectory "$projectRoot\backend" -WindowStyle Hidden
 
 Start-Sleep -Seconds 2
 

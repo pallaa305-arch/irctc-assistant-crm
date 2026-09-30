@@ -14,6 +14,7 @@ from app.automation.mock_flow import run_mock_booking_flow
 from app.crm.crm_service import log_event
 from app.services.pdf_service import pdf_service
 from app.config import settings
+from app.automation.browser_manager import browser_manager
 
 router = APIRouter(prefix="/api/bookings", tags=["Bookings"])
 
@@ -49,6 +50,7 @@ async def _run_flow_wrapper(flow_fn, booking_id: int, session_state):
         await flow_fn(db, booking_id, session_state)
     finally:
         db.close()
+        browser_manager.release(session_state.booking_ref)
 
 @router.post("/start")
 async def start_booking(
@@ -87,6 +89,11 @@ async def start_booking(
                 status_code=409,
                 detail=f"Duplicate passenger warning: Passenger '{matched_passenger}' already has a booking ({duplicate_found.booking_ref}) for {payload.from_station} ➔ {payload.to_station} on {payload.journey_date}."
             )
+
+    # Reserve the one browser before creating/dispatching a live booking.
+    is_demo = bool(payload.demo_mode or settings.DEMO_MODE)
+    if not is_demo and browser_manager.owner:
+        raise HTTPException(status_code=409, detail="IRCTC browser is reserved by an active booking. Finish or cancel it first.")
 
     # 2. Create internal reference & DB record
     ref = f"BK-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
@@ -133,6 +140,8 @@ async def start_booking(
     # 5. Dispatch Automation (Mock for Demo Mode / Tests, Real IRCTC for Live Bookings)
     is_demo = bool(payload.demo_mode or settings.DEMO_MODE)
     flow_fn = run_mock_booking_flow if is_demo else run_real_irctc_booking_flow
+    if not is_demo:
+        browser_manager.claim(ref)
     asyncio.create_task(_run_flow_wrapper(flow_fn, booking.id, session_state))
 
     return {
@@ -353,6 +362,8 @@ async def handle_user_action(booking_ref: str, payload: ActionRequest, db: Sessi
     session_state = get_session(actual_ref)
     if not session_state:
         raise HTTPException(status_code=404, detail="Active booking session not found.")
+    if session_state.captured_data.get("live_wizard"):
+        raise HTTPException(status_code=409, detail="Use the latest Telegram booking prompt to control this live session.")
 
     if payload.action == "continue":
         if payload.input_value:
@@ -389,8 +400,8 @@ async def download_ticket_pdf(booking_id: int, db: Session = Depends(get_db)):
         raise HTTPException(status_code=404, detail="Booking not found")
 
     b_dict = {
-        "pnr": booking.pnr or "2451234567",
-        "train_number": booking.train_number or "12952",
+        "pnr": booking.pnr or "Not confirmed",
+        "train_number": booking.train_number or "Not captured",
         "train_name": booking.train_name or "Rajdhani Express",
         "from_station": booking.from_station,
         "to_station": booking.to_station,
@@ -406,8 +417,8 @@ async def download_ticket_pdf(booking_id: int, db: Session = Depends(get_db)):
             "name": p.name,
             "age": p.age,
             "gender": p.gender,
-            "allocated_seat": p.allocated_seat or "B4-45 [MB]",
-            "status": p.status or "CNF"
+            "allocated_seat": p.allocated_seat or "Not captured",
+            "status": p.status or "Not captured"
         }
         for p in booking.passengers
     ]
@@ -421,14 +432,14 @@ async def download_ticket_pdf(booking_id: int, db: Session = Depends(get_db)):
 
 @router.get("/{booking_id}/invoice-pdf")
 async def download_invoice_pdf(booking_id: int, db: Session = Depends(get_db)):
-    """Generates and downloads the Travel Agency Tax Invoice & Booking Bill PDF."""
+    """Generates and downloads the Travel Agency Booking expense summary PDF."""
     booking = db.query(Booking).filter(Booking.id == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
     b_dict = {
-        "pnr": booking.pnr or "2451234567",
-        "train_number": booking.train_number or "12952",
+        "pnr": booking.pnr or "Not confirmed",
+        "train_number": booking.train_number or "Not captured",
         "train_name": booking.train_name or "Rajdhani Express",
         "from_station": booking.from_station,
         "to_station": booking.to_station,
@@ -444,8 +455,8 @@ async def download_invoice_pdf(booking_id: int, db: Session = Depends(get_db)):
             "name": p.name,
             "age": p.age,
             "gender": p.gender,
-            "allocated_seat": p.allocated_seat or "B4-45 [MB]",
-            "status": p.status or "CNF"
+            "allocated_seat": p.allocated_seat or "Not captured",
+            "status": p.status or "Not captured"
         }
         for p in booking.passengers
     ]

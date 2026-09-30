@@ -31,8 +31,8 @@ class Settings(BaseSettings):
     EXCEL_FILE_PATH: str = str(BOOKINGS_DIR / "bookings.xlsx")
     
     # Telegram Bot config
-    TELEGRAM_BOT_TOKEN: str = "8620217080:AAFUlVeFp-IqLvWmH5u4mI-Em3_9pZptTP4"
-    TELEGRAM_CHAT_ID: str = "7875481582"
+    TELEGRAM_BOT_TOKEN: str = ""
+    TELEGRAM_CHAT_ID: str = ""
     TELEGRAM_ENABLED: bool = True
     
     # WhatsApp API config (Official Cloud API / Provider)
@@ -45,8 +45,8 @@ class Settings(BaseSettings):
     BROWSER_HEADLESS: bool = False  # Visible browser by default as requested
     BROWSER_SLOW_MO: int = 150      # Slower pace for visual inspection
     DEMO_MODE: bool = False         # Live Official IRCTC Mode by default
-    IRCTC_USERNAME: str = "randisumandalladeepak"
-    IRCTC_PASSWORD: str = "Gandusuman@7323"
+    IRCTC_USERNAME: str = ""
+    IRCTC_PASSWORD: str = ""
     DEFAULT_CONTACT_MOBILE: str = "9876543210"
     
     # Proxy Settings (for cloud deployments to bypass Akamai geo-blocking)

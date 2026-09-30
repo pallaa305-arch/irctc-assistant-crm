@@ -4,7 +4,7 @@ echo  Starting Personal IRCTC Booking Assistant + CRM
 echo =========================================================
 cd /d "%~dp0\.."
 
-set PATH=C:\Users\Depk\AppData\Local\Programs\Python\Python314;C:\Users\Depk\AppData\Local\Programs\Python\Python314\Scripts;C:\Program Files\nodejs;%PATH%
+if exist ".venv\Scripts\activate.bat" call ".venv\Scripts\activate.bat"
 
 echo [1/3] Checking and clearing port 8000...
 for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":8000" ^| findstr "LISTENING"') do (

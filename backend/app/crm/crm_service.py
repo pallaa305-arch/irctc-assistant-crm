@@ -169,8 +169,8 @@ async def finalize_successful_booking(db: Session, booking_id: int):
             # Generate and Send ERS Train Ticket PDF and Tax Invoice/Bill PDF
             try:
                 b_dict = {
-                    "pnr": booking.pnr or "2451234567",
-                    "train_number": booking.train_number or "12952",
+                    "pnr": booking.pnr or "Not confirmed",
+                    "train_number": booking.train_number or "Not captured",
                     "train_name": booking.train_name or "Express",
                     "from_station": booking.from_station,
                     "to_station": booking.to_station,
@@ -186,8 +186,8 @@ async def finalize_successful_booking(db: Session, booking_id: int):
                         "name": p.name,
                         "age": p.age,
                         "gender": p.gender,
-                        "allocated_seat": p.allocated_seat or "B4-45 [MB]",
-                        "status": p.status or "CNF"
+                        "allocated_seat": p.allocated_seat or "Not captured",
+                        "status": p.status or "Not captured"
                     }
                     for p in passengers
                 ]
@@ -198,7 +198,7 @@ async def finalize_successful_booking(db: Session, booking_id: int):
                 await send_telegram_document(
                     document_bytes=ticket_pdf_bytes,
                     filename=f"IRCTC_Ticket_{pnr_display}.pdf",
-                    caption=f"🎫 *Official IRCTC Train Ticket (ERS Slip) PDF*\nAttached for your journey. Have a safe & comfortable trip! 🚆"
+                    caption=f"🎫 *Booking record PDF (download official ERS from IRCTC)*\nAttached for your journey. Have a safe & comfortable trip! 🚆"
                 )
 
                 # 2. Send Travel Agency Tax Invoice / Bill PDF
@@ -206,7 +206,7 @@ async def finalize_successful_booking(db: Session, booking_id: int):
                 await send_telegram_document(
                     document_bytes=invoice_pdf_bytes,
                     filename=f"Invoice_Bill_{booking.booking_ref}.pdf",
-                    caption=f"🧾 *Tax Invoice & Booking Bill PDF*\nAttached for your records and expense claims. Thank you! 🙏"
+                    caption=f"🧾 *Booking expense summary PDF*\nAttached for your records and expense claims. Thank you! 🙏"
                 )
                 log_event(db, "INFO", "NOTIFY", f"Ticket PDF & Invoice Bill PDF dispatched to Telegram", booking.booking_ref)
             except Exception as pdf_err:

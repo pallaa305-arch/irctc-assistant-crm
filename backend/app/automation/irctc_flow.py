@@ -776,7 +776,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         db.commit()
         log_event(db, "INFO", "AUTOMATION", "Launching visible browser session...", ref)
 
-        page = await browser_manager.get_page()
+        page = await browser_manager.get_page(owner=ref)
 
         # ══════════════════════════════════════════════════
         # Step 2: Open IRCTC
@@ -1216,23 +1216,18 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 # Check for actual bookable slots — EXCLUDE "NOT AVAILABLE"
                 slot_found = False
                 try:
-                    slot_found = await page.evaluate('''(cardSelector) => {
-                        const cards = document.querySelectorAll('app-train-avl-enq');
-                        for (const card of cards) {
-                            // Find availability status divs
-                            const slots = card.querySelectorAll('div.pre-avl, td.pre-avl, div[class*="avl"]');
-                            for (const slot of slots) {
-                                const text = (slot.innerText || '').trim().toUpperCase();
-                                // Must contain availability info but NOT be "NOT AVAILABLE" or "REGRET"
-                                if ((text.includes('AVAILABLE') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL') || text.match(/AVL-\\d+/)) &&
-                                    !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL')) {
-                                    slot.click();
-                                    return true;
-                                }
+                    slot_found = await target_train_card.evaluate('''(card) => {
+                        const slots = card.querySelectorAll('div.pre-avl, td.pre-avl, div[class*="avl"], td');
+                        for (const slot of slots) {
+                            const text = (slot.innerText || '').trim().toUpperCase();
+                            if ((text.includes('AVAILABLE') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL') || /AVL-\d+/.test(text)) &&
+                                !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL')) {
+                                slot.click();
+                                return true;
                             }
                         }
                         return false;
-                    }''', None)
+                    }''')
                 except Exception:
                     pass
 
@@ -2420,9 +2415,17 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         # Scan for PNR in DOM
         try:
             page_content = await page.content()
+            user_mob = "".join(c for c in (booking.contact_mobile or "") if c.isdigit())
             if not captured_pnr:
-                pnr_match = re.search(r'\b[2-9]\d{9}\b', page_content)
-                captured_pnr = pnr_match.group(0) if pnr_match else None
+                pnr_label_match = re.search(r'(?:PNR|pnr)[\s\:\.\#-]*([2-9]\d{9})', page_content)
+                if pnr_label_match and pnr_label_match.group(1) != user_mob:
+                    captured_pnr = pnr_label_match.group(1)
+                else:
+                    all_matches = re.findall(r'\b[2-9]\d{9}\b', page_content)
+                    for m_cand in all_matches:
+                        if m_cand != user_mob and not m_cand.startswith("1000068"):
+                            captured_pnr = m_cand
+                            break
 
             txn_match = re.search(r'TXN\w+|Transaction\s*ID[\s:]+([\w]+)', page_content, re.IGNORECASE)
             captured_txn = txn_match.group(1) if (txn_match and txn_match.groups()) else None
