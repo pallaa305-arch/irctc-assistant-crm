@@ -1,5 +1,6 @@
 import os
 from pathlib import Path
+from typing import Optional
 from pydantic_settings import BaseSettings
 
 BASE_DIR = Path(__file__).resolve().parent.parent.parent
@@ -34,6 +35,8 @@ class Settings(BaseSettings):
     TELEGRAM_BOT_TOKEN: str = ""
     TELEGRAM_CHAT_ID: str = ""
     TELEGRAM_ENABLED: bool = True
+    TELEGRAM_API_BASE_URL: str = "https://api.telegram.org"
+    TELEGRAM_PROXY: Optional[str] = None
     
     # WhatsApp API config (Official Cloud API / Provider)
     WHATSAPP_API_KEY: str = ""

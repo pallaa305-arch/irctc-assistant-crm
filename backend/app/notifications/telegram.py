@@ -7,7 +7,9 @@ _telegram_client: Optional[httpx.AsyncClient] = None
 def get_telegram_client() -> httpx.AsyncClient:
     global _telegram_client
     if _telegram_client is None or _telegram_client.is_closed:
+        proxy_url = getattr(settings, 'TELEGRAM_PROXY', None) or settings.PROXY_SERVER or None
         _telegram_client = httpx.AsyncClient(
+            proxy=proxy_url,
             timeout=15.0,
             limits=httpx.Limits(max_keepalive_connections=20, max_connections=50)
         )
@@ -27,7 +29,7 @@ async def send_telegram_message_detailed(
     if not target_chat:
         return False, "Target chat ID is missing"
 
-    url = f"https://api.telegram.org/bot{token}/sendMessage"
+    url = f"{settings.TELEGRAM_API_BASE_URL.rstrip("/")}/bot{token}/sendMessage"
     payload = {
         "chat_id": target_chat,
         "text": text,
@@ -87,7 +89,7 @@ async def send_telegram_photo(
     if not token or not target_chat or not photo_bytes:
         return False
 
-    url = f"https://api.telegram.org/bot{token}/sendPhoto"
+    url = f"{settings.TELEGRAM_API_BASE_URL.rstrip("/")}/bot{token}/sendPhoto"
     data = {
         "chat_id": target_chat,
         "caption": caption,
@@ -133,7 +135,7 @@ async def send_telegram_document(
     if not token or not target_chat or not document_bytes:
         return False
 
-    url = f"https://api.telegram.org/bot{token}/sendDocument"
+    url = f"{settings.TELEGRAM_API_BASE_URL.rstrip("/")}/bot{token}/sendDocument"
     data = {
         "chat_id": target_chat,
         "caption": caption,
@@ -164,7 +166,7 @@ async def answer_callback_query(
     if not token or not callback_query_id:
         return False
 
-    url = f"https://api.telegram.org/bot{token}/answerCallbackQuery"
+    url = f"{settings.TELEGRAM_API_BASE_URL.rstrip("/")}/bot{token}/answerCallbackQuery"
     payload = {"callback_query_id": callback_query_id}
     if text:
         payload["text"] = text
