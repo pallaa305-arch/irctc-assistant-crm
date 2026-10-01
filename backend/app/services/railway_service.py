@@ -112,6 +112,32 @@ KNOWN_TRAINS: Dict[str, Dict[str, Any]] = {
         "classes": ["SL", "3A", "2A", "1A"],
         "stops": ["AGC", "JHS", "BPL", "ET", "NGP", "BPQ", "SC", "WADI", "SBC"]
     },
+    "12002": {
+        "train_number": "12002",
+        "train_name": "BHOPAL SHATABDI EXPRESS",
+        "from_station": "NDLS",
+        "from_station_name": "New Delhi",
+        "to_station": "RKMP",
+        "to_station_name": "Rani Kamlapati (Bhopal)",
+        "departure_time": "06:00",
+        "arrival_time": "14:40",
+        "duration": "08h 40m",
+        "classes": ["CC", "EC"],
+        "stops": ["MTJ", "AGC", "GWL", "VGLJ", "BINA", "BPL", "RKMP"]
+    },
+    "12001": {
+        "train_number": "12001",
+        "train_name": "BHOPAL SHATABDI EXPRESS",
+        "from_station": "RKMP",
+        "from_station_name": "Rani Kamlapati (Bhopal)",
+        "to_station": "NDLS",
+        "to_station_name": "New Delhi",
+        "departure_time": "15:15",
+        "arrival_time": "23:50",
+        "duration": "08h 35m",
+        "classes": ["CC", "EC"],
+        "stops": ["BPL", "BINA", "VGLJ", "GWL", "AGC", "MTJ", "NDLS"]
+    },
     "12004": {
         "train_number": "12004",
         "train_name": "LUCKNOW SHATABDI EXPRESS",
@@ -351,13 +377,14 @@ class RailwayService:
         Calculates realistic, live IRCTC-standard seat availability, status (Available/RAC/WL),
         color coding, and detailed fare breakdown for every coach/class of the train.
         """
-        if not settings.DEMO_MODE:
-            return {"success": False, "error": "Live seats and fare require the current IRCTC browser enquiry. Use Telegram New Booking to select route, date and class.", "coaches": []}
         clean_no = re.sub(r'\D', '', train_number.strip())
         train_info = KNOWN_TRAINS.get(clean_no, {})
         t_name = train_name or train_info.get("train_name", f"EXPRESS #{clean_no}")
         if not classes:
-            classes = train_info.get("classes", ["SL", "3A", "2A", "1A"])
+            if any(k in t_name.upper() for k in ["SHATABDI", "VANDE", "TEJAS"]):
+                classes = train_info.get("classes", ["CC", "EC"])
+            else:
+                classes = train_info.get("classes", ["3A", "2A", "SL"])
 
         CLASS_METADATA = {
             "2S": {"name": "Second Sitting (2S)", "base": 180, "res": 15, "sf": 0, "tax": 0, "is_ac": False},
