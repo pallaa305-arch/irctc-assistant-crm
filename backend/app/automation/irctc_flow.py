@@ -868,60 +868,31 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 except Exception:
                     pass
 
-                # 5. Click Search Button
-                search_selectors = [
-                    "button.train_Search:visible",
-                    "button.search_btn:visible",
-                    "button[type='submit']:has-text('Search'):visible",
-                    "button:has-text('Search'):visible",
-                    "button:has-text('SEARCH'):visible",
-                    "button.btnDefault:has-text('Search'):visible",
-                    "button[type='submit']:visible",
-                    ".train_Search:visible",
-                    ".search_btn:visible",
-                    "button.train_Search",
-                    "button.search_btn"
-                ]
+                # 5. Click Search Button (SINGLE CLEAN CLICK - prevent double submission error)
+                try:
+                    await page.keyboard.press("Escape")
+                    await asyncio.sleep(0.3)
+                except Exception:
+                    pass
 
-                clicked_search = await SmartBrowserActions.smart_click(
-                    page=page,
-                    selectors=search_selectors,
-                    text_keywords=["Search", "SEARCH", "Find Trains"],
-                    timeout_ms=4000,
-                    wait_after_sec=0.5
-                )
+                search_btn = page.locator("button.train_Search, button.search_btn, button[type='submit']:has-text('Search')").first
+                search_clicked = False
+                if await search_btn.count() > 0 and await search_btn.is_visible():
+                    await search_btn.scroll_into_view_if_needed()
+                    try:
+                        await search_btn.click(timeout=5000)
+                        search_clicked = True
+                    except Exception:
+                        pass
 
-                # Also trigger Angular's findTrains() directly via component reference
-                await page.evaluate('''() => {
-                    // Method 1: requestSubmit on form
-                    const form = document.querySelector('form');
-                    if (form) {
-                        try {
-                            if (typeof form.requestSubmit === 'function') {
-                                form.requestSubmit();
-                            }
-                        } catch (e) {}
-                    }
-
-                    // Method 2: Try invoking Angular's findTrains() via ng component ref
-                    try {
-                        const appRoot = document.querySelector('app-root') || document.querySelector('app-train-search');
-                        if (appRoot && appRoot.__ngContext__) {
-                            // Angular Ivy context
-                        }
-                    } catch(e) {}
-
-                    // Method 3: Click any submit-type button inside the search form
-                    try {
-                        const searchBtns = document.querySelectorAll("button.train_Search, button.search_btn, button[type='submit']");
-                        for (const btn of searchBtns) {
-                            if (btn.offsetParent !== null && !btn.disabled) {
-                                btn.click();
-                                break;
-                            }
-                        }
-                    } catch(e) {}
-                }''')
+                if not search_clicked:
+                    search_clicked = await SmartBrowserActions.smart_click(
+                        page=page,
+                        selectors=["button.train_Search:visible", "button.search_btn:visible", "button[type='submit']:visible"],
+                        text_keywords=["Search", "SEARCH", "Find Trains"],
+                        timeout_ms=5000,
+                        wait_after_sec=0.5
+                    )
 
                 log_event(db, "INFO", "AUTOMATION", f"Submitted search for {booking.from_station} to {booking.to_station} on {date_str} (attempt {search_attempt+1}).", ref)
 
@@ -932,7 +903,22 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     if "/train-list" in page.url or await page.locator("app-train-list, div.train-heading, div.form-group:has(.train-name), app-train-avl-enq").count() > 0:
                         search_success = True
                         break
-                    
+
+                    # If redirected to IRCTC error page, recover immediately
+                    if "/nget/error" in page.url.lower():
+                        log_event(db, "WARNING", "AUTOMATION", f"IRCTC redirected to error page during search (wait: {wait_sec}s). Attempting auto-recovery...", ref)
+                        try:
+                            err_btn = page.locator("button:has-text('Click here to login'), a:has-text('Click here to login'), button.btn-primary").first
+                            if await err_btn.count() > 0:
+                                await err_btn.click(timeout=3000)
+                                await asyncio.sleep(2)
+                            else:
+                                await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=30000)
+                                await asyncio.sleep(2)
+                        except Exception:
+                            await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=30000)
+                        break
+
                     # Accept any informational / disclaimer / popup dialogs that block navigation
                     try:
                         await page.evaluate('''() => {
@@ -947,16 +933,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         }''')
                     except Exception:
                         pass
-
-                    # At 6 seconds, if still on /train-search, re-trigger search button click
-                    if wait_sec == 6 and "/train-search" in page.url:
-                        try:
-                            await page.evaluate('''() => {
-                                const btn = document.querySelector('button.train_Search, button.search_btn, button[type="submit"]');
-                                if (btn) btn.click();
-                            }''')
-                        except Exception:
-                            pass
 
                 if search_success:
                     break
