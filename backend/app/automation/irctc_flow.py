@@ -463,30 +463,27 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
                 break
             await asyncio.sleep(0.5)
 
-        # Fallback if login modal still didn't open: user intervention
+        # Auto-retry if login modal still didn't open — reload page and try again
         if not (await user_input.count() > 0 and await user_input.is_visible()):
-            snap = await page.screenshot(full_page=False)
-            session_state.latest_screenshot_bytes = snap
+            log_event(db, "WARNING", "AUTOMATION", f"Login attempt {attempt}: Modal did not open. Auto-retrying by reloading page...", ref)
             try:
-                (DATA_DIR / "latest_captcha.png").write_bytes(snap)
+                await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=30000)
+                await asyncio.sleep(2)
+                await dismiss_overlays(page)
+                # Re-attempt clicking LOGIN button
+                await SmartBrowserActions.smart_click(
+                    page=page,
+                    selectors=[
+                        "a.loginText", "a.search_btn.loginText",
+                        "a:has-text('LOGIN / REGISTER')", "a:has-text('LOGIN')",
+                        "button:has-text('LOGIN / REGISTER')", "button:has-text('LOGIN')"
+                    ],
+                    text_keywords=["LOGIN / REGISTER", "LOGIN"],
+                    wait_after_sec=2.0
+                )
+                await asyncio.sleep(1.5)
             except Exception:
                 pass
-            login_prompt = "IRCTC Login modal open nahi hua. Kripya browser window me 'LOGIN' par click karein."
-            session_state.pause_for_user(login_prompt, is_payment=False, input_type="CONFIRMATION", screenshot_bytes=snap)
-            log_event(db, "WARNING", "AUTOMATION", f"Login attempt {attempt}: Modal did not open automatically. Requesting manual confirmation.", ref)
-            if settings.TELEGRAM_ENABLED and snap:
-                t_keyboard = {
-                    "inline_keyboard": [
-                        [{"text": "✅ Login Modal Open Ho Gaya (Continue)", "callback_data": "action_continue"}],
-                        [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
-                    ]
-                }
-                await send_telegram_photo(
-                    photo_bytes=snap,
-                    caption=f"⚠️ *IRCTC Login Prompt* (Ref: `{ref}`)\n\nBrowser window me 'LOGIN / REGISTER' button par click karein, phir neeche 'Continue' dabayein.",
-                    reply_markup=t_keyboard
-                )
-            await _wait_for_user_or_cancel(session_state, timeout_seconds=60)
             user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
             pass_input = page.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
 
@@ -554,65 +551,42 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
                         return True
                     await asyncio.sleep(1)
 
-                # If still not logged in, request manual confirmation / Telegram / UI pause
+                # If still not logged in, auto-retry captcha (refresh + re-solve)
                 if not await check_logged_in_state(page):
-                    session_state.set_stage("WAITING_MANUAL")
-                    login_prompt = f"IRCTC Login: Credentials auto-filled. CAPTCHA: '{candidate_text}'. Please confirm or enter captcha."
-                    session_state.pause_for_user(login_prompt, is_payment=False, input_type="CAPTCHA", screenshot_bytes=cap_bytes, suggested_value=candidate_text)
-                    if booking:
-                        booking.status = "WAITING_MANUAL"
-                        db.commit()
-                    log_event(db, "WARNING", "AUTOMATION", login_prompt, ref)
-
-                    if settings.TELEGRAM_ENABLED and cap_bytes:
-                        t_keyboard = {
-                            "inline_keyboard": [
-                                [{"text": f"⚡ Confirm '{candidate_text}'", "callback_data": f"action_captcha_{candidate_text}"}],
-                                [{"text": "✅ Login Ho Gaya (Continue)", "callback_data": "action_continue"}],
-                                [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
-                            ]
-                        }
-                        cap_caption = (
-                            f"🔐 *IRCTC Login Required* (Ref: `{ref}`)\n\n"
-                            f"ID (`{settings.IRCTC_USERNAME}`) auto-filled.\n"
-                            f"⚡ *Auto-Detected CAPTCHA:* `{candidate_text}`\n"
-                            f"👉 Sahi hai to direct *'Confirm'* dabayein ya 'OK' reply karein, warna corrected text type karein:"
-                        )
-                        await send_telegram_photo(photo_bytes=cap_bytes, caption=cap_caption, reply_markup=t_keyboard)
-
-                    result = await _wait_for_user_or_cancel(session_state, timeout_seconds=300)
-                    
-                    if result == "cancel":
-                        if booking:
-                            booking.status = "CANCELLED"
-                            db.commit()
-                        return False
-
-                    if result == "input" and session_state.user_input_value and await cap_input.count() > 0:
-                        try:
-                            await cap_input.fill(session_state.user_input_value.strip())
-                            if await sign_in_btn.count() > 0:
-                                await sign_in_btn.click(timeout=3000, force=True)
-                                await asyncio.sleep(2.5)
-                        except Exception:
-                            pass
-
-                    # Check login after user action
-                    for _ in range(10):
-                        if await check_logged_in_state(page):
-                            log_event(db, "INFO", "AUTOMATION", "Login successfully confirmed! Session authenticated.", ref)
-                            return True
-                        await asyncio.sleep(1)
-                    
-                    # If still not logged in, try refreshing captcha for next attempt
-                    log_event(db, "WARNING", "AUTOMATION", f"Login attempt {attempt} failed. Retrying...", ref)
+                    log_event(db, "WARNING", "AUTOMATION", f"Login attempt {attempt}: Auto-captcha '{candidate_text}' did not work. Refreshing captcha for retry...", ref)
+                    # Refresh captcha image
                     try:
-                        refresh_btn = page.locator("app-captcha .refresh-btn, app-captcha a, .captcha-refresh, img.captcha-img").first
+                        refresh_btn = page.locator("app-captcha .refresh-btn, app-captcha a, .captcha-refresh").first
                         if await refresh_btn.count() > 0:
                             await refresh_btn.click(force=True)
-                            await asyncio.sleep(1)
-                    except Exception:
-                        pass
+                            await asyncio.sleep(1.5)
+                        # Re-capture and re-solve
+                        cap_img_retry = page.locator("app-captcha img, #captchaImg, img.captcha-img, img[alt*='captcha' i]").first
+                        if await cap_img_retry.count() > 0 and await cap_img_retry.is_visible():
+                            cap_bytes_retry = await cap_img_retry.screenshot(timeout=3000)
+                            if cap_bytes_retry:
+                                retry_text, _ = fast_solve_captcha(cap_bytes_retry)
+                                if retry_text and await cap_input.count() > 0:
+                                    await cap_input.fill("")
+                                    await cap_input.fill(retry_text)
+                                    if await sign_in_btn.count() > 0:
+                                        await sign_in_btn.click(timeout=3000, force=True)
+                                        await asyncio.sleep(2.5)
+                                    log_event(db, "INFO", "AUTOMATION", f"Login retry captcha: '{retry_text}' (attempt {attempt})", ref)
+                                    # Check again
+                                    for _ in range(8):
+                                        if await check_logged_in_state(page):
+                                            log_event(db, "INFO", "AUTOMATION", "Login successful after captcha retry!", ref)
+                                            return True
+                                        await asyncio.sleep(1)
+                    except Exception as retry_err:
+                        log_event(db, "WARNING", "AUTOMATION", f"Login captcha retry error: {retry_err}", ref)
+                    
+                    # Final check before moving to next attempt
+                    for _ in range(5):
+                        if await check_logged_in_state(page):
+                            return True
+                        await asyncio.sleep(1)
             else:
                 # No captcha image found, try direct sign in
                 sign_in_btn = page.locator("app-login button:has-text('SIGN IN'), app-login button[type='submit'], button:has-text('SIGN IN')").first
@@ -631,14 +605,13 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
         log_event(db, "INFO", "AUTOMATION", "Active IRCTC authenticated session confirmed.", ref)
         return True
     else:
-        err = "Mandatory IRCTC Login failed after 3 attempts. Guest booking is strictly prohibited."
+        err = "IRCTC server se connection me technical issue aa rahi hai. Kripya kuch der baad dobara try karein."
         try:
             snap = await page.screenshot(full_page=False)
             session_state.latest_screenshot_bytes = snap
-            (DATA_DIR / "latest_captcha.png").write_bytes(snap)
         except Exception:
             pass
-        log_event(db, "ERROR", "AUTOMATION", err, ref)
+        log_event(db, "ERROR", "AUTOMATION", f"IRCTC Login failed after 3 attempts. Session could not be authenticated.", ref)
         raise RuntimeError(err)
 
 
@@ -1331,20 +1304,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             db.commit()
             if settings.TELEGRAM_ENABLED:
                 try:
-                    from app.services.railway_service import railway_service
-                    alt_trains = await railway_service.search_trains(booking.from_station, booking.to_station, date_str)
-                    alt_trains = [t for t in alt_trains if t.get("train_number") != booking.train_number][:4]
-                    buttons = []
-                    for at in alt_trains:
-                        buttons.append([{"text": f"🚆 {at['train_number']} - {at['train_name'][:18]}", "callback_data": f"train_{at['train_number']}"}])
-                    buttons.append([{"text": "🔄 Nayi Train Chunein", "callback_data": "cmd_book"}])
-                    t_msg = (
-                        f"❌ *Booking Nahi Ho Payi (Seats Not Available)*\n"
+                    await send_telegram_message(
+                        f"❌ *Seats Available Nahi Hain*\n"
                         f"Ref: `{ref}`\n\n"
-                        f"🚆 *{booking.train_name or booking.train_number}* par `{date_str}` ko official IRCTC par koi seat ya waiting list uplabdh nahi hai (*NOT AVAILABLE / REGRET*).\n\n"
-                        f"👉 *Kripya is route ({booking.from_station} ➔ {booking.to_station}) par doosri train chunein:*"
+                        f"🚆 *{booking.train_name or booking.train_number}* par `{date_str}` ko IRCTC par koi seat available nahi hai.\n\n"
+                        f"👉 Kripya koi doosri date ya train se try karein.",
+                        reply_markup={"inline_keyboard": [[{"text": "🎫 Nayi Booking Karein", "callback_data": "cmd_book"}]]}
                     )
-                    await send_telegram_message(t_msg, reply_markup={"inline_keyboard": buttons})
                 except Exception:
                     await send_telegram_message(f"❌ *Booking Failed* (Ref: `{ref}`)\n\n{err_msg}")
             return
@@ -1871,80 +1837,89 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 await asyncio.sleep(0.5)
 
         if has_captcha:
-            captcha_bytes = None
-            try:
-                await captcha_img_loc.scroll_into_view_if_needed()
-                await asyncio.sleep(0.3)
-                captcha_bytes = await captcha_img_loc.screenshot(timeout=4000)
-            except Exception:
-                try:
-                    captcha_bytes = await page.screenshot()
-                except Exception:
-                    pass
+            log_event(db, "INFO", "AUTOMATION", "Review page CAPTCHA detected. Auto-solving in background...", ref)
+            review_captcha_solved = False
 
-            if captcha_bytes:
+            for captcha_attempt in range(5):
+                captcha_bytes = None
                 try:
-                    (DATA_DIR / "latest_captcha.png").write_bytes(captcha_bytes)
+                    await dismiss_overlays(page)
+                    captcha_img_loc = page.locator("app-captcha img, #captchaImg, img.captcha-img, img[alt*='captcha' i]").first
+                    captcha_input = page.locator("#nlpAnswer, input[formcontrolname='captcha'], input[placeholder*='captcha' i], #captcha").first
+                    await captcha_img_loc.scroll_into_view_if_needed()
+                    await asyncio.sleep(0.3)
+                    captcha_bytes = await captcha_img_loc.screenshot(timeout=4000)
                 except Exception:
-                    pass
-
-                # High-Speed Local Captcha Prediction
-                candidate_text, conf = fast_solve_captcha(captcha_bytes)
-                if candidate_text and await captcha_input.count() > 0:
                     try:
-                        await SmartBrowserActions.smart_type(page, captcha_input, candidate_text, delay_ms=40)
+                        captcha_bytes = await page.screenshot()
                     except Exception:
                         pass
 
-                session_state.set_stage("WAITING_MANUAL")
-                review_prompt = f"Review & CAPTCHA: Auto-detected '{candidate_text}'. Please confirm or edit."
-                session_state.pause_for_user(review_prompt, is_payment=False, input_type="CAPTCHA", screenshot_bytes=captcha_bytes, suggested_value=candidate_text)
-                booking.status = "WAITING_MANUAL"
-                db.commit()
-                log_event(db, "WARNING", "AUTOMATION", review_prompt, ref)
-
-                try:
-                    await page.bring_to_front()
-                    focus_browser_window()
-                except Exception:
-                    pass
-
-                if settings.TELEGRAM_ENABLED:
+                if captcha_bytes:
                     try:
-                        fare_tag = f"\n💰 Total Fare: `₹{booking.fare:,.2f}`" if booking.fare else ""
-                        t_keyboard = {
-                            "inline_keyboard": [
-                                [{"text": f"⚡ Confirm '{candidate_text}'", "callback_data": f"action_captcha_{candidate_text}"}],
-                                [{"text": "✅ Continue", "callback_data": "action_continue"}],
-                                [{"text": "❌ Cancel", "callback_data": "action_cancel"}]
-                            ]
-                        }
-                        await send_telegram_photo(
-                            photo_bytes=captcha_bytes,
-                            caption=(
-                                f"📸 *IRCTC Review CAPTCHA* (Ref: `{ref}`){fare_tag}\n\n"
-                                f"⚡ *Auto-Detected CAPTCHA:* `{candidate_text}`\n"
-                                f"👉 Sahi hai to direct *'Confirm'* dabayein ya 'OK' reply karein, warna text reply karein:"
-                            ),
-                            reply_markup=t_keyboard
-                        )
-                    except Exception as e:
-                        log_event(db, "WARNING", "AUTOMATION", f"Could not send CAPTCHA: {e}", ref)
-
-                result = await _wait_for_user_or_cancel(session_state, timeout_seconds=300)
-
-                if result == "cancel" or session_state.cancel_event.is_set():
-                    booking.status = "CANCELLED"
-                    db.commit()
-                    return
-
-                if (result == "input" and session_state.user_input_value) or result == "continue":
-                    try:
-                        if result == "input" and session_state.user_input_value and await captcha_input.count() > 0:
-                            await SmartBrowserActions.smart_type(page, captcha_input, session_state.user_input_value.strip(), delay_ms=40)
-                            log_event(db, "INFO", "AUTOMATION", "Auto-filled CAPTCHA received from user.", ref)
+                        (DATA_DIR / "latest_captcha.png").write_bytes(captcha_bytes)
                     except Exception:
                         pass
+
+                    # Auto-solve captcha
+                    candidate_text, conf = fast_solve_captcha(captcha_bytes)
+                    if candidate_text and await captcha_input.count() > 0:
+                        try:
+                            await captcha_input.fill("")
+                            await SmartBrowserActions.smart_type(page, captcha_input, candidate_text, delay_ms=30)
+                        except Exception:
+                            pass
+
+                    log_event(db, "INFO", "AUTOMATION", f"Review CAPTCHA auto-solved: '{candidate_text}' (attempt {captcha_attempt+1}/5)", ref)
+
+                    # Auto-submit the review page
+                    try:
+                        submit_btn = page.locator("button:has-text('Continue'), button[type='submit']:has-text('Continue'), button.btn-primary:has-text('Continue')").first
+                        if await submit_btn.count() > 0:
+                            await submit_btn.scroll_into_view_if_needed()
+                            await submit_btn.click(timeout=4000, force=True)
+                            await asyncio.sleep(2.0)
+                    except Exception:
+                        pass
+
+                    # Auto-click any modal dialogs (Yes / Agree / OK)
+                    try:
+                        await page.evaluate('''() => {
+                            const dialogs = Array.from(document.querySelectorAll('.ui-dialog, p-confirmdialog, .ui-confirmdialog, div[role="dialog"]')).filter(d => d.offsetParent !== null);
+                            for (const d of dialogs) {
+                                const btn = Array.from(d.querySelectorAll('button, span.ui-button-text')).find(b => {
+                                    const t = (b.innerText || '').trim().toLowerCase();
+                                    return t === 'yes' || t === 'i agree' || t === 'ok' || t === 'continue' || t === 'confirm';
+                                });
+                                if (btn) btn.click();
+                            }
+                        }''')
+                    except Exception:
+                        pass
+
+                    # Check if we moved past review page to payment
+                    for _ in range(10):
+                        if "payment" in page.url.lower() or await page.locator("app-payment, div:has-text('Payment Option'), #bank-type").count() > 0:
+                            review_captcha_solved = True
+                            break
+                        await asyncio.sleep(0.5)
+
+                    if review_captcha_solved:
+                        log_event(db, "INFO", "AUTOMATION", "Review page successfully submitted! Proceeding to Payment.", ref)
+                        break
+
+                    # If still on review, captcha was wrong — refresh and retry
+                    log_event(db, "WARNING", "AUTOMATION", f"Review CAPTCHA attempt {captcha_attempt+1} did not navigate. Refreshing captcha...", ref)
+                    try:
+                        refresh_btn = page.locator("app-captcha .refresh-btn, app-captcha a, .captcha-refresh").first
+                        if await refresh_btn.count() > 0:
+                            await refresh_btn.click(force=True)
+                            await asyncio.sleep(1.5)
+                    except Exception:
+                        pass
+
+            if not review_captcha_solved:
+                log_event(db, "WARNING", "AUTOMATION", "Review page CAPTCHA could not be automatically resolved after 5 attempts.", ref)
         else:
             log_event(db, "INFO", "AUTOMATION", "No CAPTCHA required on Review page. Proceeding to Payment Gateway.", ref)
 

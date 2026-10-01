@@ -538,21 +538,18 @@ class TelegramBotService:
             msg = (
                 "🚀 *Live Official IRCTC Mode Active!*\n\n"
                 "अब सभी बुकिंग सीधे IRCTC की आधिकारिक वेबसाइट (irctc.co.in) पर होंगी।\n"
-                "• ब्राउज़र आपकी स्क्रीन पर खुलेगा\n"
-                "• CAPTCHA आते ही फ़ोटो टेलीग्राम पर आएगी\n"
-                "• UPI QR कोड पेमेंट के लिए भेजा जाएगा"
+                "• बैकग्राउंड में ऑटोमेशन लॉगिन और सभी फ़ॉर्म भरेगा\n"
+                "• कन्फर्म होते ही UPI QR कोड पेमेंट के लिए भेजा जाएगा"
             ) if lang == "hi" else (
                 "🚀 *Live Official IRCTC Mode Active!*\n\n"
                 "Now all bookings will run directly on the official IRCTC portal (irctc.co.in).\n"
-                "• Browser opens visibly\n"
-                "• CAPTCHA image is forwarded to Telegram\n"
-                "• UPI QR code is sent for your secure manual payment"
+                "• Backend automates login and details submission\n"
+                "• UPI QR code is sent directly for your payment"
             ) if lang == "en" else (
                 "🚀 *Live Official IRCTC Mode Active!*\n\n"
                 "Ab sabhi bookings direct official IRCTC website (irctc.co.in) par execute hongi.\n"
-                "• Browser screen par visible khulega\n"
-                "• CAPTCHA aane par photo yaha Telegram me aayegi\n"
-                "• UPI QR code payment ke liye chat me aayega"
+                "• Backend login aur details automatically fill karega\n"
+                "• Direct UPI QR code payment ke liye chat me aayega"
             )
             await send_telegram_message(msg, chat_id=chat_id)
             await self._send_welcome_menu(chat_id)
@@ -2105,11 +2102,17 @@ class TelegramBotService:
             coaches = avail.get("coaches", [])
 
         if not coaches:
-            fallback_classes = ["CC", "EC"] if any(k in t_name.upper() for k in ["SHATABDI", "VANDE", "TEJAS"]) else ["3A", "2A", "SL"]
-            coaches = [
-                {"class_code": c, "status_display": "AVAILABLE 24", "fare": 950 if c in ["3A", "CC"] else 1450, "color": "emerald"}
-                for c in fallback_classes
-            ]
+            # No real data available — inform user honestly
+            cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
+            keyboard = {"inline_keyboard": [[{"text": cancel_txt, "callback_data": "cancel_book"}]]}
+            msg = (
+                f"⚠️ *{t_num} - {t_name}*\n"
+                f"📅 Date: `{j_date}`\n\n"
+                f"Is train par seat availability data abhi IRCTC se mil nahi rahi hai.\n"
+                f"Kripya thodi der baad try karein ya koi doosri train chunein."
+            )
+            await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
+            return
 
         buttons = []
         for c in coaches:
@@ -2442,18 +2445,21 @@ class TelegramBotService:
 
         if lang == "hi":
             exec_msg = (
-                f"🚀 *IRCTC बुकिंग शुरू कर दी गई है!*\nसंदर्भ संख्या (Ref): `{ref}`\n"
-                f"IRCTC ब्राउज़र ऑटोमेशन प्रारंभ हो गया है। CAPTCHA आते ही आपको फोटो भेजी जाएगी।"
+                f"🚀 *IRCTC बुकिंग शुरू कर दी गई है!*\nसंदर्भ संख्या (Ref): `{ref}`\n\n"
+                f"ऑटोमेशन बैकग्राउंड में सभी चरण (लॉगिन, सीट चयन, यात्री विवरण) पूरा कर रहा है।\n"
+                f"कन्फर्म होते ही सीधा भुगतान का UPI QR कोड भेजा जाएगा! ⚡"
             )
         elif lang == "en":
             exec_msg = (
-                f"🚀 *IRCTC Booking Initiated!*\nRef: `{ref}`\n"
-                f"Browser automation has started. A photo will be sent as soon as CAPTCHA appears."
+                f"🚀 *IRCTC Booking Initiated!*\nRef: `{ref}`\n\n"
+                f"Backend automation is completing all steps silently in the background.\n"
+                f"Direct UPI Payment QR code will be provided shortly! ⚡"
             )
         else:
             exec_msg = (
-                f"🚀 *IRCTC Booking Initiated!*\nRef: `{ref}`\n"
-                f"Browser automation shuru ho gayi hai. CAPTCHA aate hi main photo bhejunga."
+                f"🚀 *IRCTC Booking Initiated!*\nRef: `{ref}`\n\n"
+                f"Backend automation background me saare steps (Login, Seat selection, Passenger details) complete kar raha hai.\n"
+                f"Direct UPI Payment QR code turant yaha bhej diya jayega! ⚡"
             )
         await send_telegram_message(exec_msg, chat_id=chat_id)
 
