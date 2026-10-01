@@ -126,66 +126,73 @@ async def dismiss_overlays(page):
             js_res = await page.evaluate('''() => {
                 let action = false;
                 
-                // Click language selection: English or Hindi button/link/span
-                const allElems = Array.from(document.querySelectorAll('button, a, span, div.ui-button, [role="button"], label'));
-                for (const el of allElems) {
-                    const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-                    if (text === 'english' || text === 'हिंदी' || text.includes('english') || text.includes('हिंदी')) {
-                        if (el.closest('.ui-dialog, app-dialog, .modal, .alert, p-dialog, div[role="dialog"]')) {
-                            el.click();
-                            action = true;
-                            break;
-                        }
+                // 1. Language selection dialog handling (explicitly find language/welcome dialogs)
+                const langDialogs = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"]')).filter(d => !d.querySelector('app-login'));
+                for (const d of langDialogs) {
+                    const text = (d.innerText || '').toLowerCase();
+                    if (text.includes('language') || text.includes('भाषा') || text.includes('welcome') || text.includes('पसंदीदा')) {
+                        // Click English button or option
+                        const btns = Array.from(d.querySelectorAll('button, a, input[type="radio"], [role="button"], span.ui-button-text'));
+                        const eng = btns.find(b => (b.innerText || b.value || '').trim().toLowerCase().includes('english'));
+                        if (eng) { eng.click(); action = true; }
+                        
+                        // Also click Submit/OK/Continue in this dialog
+                        const submit = btns.find(b => {
+                            const t = (b.innerText || b.value || '').trim().toLowerCase();
+                            return t.includes('submit') || t.includes('ok') || t.includes('proceed') || t.includes('continue');
+                        });
+                        if (submit) { submit.click(); action = true; }
+
+                        // Also click Close icon
+                        const close = d.querySelector('.ui-dialog-titlebar-close, .close');
+                        if (close) { close.click(); action = true; }
                     }
                 }
                 
-                // Click standard confirmation / disclaimer buttons (ignore login dialog)
+                // 2. Click standard confirmation / disclaimer buttons (ignore login dialog)
+                const allButtons = Array.from(document.querySelectorAll('.ui-dialog:not(:has(app-login)) button, p-dialog:not(:has(app-login)) button, div[role="dialog"]:not(:has(app-login)) button, .modal:not(:has(app-login)) button'));
                 const okTexts = ['ok', 'i agree', 'yes', 'dismiss', 'submit', 'continue', 'agree', 'theek hai', 'स्वीकार'];
-                for (const el of allElems) {
-                    if (el.closest('app-login')) continue;
-                    const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-                    if (okTexts.some(k => text === k || text.startsWith(k)) && el.closest('.ui-dialog, app-dialog, .modal, .alert, p-dialog, div[role="dialog"]')) {
-                        el.click();
+                for (const btn of allButtons) {
+                    const text = (btn.innerText || '').trim().toLowerCase();
+                    if (okTexts.some(k => text === k || text.startsWith(k))) {
+                        btn.click();
                         action = true;
-                        break;
                     }
                 }
                 
-                // Close dialog titlebar close icon (X) - strictly EXCLUDE app-login!
-                const closeIcons = document.querySelectorAll('.ui-dialog-titlebar-close, a.ui-dialog-titlebar-close, button.close, [aria-label="Close"], .fa-window-close, .ui-dialog-titlebar-icon');
+                // 3. Close dialog titlebar close icon (X) - strictly EXCLUDE app-login!
+                const closeIcons = document.querySelectorAll('.ui-dialog:not(:has(app-login)) .ui-dialog-titlebar-close, .ui-dialog:not(:has(app-login)) a.ui-dialog-titlebar-close, .ui-dialog:not(:has(app-login)) button.close, .ui-dialog:not(:has(app-login)) [aria-label="Close"], .modal:not(:has(app-login)) [aria-label="Close"]');
                 for (const ci of closeIcons) {
-                    if (ci.closest('app-login') || ci.closest('.loginCloseBtn')) continue;
                     if (ci.offsetParent !== null) {
                         ci.click();
                         action = true;
                     }
                 }
 
-                // Dismiss beta banner close button (x) if visible
-                const bannerClose = document.querySelector('.close-banner, .fa-close, .close-icon, span.fa-close, a.fa-close, .h_head button.close');
-                if (bannerClose && bannerClose.offsetParent !== null && !bannerClose.closest('app-login')) {
-                    bannerClose.click();
-                    action = true;
+                // 4. Force-remove any non-login mask / overlay / backdrop that intercepts pointer events
+                if (!document.querySelector('app-login')) {
+                    const masks = document.querySelectorAll('.custom-blur-mask:not(:has(app-login)), .ui-dialog-mask:not(:has(app-login)), .ui-widget-overlay:not(:has(app-login)), .ui-sidebar-mask');
+                    for (const m of masks) {
+                        m.remove();
+                        action = true;
+                    }
+                    if (document.body && document.body.classList.contains('ui-dialog-mask-scrollblocker')) {
+                        document.body.classList.remove('ui-dialog-mask-scrollblocker');
+                        action = true;
+                    }
                 }
 
-                // Dismiss sidebar backdrop if open and not in login dialog
-                const overlay = document.querySelector('.ui-sidebar-mask, .ui-widget-overlay');
-                if (overlay && overlay.offsetParent !== null && !document.querySelector('app-login')) {
-                    overlay.click();
-                    action = true;
-                }
-                
                 return action;
             }''')
             if js_res:
                 dismissed = True
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.4)
 
             # 2. Python Playwright selector fallback
-            lang_loc = page.locator("button:has-text('English'), button:has-text('हिंदी'), span:has-text('English'), a:has-text('English'), .btn-primary:has-text('English')").first
+            lang_loc = page.locator("div.ui-dialog:not(:has(app-login)) button:has-text('English'), div.ui-dialog:not(:has(app-login)) a:has-text('English'), div.ui-dialog:not(:has(app-login)) .btn-primary").first
             if await lang_loc.count() > 0 and await lang_loc.is_visible():
                 await lang_loc.click(timeout=1200, force=True)
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.3)
                 dismissed = True
 
             general_selectors = [
@@ -200,7 +207,7 @@ async def dismiss_overlays(page):
                 loc = page.locator(sel).first
                 if await loc.count() > 0 and await loc.is_visible():
                     await loc.click(timeout=800, force=True)
-                    await asyncio.sleep(0.4)
+                    await asyncio.sleep(0.3)
                     dismissed = True
                     
             # Dismiss lingering backdrop with Escape ONLY if login modal is NOT present
@@ -825,18 +832,24 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 await _fill_station_autocomplete(page, to_input, booking.to_station, "TO", db, ref)
                 await asyncio.sleep(0.5)
 
-                # 3. Date — Fill via keyboard into PrimeNG calendar input and commit with Tab (no DOM removal)
+                # 3. Date — Fill via keyboard into PrimeNG calendar input and commit
+                await dismiss_overlays(page)
                 date_input = page.locator("p-calendar[formcontrolname='journeyDate'] input, p-calendar input:visible, #jDate input:visible, input[placeholder*='Date' i]:visible").first
-                if await date_input.count() > 0 and await date_input.is_visible():
+                if await date_input.count() > 0:
                     try:
-                        await date_input.click()
+                        await date_input.scroll_into_view_if_needed()
+                        try:
+                            await date_input.click(timeout=3000)
+                        except Exception:
+                            await date_input.click(timeout=2000, force=True)
                         await asyncio.sleep(0.1)
                         await page.keyboard.press("Control+A")
                         await page.keyboard.press("Backspace")
-                        await date_input.press_sequentially(date_str, delay=40)
+                        await date_input.press_sequentially(date_str, delay=30)
                         await asyncio.sleep(0.2)
                         await page.keyboard.press("Tab")
-                        await asyncio.sleep(0.3)
+                        await page.keyboard.press("Escape")
+                        await asyncio.sleep(0.2)
                     except Exception as e:
                         log_event(db, "WARNING", "AUTOMATION", f"Failed to type date into calendar input: {e}", ref)
 
@@ -851,7 +864,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         }
                     }
                 }''', date_str)
-                await asyncio.sleep(0.4)
+                await asyncio.sleep(0.3)
 
                 # 4. Ensure Quota dropdown is set (General Quota by default)
                 try:
@@ -869,18 +882,19 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     pass
 
                 # 5. Click Search Button (SINGLE CLEAN CLICK - prevent double submission error)
+                await dismiss_overlays(page)
                 try:
                     await page.keyboard.press("Escape")
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.2)
                 except Exception:
                     pass
 
-                search_btn = page.locator("button.train_Search, button.search_btn, button[type='submit']:has-text('Search')").first
+                search_btn = page.locator("form button.train_Search, form button.search_btn, app-main-page button.train_Search, app-main-page button.search_btn, button.train_Search:not(.ui-dialog button)").first
                 search_clicked = False
                 if await search_btn.count() > 0 and await search_btn.is_visible():
                     await search_btn.scroll_into_view_if_needed()
                     try:
-                        await search_btn.click(timeout=5000)
+                        await search_btn.click(timeout=4000)
                         search_clicked = True
                     except Exception:
                         pass
@@ -888,9 +902,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 if not search_clicked:
                     search_clicked = await SmartBrowserActions.smart_click(
                         page=page,
-                        selectors=["button.train_Search:visible", "button.search_btn:visible", "button[type='submit']:visible"],
+                        selectors=[
+                            "form button.train_Search:visible",
+                            "form button.search_btn:visible",
+                            "button.train_Search:visible:not(.ui-dialog button)",
+                            "button.search_btn:visible:not(.ui-dialog button)"
+                        ],
                         text_keywords=["Search", "SEARCH", "Find Trains"],
-                        timeout_ms=5000,
+                        timeout_ms=4000,
                         wait_after_sec=0.5
                     )
 
