@@ -553,12 +553,18 @@ class RailwayService:
                                         if base_num.isdigit() and int(base_num) > 0:
                                             real_fares[class_idx_map[c_idx]] = int(base_num)
 
+                            actual_from = fields[7].strip() if len(fields) > 7 and fields[7].strip() else fc
+                            actual_to = fields[9].strip() if len(fields) > 9 and fields[9].strip() else tc
+                            is_exact_route = (actual_from == fc and actual_to == tc)
+
                             matched.append({
                                 "train_number": t_no,
                                 "train_name": t_name,
-                                "from_station": fc,
+                                "from_station": actual_from,
+                                "actual_from": actual_from,
                                 "from_station_name": from_name,
-                                "to_station": tc,
+                                "to_station": actual_to,
+                                "actual_to": actual_to,
                                 "to_station_name": to_name,
                                 "departure_time": dep,
                                 "arrival_time": arr,
@@ -566,12 +572,16 @@ class RailwayService:
                                 "classes": classes,
                                 "real_fares": real_fares,
                                 "runs_on_date": runs_on_date,
-                                "running_days": days_raw
+                                "running_days": days_raw,
+                                "is_exact_route": is_exact_route
                             })
-                            if len(matched) >= 20:
+                            if len(matched) >= 25:
                                 break
         except Exception:
             pass
+
+        # Sort exact route trains first, then by running today
+        matched.sort(key=lambda t: (not t.get("is_exact_route", False), not t.get("runs_on_date", True)))
 
         # Filter strictly by running day on the selected journey date if matches exist
         trains_today = [t for t in matched if t.get("runs_on_date", True)]

@@ -2063,6 +2063,16 @@ class TelegramBotService:
 
         train_list = data.get("train_list", [])
         matched_tr = next((tr for tr in train_list if tr.get("train_number") == t_num), None)
+        if matched_tr:
+            if matched_tr.get("actual_from"):
+                from_stn = matched_tr["actual_from"]
+                data["from_station"] = from_stn
+            if matched_tr.get("actual_to"):
+                to_stn = matched_tr["actual_to"]
+                data["to_station"] = to_stn
+            if matched_tr.get("train_name"):
+                data["train_name"] = matched_tr["train_name"]
+
         tr_classes = matched_tr.get("classes") if matched_tr else None
         tr_name = matched_tr.get("train_name") if matched_tr else None
         tr_fares = matched_tr.get("real_fares") if matched_tr else None

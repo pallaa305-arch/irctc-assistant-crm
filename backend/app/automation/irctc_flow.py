@@ -1175,12 +1175,24 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         date_clicked = False
         book_now_clicked = False
 
-        # Classes to try in priority order: requested class first, then fallbacks
+        # Extract target day and month representations for precise slot matching
+        target_day = str(booking.journey_date.day) if hasattr(booking.journey_date, "day") else ""
+        target_month_num = f"{booking.journey_date.month:02d}" if hasattr(booking.journey_date, "month") else ""
+        month_names = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+        target_month_name = month_names[booking.journey_date.month - 1].upper() if hasattr(booking.journey_date, "month") and 1 <= booking.journey_date.month <= 12 else ""
+
+        # Filter fallback classes to only those ACTUALLY present on this train card
         classes_to_try = [journey_cls]
-        class_priority = ["3A", "2A", "SL", "1A", "3E", "CC", "EC", "2S"]
-        for cp in class_priority:
-            if cp != journey_cls and cp not in classes_to_try:
-                classes_to_try.append(cp)
+        try:
+            card_text = (await target_train_card.inner_text()).upper()
+            class_priority = ["3A", "2A", "SL", "1A", "3E", "CC", "EC", "2S"]
+            for cp in class_priority:
+                if cp != journey_cls and cp not in classes_to_try:
+                    cls_aliases = cls_map.get(cp, [cp])
+                    if any(alias.upper() in card_text for alias in cls_aliases):
+                        classes_to_try.append(cp)
+        except Exception:
+            pass
 
         for try_cls in classes_to_try:
             cls_keys_try = cls_map.get(try_cls, [try_cls])
@@ -1199,56 +1211,64 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 except Exception:
                     continue
 
-            # Wait for availability rows to appear
-            for wait_slot in range(20):
-                await asyncio.sleep(0.5)
+            # Refresh once if needed
+            try:
+                refresh_btn = target_train_card.locator("a:has-text('Refresh'), button:has-text('Refresh'), span:has-text('Refresh')").first
+                if await refresh_btn.count() > 0 and await refresh_btn.is_visible():
+                    await refresh_btn.click(force=True)
+                    await asyncio.sleep(1.5)
+            except Exception:
+                pass
+
+            # Wait for availability rows to appear and select target date
+            for wait_slot in range(15):
+                await asyncio.sleep(0.6)
                 await dismiss_overlays(page)
 
-                # First try clicking Refresh buttons if visible (stale availability data)
-                try:
-                    refresh_btn = target_train_card.locator("a:has-text('Refresh'), button:has-text('Refresh'), span:has-text('Refresh')").first
-                    if await refresh_btn.count() > 0 and await refresh_btn.is_visible():
-                        await refresh_btn.click(force=True)
-                        await asyncio.sleep(2)
-                except Exception:
-                    pass
-
-                # Check for actual bookable slots — EXCLUDE "NOT AVAILABLE"
                 slot_found = False
                 try:
-                    slot_found = await target_train_card.evaluate('''(card) => {
-                        const slots = card.querySelectorAll('div.pre-avl, td.pre-avl, div[class*="avl"], td');
-                        for (const slot of slots) {
-                            const text = (slot.innerText || '').trim().toUpperCase();
-                            if ((text.includes('AVAILABLE') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL') || /AVL-\d+/.test(text)) &&
-                                !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL')) {
-                                slot.click();
+                    slot_found = await target_train_card.evaluate('''([card, day, monthName, monthNum]) => {
+                        const cells = Array.from(card.querySelectorAll('table tr td, div.pre-avl, div[class*="avl"]')).filter(el => {
+                            const text = (el.innerText || '').trim().toUpperCase();
+                            return text.includes('AVL') || text.includes('AVAILABLE') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL') || text.includes('-202');
+                        });
+
+                        // 1. First priority: Slot matching both target journey date and bookable status
+                        for (const cell of cells) {
+                            const text = (cell.innerText || '').trim().toUpperCase();
+                            const hasDate = (day && text.includes(day)) && (monthName && text.includes(monthName) || monthNum && text.includes(monthNum));
+                            const isBookable = (text.includes('AVAILABLE') || text.includes('AVL') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL')) &&
+                                               !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL');
+                            if (hasDate && isBookable) {
+                                cell.click();
                                 return true;
                             }
                         }
+
+                        // 2. Second priority: Any bookable slot inside the availability table
+                        for (const cell of cells) {
+                            const text = (cell.innerText || '').trim().toUpperCase();
+                            const isBookable = (text.includes('AVAILABLE') || text.includes('AVL') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL')) &&
+                                               !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL');
+                            if (isBookable) {
+                                cell.click();
+                                return true;
+                            }
+                        }
+
                         return false;
-                    }''')
+                    }''', [None, target_day, target_month_name, target_month_num])
                 except Exception:
                     pass
 
                 if slot_found:
                     date_clicked = True
                     log_event(db, "INFO", "AUTOMATION", f"Availability slot clicked for class '{try_cls}' (attempt {wait_slot+1})!", ref)
-                    await asyncio.sleep(1.5)
+                    await asyncio.sleep(1.0)
                     break
 
             if not date_clicked:
-                # Check if this class shows "NOT AVAILABLE"
-                try:
-                    not_avail = await target_train_card.evaluate('''(el) => {
-                        const texts = Array.from(el.querySelectorAll('div.pre-avl, td, span')).map(e => (e.innerText || '').trim().toUpperCase());
-                        return texts.some(t => t.includes('NOT AVAILABLE') || t.includes('REGRET'));
-                    }''')
-                    if not_avail:
-                        log_event(db, "INFO", "AUTOMATION", f"Class '{try_cls}' is NOT AVAILABLE. Trying next class...", ref)
-                        continue
-                except Exception:
-                    pass
+                log_event(db, "INFO", "AUTOMATION", f"Class '{try_cls}' shows no bookable slot on date {date_str}. Trying next available class...", ref)
                 continue
 
             # Extract live fare
@@ -1303,14 +1323,30 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 continue
 
         if not book_now_clicked:
-            err_msg = f"No available class found for train {booking.train_name or booking.train_number} on route {booking.from_station} ➔ {booking.to_station} on {date_str}. All classes show NOT AVAILABLE."
+            err_msg = f"Train {booking.train_name or booking.train_number} par {date_str} ko seats uplabdh nahi hain (All classes NOT AVAILABLE / REGRET)."
             log_event(db, "ERROR", "AUTOMATION", err_msg, ref)
             session_state.set_stage("FAILED", "FAILED")
             session_state.error_message = err_msg
             booking.status = "FAILED"
             db.commit()
             if settings.TELEGRAM_ENABLED:
-                await send_telegram_message(f"❌ *Booking Failed* (Ref: `{ref}`)\n\n{err_msg}")
+                try:
+                    from app.services.railway_service import railway_service
+                    alt_trains = await railway_service.search_trains(booking.from_station, booking.to_station, date_str)
+                    alt_trains = [t for t in alt_trains if t.get("train_number") != booking.train_number][:4]
+                    buttons = []
+                    for at in alt_trains:
+                        buttons.append([{"text": f"🚆 {at['train_number']} - {at['train_name'][:18]}", "callback_data": f"train_{at['train_number']}"}])
+                    buttons.append([{"text": "🔄 Nayi Train Chunein", "callback_data": "cmd_book"}])
+                    t_msg = (
+                        f"❌ *Booking Nahi Ho Payi (Seats Not Available)*\n"
+                        f"Ref: `{ref}`\n\n"
+                        f"🚆 *{booking.train_name or booking.train_number}* par `{date_str}` ko official IRCTC par koi seat ya waiting list uplabdh nahi hai (*NOT AVAILABLE / REGRET*).\n\n"
+                        f"👉 *Kripya is route ({booking.from_station} ➔ {booking.to_station}) par doosri train chunein:*"
+                    )
+                    await send_telegram_message(t_msg, reply_markup={"inline_keyboard": buttons})
+                except Exception:
+                    await send_telegram_message(f"❌ *Booking Failed* (Ref: `{ref}`)\n\n{err_msg}")
             return
 
         # 4. Handle PrimeNG Confirmation Dialogs & Wait for Passenger Input page
