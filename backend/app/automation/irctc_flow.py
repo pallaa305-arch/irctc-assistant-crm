@@ -1189,67 +1189,149 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 pass
 
             # Wait for availability rows to appear and select target date
+            # Take a debug screenshot of availability table
+            try:
+                import os
+                debug_dir = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data")
+                os.makedirs(debug_dir, exist_ok=True)
+                debug_ss_path = os.path.join(debug_dir, f"avl_debug_{try_cls}_{ref}.png")
+                await page.screenshot(path=debug_ss_path)
+                log_event(db, "INFO", "AUTOMATION", f"[DEBUG] Screenshot saved: {debug_ss_path}", ref)
+            except Exception:
+                pass
+
+            # Dump availability table HTML for debugging (once per class)
+            try:
+                avl_html_dump = await target_train_card.evaluate('''(card) => {
+                    const table = card.querySelector('.pre-avl-table, table.table, .tbis, .tbleft') || card;
+                    return table ? table.innerHTML.substring(0, 3000) : 'NO_TABLE_FOUND';
+                }''')
+                log_event(db, "INFO", "AUTOMATION", f"[DEBUG] Availability DOM for class '{try_cls}': {str(avl_html_dump)[:500]}", ref)
+            except Exception:
+                pass
+
             for wait_slot in range(15):
                 await asyncio.sleep(0.6)
                 await dismiss_overlays(page)
 
                 slot_found = False
                 try:
-                    slot_found = await target_train_card.evaluate('''(card, [day, monthName, monthNum]) => {
-                        if (!card) return false;
-                        const root = card.querySelector('table, .pre-avl') ? card : (card.parentElement || card);
-                        const cells = Array.from(root.querySelectorAll('table tr td, div.pre-avl, div[class*="avl"], td, div.link')).filter(el => {
-                            const text = (el.innerText || '').trim().toUpperCase();
-                            return text.includes('AVL') || text.includes('AVAILABLE') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL') || text.includes('-202');
-                        });
+                    # Use Playwright locators to find ALL clickable availability cells
+                    # IRCTC uses td elements inside the availability table — each td contains
+                    # both the date info and availability status in its full text
+                    avl_cells = target_train_card.locator("td.pre-avl, td.curr-avl, div.pre-avl-table td, table td, td")
+                    cell_count = await avl_cells.count()
+                    
+                    if cell_count == 0:
+                        # Try alternative: look for div-based availability slots  
+                        avl_cells = target_train_card.locator("div.pre-avl, div[class*='avl'], div.link, a.link")
+                        cell_count = await avl_cells.count()
+                    
+                    target_day_padded = target_day.zfill(2) if target_day else ""
+                    target_day_raw = str(int(target_day)) if target_day and target_day.isdigit() else target_day
+                    
+                    REJECT_KEYWORDS = ["NOT AVAILABLE", "REGRET", "NOT AVL", "NO LGOFF", "TRAIN CANCELLED"]
+                    BOOKABLE_KEYWORDS = ["AVAILABLE", "AVL", "GNWL", "RLWL", "PQWL", "RSWL", "RAC", "WL", "CURR_AVAIL"]
+                    
+                    # Scan all cells and classify them
+                    best_target_date_cell = None  # Cell matching target date & bookable
+                    best_any_bookable_cell = None  # Any cell that is bookable
+                    
+                    for ci in range(min(cell_count, 30)):
+                        try:
+                            cell = avl_cells.nth(ci)
+                            if not await cell.is_visible():
+                                continue
+                            cell_text = (await cell.inner_text()).strip().upper()
+                            
+                            if len(cell_text) < 2:
+                                continue
+                            
+                            # Check if cell contains reject keywords
+                            is_rejected = any(rk in cell_text for rk in REJECT_KEYWORDS)
+                            
+                            # Check if cell contains bookable keywords
+                            is_bookable = any(bk in cell_text for bk in BOOKABLE_KEYWORDS) and not is_rejected
+                            
+                            # Check if cell matches target date
+                            has_target_date = False
+                            if target_day_raw and target_month_name:
+                                has_target_date = (target_day_raw in cell_text or target_day_padded in cell_text) and \
+                                                  (target_month_name in cell_text or target_month_num in cell_text)
+                            
+                            if has_target_date and is_bookable and not best_target_date_cell:
+                                best_target_date_cell = cell
+                                log_event(db, "INFO", "AUTOMATION", f"[SLOT] Found bookable target date cell: '{cell_text[:100]}'", ref)
+                            elif is_bookable and not is_rejected and not best_any_bookable_cell:
+                                best_any_bookable_cell = cell
+                                
+                        except Exception:
+                            continue
+                    
+                    # Click the best cell found (prefer target date)
+                    click_cell = best_target_date_cell or best_any_bookable_cell
+                    
+                    if click_cell:
+                        try:
+                            clicked_text = (await click_cell.inner_text()).strip()
+                            await click_cell.scroll_into_view_if_needed()
+                            await click_cell.click(force=True)
+                            slot_found = True
+                            log_event(db, "INFO", "AUTOMATION", f"Clicked availability slot: '{clicked_text[:100]}'", ref)
+                        except Exception as click_err:
+                            # Fallback: try JS click
+                            try:
+                                await click_cell.evaluate("el => el.click()")
+                                slot_found = True
+                                log_event(db, "INFO", "AUTOMATION", f"Clicked availability slot via JS fallback", ref)
+                            except Exception:
+                                log_event(db, "WARNING", "AUTOMATION", f"Slot click failed: {click_err}", ref)
+                    else:
+                        # Log what we actually found for debugging
+                        if wait_slot == 0:
+                            sample_texts = []
+                            for ci in range(min(cell_count, 10)):
+                                try:
+                                    ct = (await avl_cells.nth(ci).inner_text()).strip()[:80]
+                                    if ct:
+                                        sample_texts.append(ct)
+                                except Exception:
+                                    pass
+                            if sample_texts:
+                                log_event(db, "INFO", "AUTOMATION", f"[DEBUG] No bookable slot found. Sample cell texts: {sample_texts[:5]}", ref)
+                            elif cell_count == 0:
+                                log_event(db, "INFO", "AUTOMATION", f"[DEBUG] No availability cells found yet (wait {wait_slot+1})", ref)
 
-                        const dayPadded = day ? String(day).padStart(2, '0') : '';
-                        const dayRaw = day ? String(parseInt(day, 10)) : '';
-
-                        // 1. First priority: Slot matching both target journey date and bookable status
-                        for (const cell of cells) {
-                            const text = (cell.innerText || '').trim().toUpperCase();
-                            const hasDate = (dayRaw && text.includes(dayRaw) || dayPadded && text.includes(dayPadded)) &&
-                                            (monthName && text.includes(monthName) || monthNum && text.includes(monthNum));
-                            const isBookable = (text.includes('AVAILABLE') || text.includes('AVL') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL')) &&
-                                               !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL');
-                            if (hasDate && isBookable) {
-                                cell.click();
-                                return true;
-                            }
-                        }
-
-                        // 2. Second priority: Any slot matching the date (even if WL or RAC)
-                        for (const cell of cells) {
-                            const text = (cell.innerText || '').trim().toUpperCase();
-                            const hasDate = (dayRaw && text.includes(dayRaw) || dayPadded && text.includes(dayPadded)) &&
-                                            (monthName && text.includes(monthName) || monthNum && text.includes(monthNum));
-                            if (hasDate && !text.includes('REGRET') && !text.includes('NOT AVAILABLE') && !text.includes('NOT AVL')) {
-                                cell.click();
-                                return true;
-                            }
-                        }
-
-                        // 3. Third priority: Any bookable slot
-                        for (const cell of cells) {
-                            const text = (cell.innerText || '').trim().toUpperCase();
-                            const isBookable = (text.includes('AVAILABLE') || text.includes('AVL') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL')) &&
-                                               !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL');
-                            if (isBookable) {
-                                cell.click();
-                                return true;
-                            }
-                        }
-
-                        return false;
-                    }''', [target_day, target_month_name, target_month_num])
                 except Exception as eval_err:
                     log_event(db, "WARNING", "AUTOMATION", f"Slot evaluation error: {eval_err}", ref)
 
                 if slot_found:
                     date_clicked = True
                     log_event(db, "INFO", "AUTOMATION", f"Availability slot clicked for class '{try_cls}' (attempt {wait_slot+1})!", ref)
-                    await asyncio.sleep(1.0)
+                    await asyncio.sleep(1.5)
+                    # Verify: Check if Book Now is actually enabled after clicking
+                    try:
+                        await asyncio.sleep(1.0)
+                        bn_check = target_train_card.locator("button:has-text('Book Now'):not(.disable-book)")
+                        if await bn_check.count() > 0 and await bn_check.is_visible():
+                            log_event(db, "INFO", "AUTOMATION", f"Book Now button IS enabled for class '{try_cls}'!", ref)
+                        else:
+                            # Book Now still disabled — the slot we clicked was NOT AVAILABLE / REGRET
+                            page_avl_text = ""
+                            try:
+                                page_avl_text = (await target_train_card.inner_text()).strip()[:300]
+                            except Exception:
+                                pass
+                            is_actually_regret = any(rk in page_avl_text.upper() for rk in ["REGRET", "NOT AVAILABLE", "NOT AVL"])
+                            if is_actually_regret:
+                                log_event(db, "WARNING", "AUTOMATION", f"Slot clicked but status is REGRET/NOT AVAILABLE for class '{try_cls}'. Card text: {page_avl_text[:200]}", ref)
+                                slot_found = False
+                                date_clicked = False
+                                break  # Skip remaining wait iterations, move to next class
+                            else:
+                                log_event(db, "INFO", "AUTOMATION", f"Book Now not yet visible, waiting... Card text: {page_avl_text[:200]}", ref)
+                    except Exception:
+                        pass
                     break
 
             if not date_clicked:
