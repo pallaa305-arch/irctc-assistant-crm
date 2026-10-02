@@ -119,66 +119,66 @@ async def dismiss_overlays(page):
     """
     if not page:
         return
-    for _ in range(5):
+    for _ in range(3):
         dismissed = False
         try:
-            # 1. Native DOM evaluation for rapid, bulletproof dismissal
+            # Native DOM evaluation for safe dismissal without double-clicks or aborting confirmation dialogs
             js_res = await page.evaluate('''() => {
+                if (document.querySelector('app-login')) return false;
+
+                // CRITICAL: Do NOT touch active business confirmation dialogs (e.g. Waitlist confirmation)
+                const isConfirmDialog = document.querySelector('p-confirmdialog, .ui-confirmdialog');
+                if (isConfirmDialog && isConfirmDialog.offsetParent !== null) return false;
+
                 let action = false;
-                
-                // 1. Language selection dialog handling (explicitly find language/welcome dialogs)
-                const langDialogs = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"]')).filter(d => !d.querySelector('app-login'));
+
+                // 1. Language selection dialog handling
+                const langDialogs = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"]')).filter(
+                    d => !d.querySelector('app-login') && !d.matches('p-confirmdialog, .ui-confirmdialog')
+                );
                 for (const d of langDialogs) {
                     const text = (d.innerText || '').toLowerCase();
                     if (text.includes('language') || text.includes('भाषा') || text.includes('welcome') || text.includes('पसंदीदा')) {
-                        // Click English button or option
                         const btns = Array.from(d.querySelectorAll('button, a, input[type="radio"], [role="button"], span.ui-button-text'));
                         const eng = btns.find(b => (b.innerText || b.value || '').trim().toLowerCase().includes('english'));
-                        if (eng) { eng.click(); action = true; }
-                        
-                        // Also click Submit/OK/Continue in this dialog
+                        if (eng) { eng.click(); return true; }
+
                         const submit = btns.find(b => {
                             const t = (b.innerText || b.value || '').trim().toLowerCase();
                             return t.includes('submit') || t.includes('ok') || t.includes('proceed') || t.includes('continue');
                         });
-                        if (submit) { submit.click(); action = true; }
+                        if (submit) { submit.click(); return true; }
 
-                        // Also click Close icon
                         const close = d.querySelector('.ui-dialog-titlebar-close, .close');
-                        if (close) { close.click(); action = true; }
-                    }
-                }
-                
-                // 2. Click standard confirmation / disclaimer buttons (ignore login dialog)
-                const allButtons = Array.from(document.querySelectorAll('.ui-dialog:not(:has(app-login)) button, p-dialog:not(:has(app-login)) button, div[role="dialog"]:not(:has(app-login)) button, .modal:not(:has(app-login)) button'));
-                const okTexts = ['ok', 'i agree', 'yes', 'dismiss', 'submit', 'continue', 'agree', 'theek hai', 'स्वीकार'];
-                for (const btn of allButtons) {
-                    const text = (btn.innerText || '').trim().toLowerCase();
-                    if (okTexts.some(k => text === k || text.startsWith(k))) {
-                        btn.click();
-                        action = true;
-                    }
-                }
-                
-                // 3. Close dialog titlebar close icon (X) - strictly EXCLUDE app-login!
-                const closeIcons = document.querySelectorAll('.ui-dialog:not(:has(app-login)) .ui-dialog-titlebar-close, .ui-dialog:not(:has(app-login)) a.ui-dialog-titlebar-close, .ui-dialog:not(:has(app-login)) button.close, .ui-dialog:not(:has(app-login)) [aria-label="Close"], .modal:not(:has(app-login)) [aria-label="Close"]');
-                for (const ci of closeIcons) {
-                    if (ci.offsetParent !== null) {
-                        ci.click();
-                        action = true;
+                        if (close) { close.click(); return true; }
                     }
                 }
 
-                // 4. Force-remove any non-login mask / overlay / backdrop that intercepts pointer events
-                if (!document.querySelector('app-login')) {
-                    const masks = document.querySelectorAll('.custom-blur-mask:not(:has(app-login)), .ui-dialog-mask:not(:has(app-login)), .ui-widget-overlay:not(:has(app-login)), .ui-sidebar-mask');
-                    for (const m of masks) {
-                        m.remove();
-                        action = true;
+                // 2. Generic informational disclaimer popups (Kavach, advisory, COVID) - strictly ignore confirmation dialogs
+                const infoDialogs = Array.from(document.querySelectorAll('.ui-dialog:not(p-confirmdialog):not(.ui-confirmdialog), .modal:not(p-confirmdialog)')).filter(
+                    d => !d.querySelector('app-login')
+                );
+                for (const d of infoDialogs) {
+                    const title = (d.querySelector('.ui-dialog-title')?.innerText || '').toLowerCase();
+                    if (title.includes('confirmation') || title.includes('alert')) continue;
+
+                    const okBtn = Array.from(d.querySelectorAll('button, span.ui-button-text')).find(b => {
+                        const t = (b.innerText || '').trim().toLowerCase();
+                        return t === 'ok' || t === 'i agree' || t === 'dismiss' || t === 'theek hai';
+                    });
+                    if (okBtn) {
+                        okBtn.click();
+                        return true;
                     }
+                }
+
+                // 3. Force-remove masks only if no dialog is active
+                const openDialog = document.querySelector('.ui-dialog[style*="display: block"], p-dialog[style*="display: block"], p-confirmdialog');
+                if (!openDialog) {
+                    const masks = document.querySelectorAll('.custom-blur-mask, .ui-dialog-mask-scrollblocker');
+                    for (const m of masks) m.remove();
                     if (document.body && document.body.classList.contains('ui-dialog-mask-scrollblocker')) {
                         document.body.classList.remove('ui-dialog-mask-scrollblocker');
-                        action = true;
                     }
                 }
 
@@ -186,34 +186,8 @@ async def dismiss_overlays(page):
             }''')
             if js_res:
                 dismissed = True
-                await asyncio.sleep(0.4)
-
-            # 2. Python Playwright selector fallback
-            lang_loc = page.locator("div.ui-dialog:not(:has(app-login)) button:has-text('English'), div.ui-dialog:not(:has(app-login)) a:has-text('English'), div.ui-dialog:not(:has(app-login)) .btn-primary").first
-            if await lang_loc.count() > 0 and await lang_loc.is_visible():
-                await lang_loc.click(timeout=1200, force=True)
                 await asyncio.sleep(0.3)
-                dismissed = True
 
-            general_selectors = [
-                "div.ui-dialog:not(:has(app-login)) button:has-text('OK')",
-                "div.ui-dialog:not(:has(app-login)) button:has-text('I Agree')",
-                "div.ui-dialog:not(:has(app-login)) button:has-text('Yes')",
-                "div.ui-dialog:not(:has(app-login)) button:has-text('DISMISS')",
-                "div.ui-dialog:not(:has(app-login)) .ui-dialog-titlebar-close",
-                "div.modal:not(:has(app-login)) button[aria-label='Close']"
-            ]
-            for sel in general_selectors:
-                loc = page.locator(sel).first
-                if await loc.count() > 0 and await loc.is_visible():
-                    await loc.click(timeout=800, force=True)
-                    await asyncio.sleep(0.3)
-                    dismissed = True
-                    
-            # Dismiss lingering backdrop with Escape ONLY if login modal is NOT present
-            has_login_modal = await page.locator("app-login, input[formcontrolname='userid'], #userId").count() > 0
-            if not has_login_modal:
-                await page.keyboard.press("Escape")
         except Exception:
             pass
         if not dismissed:
@@ -1355,6 +1329,100 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if not await check_logged_in_state(page):
                 log_event(db, "WARNING", "AUTOMATION", "Session logged out before clicking Book Now. Re-authenticating...", ref)
                 await ensure_authenticated_session(page, ref, db, session_state, booking)
+                
+                # After re-auth, IRCTC navigates away from train results page.
+                # We must redo the search to get fresh train cards and slot state.
+                log_event(db, "INFO", "AUTOMATION", "Re-auth completed. Re-doing train search to restore booking context...", ref)
+                
+                # Navigate back to train search
+                try:
+                    await page.goto("https://www.irctc.co.in/nget/train-search", wait_until="domcontentloaded", timeout=20000)
+                    await asyncio.sleep(2)
+                    await dismiss_overlays(page)
+                    
+                    # Re-fill search form
+                    from_code = booking.from_station or ""
+                    to_code = booking.to_station or ""
+                    
+                    await _fill_station_autocomplete(page, "from", from_code, ref, db)
+                    await _fill_station_autocomplete(page, "to", to_code, ref, db)
+                    
+                    # Re-fill date
+                    date_input = page.locator("input[id='jDate'], p-calendar input, input.ng-tns-c58-10").first
+                    if await date_input.count() > 0:
+                        await date_input.click(force=True)
+                        await asyncio.sleep(0.3)
+                        await date_input.fill(date_str)
+                        await page.keyboard.press("Escape")
+                        await asyncio.sleep(0.3)
+                    
+                    # Click search
+                    await dismiss_overlays(page)
+                    search_btn = page.locator("form button.train_Search, button:has-text('Search Trains')").first
+                    if await search_btn.count() > 0:
+                        await search_btn.click(force=True)
+                    
+                    # Wait for results
+                    for ws in range(20):
+                        if "train-list" in page.url or await page.locator("app-train-avl-enq").count() > 0:
+                            break
+                        await asyncio.sleep(1)
+                    await asyncio.sleep(1)
+                    
+                    # Re-select train card
+                    train_num = (booking.train_number or "").strip()
+                    num_m = re.search(r'\b\d{5}\b', train_num)
+                    search_num = num_m.group(0) if num_m else train_num
+                    new_card = page.locator("app-train-avl-enq").filter(has_text=search_num).first
+                    if await new_card.count() > 0:
+                        target_train_card = new_card
+                        await target_train_card.scroll_into_view_if_needed()
+                        log_event(db, "INFO", "AUTOMATION", f"Re-selected train card for {search_num} after re-auth.", ref)
+                    else:
+                        target_train_card = page.locator("app-train-avl-enq").first
+                        log_event(db, "WARNING", "AUTOMATION", f"Could not find train {search_num} after re-auth. Using first available.", ref)
+                    
+                    # Re-click class tab
+                    cls_keys_retry = cls_map.get(try_cls, [try_cls])
+                    cls_sels_retry = [f"div.pre-avl:has-text('{k}')" for k in cls_keys_retry] + [f"span:has-text('{k}')" for k in cls_keys_retry]
+                    await SmartBrowserActions.smart_click(
+                        page=page, selectors=cls_sels_retry, text_keywords=cls_keys_retry,
+                        scope_locator=target_train_card, wait_after_sec=0.5
+                    )
+                    await asyncio.sleep(1)
+                    
+                    # Re-click availability slot (simplified - click first bookable)
+                    REJECT_KEYWORDS_RE = ["NOT AVAILABLE", "REGRET", "NOT AVL", "NO LGOFF", "TRAIN CANCELLED"]
+                    BOOKABLE_KEYWORDS_RE = ["AVAILABLE", "AVL", "GNWL", "RLWL", "PQWL", "RSWL", "RAC", "WL", "CURR_AVAIL"]
+                    
+                    for re_wait in range(10):
+                        await asyncio.sleep(0.6)
+                        avl_cells_re = target_train_card.locator("td.pre-avl, td.curr-avl, div.pre-avl-table td, table td, td")
+                        cc_re = await avl_cells_re.count()
+                        for ci_re in range(min(cc_re, 30)):
+                            try:
+                                cell_re = avl_cells_re.nth(ci_re)
+                                if not await cell_re.is_visible():
+                                    continue
+                                ct_re = (await cell_re.inner_text()).strip().upper()
+                                if len(ct_re) < 2:
+                                    continue
+                                is_rej = any(rk in ct_re for rk in REJECT_KEYWORDS_RE)
+                                is_book = any(bk in ct_re for bk in BOOKABLE_KEYWORDS_RE) and not is_rej
+                                if is_book:
+                                    await cell_re.scroll_into_view_if_needed()
+                                    await cell_re.click(force=True)
+                                    log_event(db, "INFO", "AUTOMATION", f"Re-clicked slot after re-auth: '{ct_re[:80]}'", ref)
+                                    await asyncio.sleep(1.5)
+                                    break
+                            except Exception:
+                                continue
+                        else:
+                            continue
+                        break
+                    
+                except Exception as reauth_err:
+                    log_event(db, "WARNING", "AUTOMATION", f"Re-search after re-auth failed: {reauth_err}", ref)
 
             # 3. Click active enabled 'Book Now' (without .disable-book)
             bn_selectors = [
@@ -1775,28 +1843,38 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if v_errs:
                 log_event(db, "WARNING", "AUTOMATION", f"Visible form notices: {'; '.join(v_errs[:3])}", ref)
 
-            # Click Continue button — first try without force to respect Angular validation
+            # Click Continue button cleanly without double-clicking
             clicked_continue = False
-            cont_btn = page.locator("button:has-text('Continue'), button[type='submit']:has-text('Continue'), button.btn-primary:has-text('Continue'), button.train_Search").first
+            cont_btn = page.locator("button.train_Search[type='submit'], button.train_Search:has-text('Continue'), button[type='submit']:has-text('Continue'), button:has-text('Continue')").first
             if await cont_btn.count() > 0 and await cont_btn.is_visible():
                 await cont_btn.scroll_into_view_if_needed()
+                await asyncio.sleep(0.3)
                 try:
-                    await cont_btn.click(timeout=5000)
+                    await cont_btn.click(timeout=4000)
                     clicked_continue = True
+                    log_event(db, "INFO", "AUTOMATION", "Clicked Continue button on Passenger page.", ref)
                 except Exception:
-                    # If normal click fails (e.g. overlay), try force click
-                    await cont_btn.click(timeout=5000, force=True)
+                    await cont_btn.click(force=True)
                     clicked_continue = True
+                    log_event(db, "INFO", "AUTOMATION", "Force-clicked Continue button on Passenger page.", ref)
 
             if not clicked_continue:
-                await page.evaluate('''() => {
+                # JS fallback — only if Playwright locator didn't click
+                clicked_continue = await page.evaluate('''() => {
                     const btn = Array.from(document.querySelectorAll('button')).find(b => {
                         const t = (b.innerText || '').trim().toLowerCase();
-                        return t === 'continue' || t.includes('continue');
+                        return (t === 'continue' || t.includes('continue')) && b.offsetParent !== null;
                     });
-                    if (btn) btn.click();
+                    if (btn) {
+                        btn.click();
+                        return true;
+                    }
+                    return false;
                 }''')
-            await asyncio.sleep(1.5)
+                if clicked_continue:
+                    log_event(db, "INFO", "AUTOMATION", "Clicked Continue button via JS fallback.", ref)
+
+            await asyncio.sleep(1.0)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Passenger Continue note: {e}", ref)
 
@@ -1806,27 +1884,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         session_state.set_stage("REVIEW_BOOKING")
         log_event(db, "INFO", "AUTOMATION", "Navigating to Review Booking page...", ref)
 
-        # Wait up to 35s for Review page, aggressively handling any confirmation dialogs (Yes/OK/Agree/Proceed)
+        # Wait up to 35s for Review page, cleanly handling any confirmation dialogs (Waitlist/Insurance/Senior)
         arrived_at_review = False
+        dialog_confirmed = False
+
         for s in range(35):
-            await dismiss_overlays(page)
+            await asyncio.sleep(1)
 
-            # Auto-click confirmation dialogs & alerts
-            try:
-                await page.evaluate('''() => {
-                    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, p-confirmdialog, .ui-confirmdialog, div[role="dialog"], .modal, app-review-booking-dialog')).filter(d => d.offsetParent !== null);
-                    for (const d of dialogs) {
-                        const btns = Array.from(d.querySelectorAll('button, span.ui-button-text, a.btn, input[type="button"]')).filter(b => b.offsetParent !== null);
-                        const b = btns.find(x => {
-                            const t = (x.innerText || x.value || '').trim().toLowerCase();
-                            return t.includes('yes') || t.includes('agree') || t.includes('ok') || t.includes('continue') || t.includes('proceed') || t.includes('confirm');
-                        });
-                        if (b) b.click();
-                    }
-                }''')
-            except Exception:
-                pass
-
+            # 1. Check if arrived at Review or Payment page
             if "review" in page.url.lower() or "payment" in page.url.lower():
                 arrived_at_review = True
                 break
@@ -1834,7 +1899,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 arrived_at_review = True
                 break
 
-            # Early detect IRCTC error page — fail fast instead of wasting 35 seconds
+            # 2. Early detect IRCTC error page
             if "/nget/error" in page.url.lower():
                 err = f"IRCTC redirected to error page ({page.url}). This usually means passenger details validation failed or session expired on IRCTC side."
                 log_event(db, "ERROR", "AUTOMATION", err, ref)
@@ -1843,41 +1908,56 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 booking.status = "FAILED"
                 db.commit()
                 if settings.TELEGRAM_ENABLED:
-                    await send_telegram_message(f"❌ *Booking Error* (Ref: `{ref}`)\n\n{err}")
+                    await send_telegram_message(
+                        f"❌ *Booking Error* (Ref: `{ref}`)\n\n"
+                        f"IRCTC ne error page dikhai. Session expire ho gaya ya details me koi issue tha.\n\n"
+                        f"👉 Kripya dobara try karein.",
+                        reply_markup={"inline_keyboard": [[{"text": "🎫 Nayi Booking Karein", "callback_data": "cmd_book"}]]}
+                    )
                 try:
                     await page.screenshot(path="data/irctc_error_page.png")
                 except Exception:
                     pass
                 return
 
-            # If still on passenger page after 4, 8, 14, 20, 26 seconds, re-trigger Continue & dialog acceptance
-            if s in (4, 8, 14, 20, 26):
+            # 3. Handle PrimeNG confirmation dialogs (Waitlist alert, travel insurance, etc.)
+            # Click accept button ONCE and wait for transition
+            if not dialog_confirmed:
                 try:
-                    await page.evaluate('''() => {
-                        const dialogBtn = Array.from(document.querySelectorAll('.ui-dialog button, p-confirmdialog button, div[role="dialog"] button')).find(b => {
-                            const t = (b.innerText || '').trim().toLowerCase();
-                            return t.includes('yes') || t.includes('agree') || t.includes('ok') || t.includes('confirm');
+                    confirmed_text = await page.evaluate('''() => {
+                        const dialog = document.querySelector('p-confirmdialog, .ui-confirmdialog, .ui-dialog[role="dialog"]');
+                        if (!dialog || dialog.offsetParent === null) return null;
+
+                        const btns = Array.from(dialog.querySelectorAll('button, span.ui-button-text, a.btn'));
+                        const acceptBtn = btns.find(b => {
+                            const t = (b.innerText || b.getAttribute('label') || '').trim().toLowerCase();
+                            return t === 'yes' || t === 'i agree' || t === 'agree' || t === 'ok' || t === 'confirm' || t === 'proceed';
                         });
-                        if (dialogBtn) {
-                            dialogBtn.click();
-                            return;
+
+                        if (acceptBtn) {
+                            const dialogMsg = (dialog.innerText || '').slice(0, 100).replace(/\\s+/g, ' ');
+                            acceptBtn.click();
+                            return dialogMsg;
                         }
-                        const btns = Array.from(document.querySelectorAll('button')).filter(b => (b.innerText || '').toLowerCase().includes('continue'));
-                        for (const b of btns) {
-                            if (b.offsetParent !== null) {
-                                b.click();
-                                break;
-                            }
-                        }
+                        return null;
                     }''')
-                    cont_retry = page.locator("button:has-text('Continue'):visible, button[type='submit']:has-text('Continue'):visible").first
-                    if await cont_retry.count() > 0:
-                        await cont_retry.scroll_into_view_if_needed()
-                        await cont_retry.click(force=True)
+                    if confirmed_text:
+                        dialog_confirmed = True
+                        log_event(db, "INFO", "AUTOMATION", f"Accepted IRCTC confirmation dialog: '{confirmed_text}'", ref)
+                        await asyncio.sleep(2.0)
+                        continue
                 except Exception:
                     pass
 
-            await asyncio.sleep(1)
+            # 4. Single cautious re-click at 12s if still on passenger input with no active dialog
+            if s == 12 and not dialog_confirmed:
+                try:
+                    cont_retry = page.locator("button.train_Search[type='submit']:visible, button:has-text('Continue'):visible").first
+                    if await cont_retry.count() > 0:
+                        log_event(db, "INFO", "AUTOMATION", "Re-attempting single Continue click at 12s...", ref)
+                        await cont_retry.click()
+                except Exception:
+                    pass
 
         # If not arrived at review booking or payment, raise informative error with debug info
         if not arrived_at_review:
