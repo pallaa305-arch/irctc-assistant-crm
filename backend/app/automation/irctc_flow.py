@@ -1195,16 +1195,22 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
                 slot_found = False
                 try:
-                    slot_found = await target_train_card.evaluate('''([card, day, monthName, monthNum]) => {
-                        const cells = Array.from(card.querySelectorAll('table tr td, div.pre-avl, div[class*="avl"]')).filter(el => {
+                    slot_found = await target_train_card.evaluate('''(card, [day, monthName, monthNum]) => {
+                        if (!card) return false;
+                        const root = card.querySelector('table, .pre-avl') ? card : (card.parentElement || card);
+                        const cells = Array.from(root.querySelectorAll('table tr td, div.pre-avl, div[class*="avl"], td, div.link')).filter(el => {
                             const text = (el.innerText || '').trim().toUpperCase();
                             return text.includes('AVL') || text.includes('AVAILABLE') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL') || text.includes('-202');
                         });
 
+                        const dayPadded = day ? String(day).padStart(2, '0') : '';
+                        const dayRaw = day ? String(parseInt(day, 10)) : '';
+
                         // 1. First priority: Slot matching both target journey date and bookable status
                         for (const cell of cells) {
                             const text = (cell.innerText || '').trim().toUpperCase();
-                            const hasDate = (day && text.includes(day)) && (monthName && text.includes(monthName) || monthNum && text.includes(monthNum));
+                            const hasDate = (dayRaw && text.includes(dayRaw) || dayPadded && text.includes(dayPadded)) &&
+                                            (monthName && text.includes(monthName) || monthNum && text.includes(monthNum));
                             const isBookable = (text.includes('AVAILABLE') || text.includes('AVL') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL')) &&
                                                !text.includes('NOT AVAILABLE') && !text.includes('REGRET') && !text.includes('NOT AVL');
                             if (hasDate && isBookable) {
@@ -1213,7 +1219,18 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             }
                         }
 
-                        // 2. Second priority: Any bookable slot inside the availability table
+                        // 2. Second priority: Any slot matching the date (even if WL or RAC)
+                        for (const cell of cells) {
+                            const text = (cell.innerText || '').trim().toUpperCase();
+                            const hasDate = (dayRaw && text.includes(dayRaw) || dayPadded && text.includes(dayPadded)) &&
+                                            (monthName && text.includes(monthName) || monthNum && text.includes(monthNum));
+                            if (hasDate && !text.includes('REGRET') && !text.includes('NOT AVAILABLE') && !text.includes('NOT AVL')) {
+                                cell.click();
+                                return true;
+                            }
+                        }
+
+                        // 3. Third priority: Any bookable slot
                         for (const cell of cells) {
                             const text = (cell.innerText || '').trim().toUpperCase();
                             const isBookable = (text.includes('AVAILABLE') || text.includes('AVL') || text.includes('WL') || text.includes('RAC') || text.includes('CURR_AVAIL')) &&
@@ -1225,9 +1242,9 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         }
 
                         return false;
-                    }''', [None, target_day, target_month_name, target_month_num])
-                except Exception:
-                    pass
+                    }''', [target_day, target_month_name, target_month_num])
+                except Exception as eval_err:
+                    log_event(db, "WARNING", "AUTOMATION", f"Slot evaluation error: {eval_err}", ref)
 
                 if slot_found:
                     date_clicked = True
