@@ -132,7 +132,7 @@ async def dismiss_overlays(page):
 
                 let action = false;
 
-                // 1. Language selection dialog handling
+                // 1. Language selection dialog handling (Welcome / भाषा चयन)
                 const langDialogs = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"]')).filter(
                     d => !d.querySelector('app-login') && !d.matches('p-confirmdialog, .ui-confirmdialog')
                 );
@@ -141,16 +141,20 @@ async def dismiss_overlays(page):
                     if (text.includes('language') || text.includes('भाषा') || text.includes('welcome') || text.includes('पसंदीदा')) {
                         const btns = Array.from(d.querySelectorAll('button, a, input[type="radio"], [role="button"], span.ui-button-text'));
                         const eng = btns.find(b => (b.innerText || b.value || '').trim().toLowerCase().includes('english'));
-                        if (eng) { eng.click(); return true; }
+                        if (eng) eng.click();
 
                         const submit = btns.find(b => {
                             const t = (b.innerText || b.value || '').trim().toLowerCase();
                             return t.includes('submit') || t.includes('ok') || t.includes('proceed') || t.includes('continue');
                         });
-                        if (submit) { submit.click(); return true; }
-
-                        const close = d.querySelector('.ui-dialog-titlebar-close, .close');
-                        if (close) { close.click(); return true; }
+                        if (submit) {
+                            submit.click();
+                        } else {
+                            const close = d.querySelector('.ui-dialog-titlebar-close, .close');
+                            if (close) close.click();
+                            else d.remove();
+                        }
+                        action = true;
                     }
                 }
 
@@ -172,9 +176,9 @@ async def dismiss_overlays(page):
                     }
                 }
 
-                // 3. Force-remove masks only if no dialog is active
-                const openDialog = document.querySelector('.ui-dialog[style*="display: block"], p-dialog[style*="display: block"], p-confirmdialog');
-                if (!openDialog) {
+                // 3. Force-remove masks and blur overlays that block pointer events
+                const isConfirm = document.querySelector('p-confirmdialog, .ui-confirmdialog');
+                if (!isConfirm || isConfirm.offsetParent === null) {
                     const masks = document.querySelectorAll('.custom-blur-mask, .ui-dialog-mask-scrollblocker');
                     for (const m of masks) m.remove();
                     if (document.body && document.body.classList.contains('ui-dialog-mask-scrollblocker')) {
@@ -389,80 +393,76 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
         # Try opening login modal if not already open
         user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
         if not (await user_input.count() > 0 and await user_input.is_visible()):
-            # 1. Close any stray sidebar/backdrop overlay first
-            await page.evaluate('''() => {
-                const overlay = document.querySelector('.ui-sidebar-mask, .ui-widget-overlay');
-                if (overlay) overlay.click();
-            }''')
+            await dismiss_overlays(page)
 
-            # 2. Try SmartBrowserActions click on LOGIN button directly
-            clicked_login = await SmartBrowserActions.smart_click(
-                page=page,
-                selectors=[
-                    "a.loginText",
-                    "a.search_btn.loginText",
-                    "a:has-text('LOGIN / REGISTER')",
-                    "a:has-text('LOGIN')",
-                    "button:has-text('LOGIN / REGISTER')",
-                    "button:has-text('LOGIN')"
-                ],
-                text_keywords=["LOGIN / REGISTER", "LOGIN"],
-                wait_after_sec=1.5
-            )
+            # 1. Direct Playwright click with force=True
+            try:
+                login_btn = page.locator("a.loginText, a.search_btn.loginText, a:has-text('LOGIN / REGISTER'), a:has-text('LOGIN'), button:has-text('LOGIN')").first
+                if await login_btn.count() > 0:
+                    await login_btn.click(timeout=3000, force=True)
+                    await asyncio.sleep(1.0)
+            except Exception:
+                pass
 
-            # 3. Direct mouse coordinate click fallback
-            if not clicked_login:
+            # 2. Native JavaScript click fallback
+            user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
+            if not (await user_input.count() > 0 and await user_input.is_visible()):
                 try:
-                    login_loc = page.locator("a.loginText, a:has-text('LOGIN / REGISTER'), a:has-text('LOGIN')").first
-                    if await login_loc.count() > 0:
-                        box = await login_loc.bounding_box()
-                        if box:
-                            await page.mouse.click(box["x"] + box["width"] / 2, box["y"] + box["height"] / 2)
-                            await asyncio.sleep(1.5)
+                    await page.evaluate('''() => {
+                        const l = document.querySelector('a.loginText, a.search_btn.loginText') || Array.from(document.querySelectorAll('a, button, span')).find(el => {
+                            const t = (el.innerText || '').trim().toUpperCase();
+                            return t === 'LOGIN' || t === 'LOGIN / REGISTER';
+                        });
+                        if (l) l.click();
+                    }''')
+                    await asyncio.sleep(1.0)
                 except Exception:
                     pass
 
-            # 4. If still not visible, only check hamburger if on mobile/narrow screen
-            if not (await page.locator("input[formcontrolname='userid'], #userId").count() > 0):
-                hamburger = page.locator("a.sidebar-menu-btn, button.navbar-toggler").first
-                if await hamburger.count() > 0 and await hamburger.is_visible():
-                    try:
-                        await hamburger.click(timeout=1500)
-                        await asyncio.sleep(0.8)
-                        side_login = page.locator("a.loginText, a:has-text('LOGIN')").first
-                        if await side_login.count() > 0 and await side_login.is_visible():
-                            await side_login.click(force=True)
-                            await asyncio.sleep(1.5)
-                    except Exception:
-                        pass
+            # 3. SmartBrowserActions coordinate click fallback
+            user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
+            if not (await user_input.count() > 0 and await user_input.is_visible()):
+                await SmartBrowserActions.smart_click(
+                    page=page,
+                    selectors=[
+                        "a.loginText",
+                        "a.search_btn.loginText",
+                        "a:has-text('LOGIN / REGISTER')",
+                        "a:has-text('LOGIN')",
+                        "button:has-text('LOGIN')"
+                    ],
+                    text_keywords=["LOGIN / REGISTER", "LOGIN"],
+                    wait_after_sec=1.5
+                )
 
-        # Wait for user input selector
-        for _ in range(8):
+        # Wait up to 10s for user input selector to appear
+        for _ in range(20):
             user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
             pass_input = page.locator("input[formcontrolname='password'], #pwd, input[placeholder*='Password' i]").first
             if await user_input.count() > 0 and await user_input.is_visible():
                 break
             await asyncio.sleep(0.5)
 
-        # Auto-retry if login modal still didn't open — reload page and try again
+        # Auto-retry if login modal still didn't open — reload train-search and try again
         if not (await user_input.count() > 0 and await user_input.is_visible()):
+            try:
+                await page.screenshot(path=f"data/login_failed_{attempt}_{ref}.png")
+            except Exception:
+                pass
             log_event(db, "WARNING", "AUTOMATION", f"Login attempt {attempt}: Modal did not open. Auto-retrying by reloading page...", ref)
             try:
-                await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=30000)
+                await page.goto("https://www.irctc.co.in/nget/train-search", wait_until="domcontentloaded", timeout=30000)
                 await asyncio.sleep(2)
                 await dismiss_overlays(page)
-                # Re-attempt clicking LOGIN button
-                await SmartBrowserActions.smart_click(
-                    page=page,
-                    selectors=[
-                        "a.loginText", "a.search_btn.loginText",
-                        "a:has-text('LOGIN / REGISTER')", "a:has-text('LOGIN')",
-                        "button:has-text('LOGIN / REGISTER')", "button:has-text('LOGIN')"
-                    ],
-                    text_keywords=["LOGIN / REGISTER", "LOGIN"],
-                    wait_after_sec=2.0
-                )
-                await asyncio.sleep(1.5)
+                # Direct JS click on LOGIN after reload
+                await page.evaluate('''() => {
+                    const l = document.querySelector('a.loginText, a.search_btn.loginText') || Array.from(document.querySelectorAll('a, button, span')).find(el => {
+                        const t = (el.innerText || '').trim().toUpperCase();
+                        return t === 'LOGIN' || t === 'LOGIN / REGISTER';
+                    });
+                    if (l) l.click();
+                }''')
+                await asyncio.sleep(2.0)
             except Exception:
                 pass
             user_input = page.locator("input[formcontrolname='userid'], #userId, input[placeholder*='User Name' i]").first
