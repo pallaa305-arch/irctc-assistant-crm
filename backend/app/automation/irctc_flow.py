@@ -124,7 +124,10 @@ async def dismiss_overlays(page):
         try:
             # Native DOM evaluation for safe dismissal without double-clicks or aborting confirmation dialogs
             js_res = await page.evaluate('''() => {
-                if (document.querySelector('app-login')) return false;
+                const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
+                const appLogin = document.querySelector('app-login');
+                const userInput = document.querySelector("input[formcontrolname='userid'], #userId");
+                if ((appLogin && isVisible(appLogin)) || (userInput && isVisible(userInput))) return false;
 
                 // CRITICAL: Do NOT touch active business confirmation dialogs (e.g. Waitlist confirmation)
                 const isConfirmDialog = document.querySelector('p-confirmdialog, .ui-confirmdialog');
@@ -134,7 +137,7 @@ async def dismiss_overlays(page):
 
                 // 1. Language selection dialog handling (Welcome / भाषा चयन)
                 const langDialogs = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"]')).filter(
-                    d => !d.querySelector('app-login') && !d.matches('p-confirmdialog, .ui-confirmdialog')
+                    d => !d.querySelector("input[formcontrolname='userid'], #userId") && !d.matches('p-confirmdialog, .ui-confirmdialog')
                 );
                 for (const d of langDialogs) {
                     const text = (d.innerText || '').toLowerCase();
@@ -160,7 +163,7 @@ async def dismiss_overlays(page):
 
                 // 2. Generic informational disclaimer popups (Kavach, advisory, COVID) - strictly ignore confirmation dialogs
                 const infoDialogs = Array.from(document.querySelectorAll('.ui-dialog:not(p-confirmdialog):not(.ui-confirmdialog), .modal:not(p-confirmdialog)')).filter(
-                    d => !d.querySelector('app-login')
+                    d => !d.querySelector("input[formcontrolname='userid'], #userId")
                 );
                 for (const d of infoDialogs) {
                     const title = (d.querySelector('.ui-dialog-title')?.innerText || '').toLowerCase();
@@ -178,9 +181,16 @@ async def dismiss_overlays(page):
 
                 // 3. Force-remove masks and blur overlays that block pointer events
                 const isConfirm = document.querySelector('p-confirmdialog, .ui-confirmdialog');
-                if (!isConfirm || isConfirm.offsetParent === null) {
+                const isLoginActive = (appLogin && isVisible(appLogin)) || (userInput && isVisible(userInput));
+                if ((!isConfirm || !isVisible(isConfirm)) && !isLoginActive) {
                     const masks = document.querySelectorAll('.custom-blur-mask, .ui-dialog-mask-scrollblocker');
                     for (const m of masks) m.remove();
+                    // Also check for stray ui-widget-overlay if no visible ui-dialog exists
+                    const anyVisibleDialog = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"]')).some(d => isVisible(d));
+                    if (!anyVisibleDialog) {
+                        const strayOverlays = document.querySelectorAll('.ui-widget-overlay, .ui-dialog-mask');
+                        for (const so of strayOverlays) so.remove();
+                    }
                     if (document.body && document.body.classList.contains('ui-dialog-mask-scrollblocker')) {
                         document.body.classList.remove('ui-dialog-mask-scrollblocker');
                     }
@@ -413,7 +423,10 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
                             const t = (el.innerText || '').trim().toUpperCase();
                             return t === 'LOGIN' || t === 'LOGIN / REGISTER';
                         });
-                        if (l) l.click();
+                        if (l) {
+                            l.click();
+                            try { l.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        }
                     }''')
                     await asyncio.sleep(1.0)
                 except Exception:
@@ -460,7 +473,10 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
                         const t = (el.innerText || '').trim().toUpperCase();
                         return t === 'LOGIN' || t === 'LOGIN / REGISTER';
                     });
-                    if (l) l.click();
+                    if (l) {
+                        l.click();
+                        try { l.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                    }
                 }''')
                 await asyncio.sleep(2.0)
             except Exception:
