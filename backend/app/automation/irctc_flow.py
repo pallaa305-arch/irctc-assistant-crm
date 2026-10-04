@@ -1902,7 +1902,12 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
         # Click Continue to Review Page
         try:
-            await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+            # Scroll to passenger submit area (centering the Continue button, not scrolling past to the footer)
+            await page.evaluate('''() => {
+                const btn = Array.from(document.querySelectorAll('button')).find(b => (b.innerText || '').toLowerCase().includes('continue'));
+                if (btn) btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                else window.scrollTo(0, document.body.scrollHeight * 0.7);
+            }''')
             await asyncio.sleep(0.5)
 
             # Check Angular form validity before clicking Continue
@@ -1912,10 +1917,12 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 const names = document.querySelectorAll("p-autocomplete[formcontrolname='passengerName'] input, input[placeholder*='Passenger Name' i]");
                 const ages = document.querySelectorAll("input[formcontrolname='passengerAge'], input[placeholder*='Age' i]");
                 const genders = document.querySelectorAll("select[formcontrolname='passengerGender'], p-dropdown[formcontrolname='passengerGender']");
+                const nats = document.querySelectorAll("select[formcontrolname='passengerNationality'], p-dropdown[formcontrolname='passengerNationality']");
                 const mobiles = document.querySelectorAll("input[formcontrolname='mobileNumber'], input#mobileNumber");
                 result.fields.names = Array.from(names).map(n => n.value || '');
                 result.fields.ages = Array.from(ages).map(a => a.value || '');
                 result.fields.genderCount = genders.length;
+                result.fields.nationalities = Array.from(nats).map(n => n.value || (n.innerText || '').trim().slice(0, 30));
                 result.fields.mobile = mobiles.length > 0 ? mobiles[0].value : '';
                 // Check visible validation errors
                 const errs = Array.from(document.querySelectorAll('.ui-message-error, .text-danger, .error-msg, span.help-block, .ui-messages-error, .ng-invalid.ng-touched'));
@@ -1940,7 +1947,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
             # Click Continue button cleanly without double-clicking
             clicked_continue = False
-            cont_btn = page.locator("button.train_Search[type='submit'], button.train_Search:has-text('Continue'), button[type='submit']:has-text('Continue'), button:has-text('Continue')").first
+            cont_btn = page.locator(
+                "app-passenger-input button:has-text('Continue'), "
+                "form button.train_Search:has-text('Continue'), "
+                "form button:has-text('Continue'), "
+                "button.btnDefault:has-text('Continue'), "
+                "button[type='submit']:has-text('Continue'), "
+                "button:has-text('Continue')"
+            ).first
             if await cont_btn.count() > 0 and await cont_btn.is_visible():
                 await cont_btn.scroll_into_view_if_needed()
                 await asyncio.sleep(0.3)
@@ -1956,12 +1970,17 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if not clicked_continue:
                 # JS fallback — only if Playwright locator didn't click
                 clicked_continue = await page.evaluate('''() => {
-                    const btn = Array.from(document.querySelectorAll('button')).find(b => {
-                        const t = (b.innerText || '').trim().toLowerCase();
-                        return (t === 'continue' || t.includes('continue')) && b.offsetParent !== null;
+                    const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0));
+                    const buttons = Array.from(document.querySelectorAll('app-passenger-input button, form button, button'));
+                    const btn = buttons.find(b => {
+                        if (b.closest('app-header, .header, nav, app-modify-search')) return false;
+                        const t = (b.innerText || b.value || '').trim().toLowerCase();
+                        return (t === 'continue' || t.includes('continue')) && isVisible(b);
                     });
                     if (btn) {
+                        btn.scrollIntoView({ behavior: 'smooth', block: 'center' });
                         btn.click();
+                        try { btn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
                         return true;
                     }
                     return false;
@@ -2068,7 +2087,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         return Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog')).some(d => isVisible(d));
                     }''')
                     if not has_dialog:
-                        cont_retry = page.locator("button.train_Search[type='submit']:visible, button.train_Search:has-text('Continue'):visible, button[type='submit']:has-text('Continue'):visible").first
+                        cont_retry = page.locator(
+                            "app-passenger-input button:has-text('Continue'):visible, "
+                            "form button:has-text('Continue'):visible, "
+                            "button.btnDefault:has-text('Continue'):visible, "
+                            "button[type='submit']:has-text('Continue'):visible, "
+                            "button:has-text('Continue'):visible"
+                        ).first
                         if await cont_retry.count() > 0 and await cont_retry.is_visible():
                             log_event(db, "INFO", "AUTOMATION", "Re-attempting single Continue click at 15s...", ref)
                             await cont_retry.click()
