@@ -1819,30 +1819,50 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         # Select Payment Mode: BHIM/UPI (Convenience Fee: ₹20 + GST / ₹10 + GST)
         try:
             upi_selected = await page.evaluate('''() => {
-                const allRadios = Array.from(document.querySelectorAll('p-radiobutton, div.ui-radiobutton, input[type="radio"]'));
-                for (const r of allRadios) {
-                    const container = r.closest('p-radiobutton, tr, div') || r;
-                    const text = (container.innerText || container.textContent || '').toLowerCase();
-                    const val = r.getAttribute('value') || (r.querySelector('input')?.value) || '';
-                    if (text.includes('bhim') || text.includes('upi') || val === '2' || val === '3') {
-                        const box = r.querySelector('.ui-radiobutton-box') || (r.classList.contains('ui-radiobutton-box') ? r : null) || r;
-                        box.scrollIntoView({ behavior: 'instant', block: 'center' });
-                        box.click();
-                        try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                        const inp = container.querySelector('input[type="radio"]') || (r.tagName === 'INPUT' ? r : null);
-                        if (inp) {
-                            inp.checked = true;
-                            inp.dispatchEvent(new Event('input', { bubbles: true }));
-                            inp.dispatchEvent(new Event('change', { bubbles: true }));
+                // Strategy 1: Find container or label matching BHIM/UPI text
+                const candidates = Array.from(document.querySelectorAll('label, div, p-radiobutton, tr, span'));
+                for (const el of candidates) {
+                    const text = (el.innerText || '').toLowerCase();
+                    if ((text.includes('bhim/upi') || (text.includes('bhim') && text.includes('upi'))) && (text.includes('10') || text.includes('convenience') || text.includes('pay through'))) {
+                        const box = el.querySelector('.ui-radiobutton-box') || (el.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box'));
+                        if (box) {
+                            box.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            box.click();
+                            try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                            const inp = box.parentElement?.querySelector('input[type="radio"]') || el.querySelector('input[type="radio"]');
+                            if (inp) {
+                                inp.checked = true;
+                                inp.dispatchEvent(new Event('input', { bubbles: true }));
+                                inp.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            return true;
                         }
-                        return box.classList.contains('ui-state-active') || (inp && inp.checked);
+                    }
+                }
+                // Strategy 2: If payment section exists, click 2nd radiobutton (index 1 = UPI)
+                const paySection = Array.from(document.querySelectorAll('div, section, p-card')).find(d => {
+                    const t = (d.innerText || '').toLowerCase();
+                    return t.includes('payment mode') && t.includes('convenience fee');
+                });
+                if (paySection) {
+                    const boxes = paySection.querySelectorAll('.ui-radiobutton-box');
+                    if (boxes.length >= 2) {
+                        boxes[1].scrollIntoView({ behavior: 'instant', block: 'center' });
+                        boxes[1].click();
+                        return true;
                     }
                 }
                 return false;
             }''')
 
             if not upi_selected:
-                upi_box = page.locator("p-radiobutton:has-text('BHIM/UPI') .ui-radiobutton-box, p-radiobutton[value='2'] .ui-radiobutton-box, div:has-text('Pay through BHIM/UPI') .ui-radiobutton-box").first
+                upi_box = page.locator(
+                    "label:has-text('BHIM/UPI') .ui-radiobutton-box, "
+                    "div:has-text('Pay through BHIM/UPI') .ui-radiobutton-box, "
+                    "div:has-text('BHIM/UPI') .ui-radiobutton-box, "
+                    "label:has-text('Pay through BHIM/UPI'), "
+                    "label:has-text('BHIM/UPI')"
+                ).last
                 if await upi_box.count() > 0:
                     await upi_box.click(force=True)
                     await asyncio.sleep(0.3)
@@ -1854,30 +1874,48 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         # Travel Insurance: Yes (or No fallback) - Mandatory on IRCTC to proceed!
         try:
             ins_selected = await page.evaluate('''() => {
-                const allRadios = Array.from(document.querySelectorAll('p-radiobutton, div.ui-radiobutton, input[type="radio"]'));
-                for (const r of allRadios) {
-                    const container = r.closest('p-radiobutton, tr, div') || r;
-                    const text = (container.innerText || container.textContent || '').toLowerCase();
-                    const val = r.getAttribute('value') || r.getAttribute('id') || (r.querySelector('input')?.value) || '';
-                    if ((text.includes('yes') && (text.includes('accept') || text.includes('insurance'))) || val === '1' || val === 'yes') {
-                        const box = r.querySelector('.ui-radiobutton-box') || (r.classList.contains('ui-radiobutton-box') ? r : null) || r;
-                        box.scrollIntoView({ behavior: 'instant', block: 'center' });
-                        box.click();
-                        try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                        const inp = container.querySelector('input[type="radio"]') || (r.tagName === 'INPUT' ? r : null);
-                        if (inp) {
-                            inp.checked = true;
-                            inp.dispatchEvent(new Event('input', { bubbles: true }));
-                            inp.dispatchEvent(new Event('change', { bubbles: true }));
+                // Strategy 1: Find container or label matching Yes & Accept text
+                const candidates = Array.from(document.querySelectorAll('label, div, p-radiobutton, tr, span'));
+                for (const el of candidates) {
+                    const text = (el.innerText || '').toLowerCase();
+                    if ((text.includes('yes, and i accept') || (text.includes('yes') && text.includes('insurance') && text.includes('accept'))) && !text.includes('no, i do not')) {
+                        const box = el.querySelector('.ui-radiobutton-box') || (el.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box'));
+                        if (box) {
+                            box.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            box.click();
+                            try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                            const inp = box.parentElement?.querySelector('input[type="radio"]') || el.querySelector('input[type="radio"]');
+                            if (inp) {
+                                inp.checked = true;
+                                inp.dispatchEvent(new Event('input', { bubbles: true }));
+                                inp.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            return true;
                         }
-                        return box.classList.contains('ui-state-active') || (inp && inp.checked);
+                    }
+                }
+                // Strategy 2: If travel insurance section exists, click 1st radiobutton (index 0 = Yes)
+                const insSection = Array.from(document.querySelectorAll('div, section, p-card')).find(d => {
+                    const t = (d.innerText || '').toLowerCase();
+                    return t.includes('travel insurance') && (t.includes('terms') || t.includes('0.45') || t.includes('accept'));
+                });
+                if (insSection) {
+                    const boxes = insSection.querySelectorAll('.ui-radiobutton-box');
+                    if (boxes.length > 0) {
+                        boxes[0].scrollIntoView({ behavior: 'instant', block: 'center' });
+                        boxes[0].click();
+                        return true;
                     }
                 }
                 return false;
             }''')
 
             if not ins_selected:
-                ins_box = page.locator("p-radiobutton:has-text('Yes') .ui-radiobutton-box, p-radiobutton[id='1'] .ui-radiobutton-box").first
+                ins_box = page.locator(
+                    "label:has-text('Yes, and I accept') .ui-radiobutton-box, "
+                    "div:has-text('Yes, and I accept') .ui-radiobutton-box, "
+                    "label:has-text('Yes, and I accept')"
+                ).first
                 if await ins_box.count() > 0:
                     await ins_box.click(force=True)
                     await asyncio.sleep(0.3)
@@ -1934,13 +1972,49 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 result.fields.nationalities = Array.from(nats).map(n => n.value || (n.innerText || '').trim().slice(0, 30));
                 result.fields.mobile = mobiles.length > 0 ? mobiles[0].value : '';
 
-                // Verify radio button states
-                const payRadios = Array.from(document.querySelectorAll('p-radiobutton, div.ui-radiobutton'));
-                const upiRadio = payRadios.find(r => (r.innerText || '').toLowerCase().includes('bhim') || (r.innerText || '').toLowerCase().includes('upi'));
-                const upiActive = upiRadio ? (upiRadio.querySelector('.ui-state-active') !== null || (upiRadio.querySelector('input') && upiRadio.querySelector('input').checked)) : false;
+                // Verify radio button states accurately
+                const isUpiActive = () => {
+                    const upiContainers = Array.from(document.querySelectorAll('div, label, tr, p-radiobutton')).filter(el => {
+                        const t = (el.innerText || '').toLowerCase();
+                        return (t.includes('bhim/upi') || (t.includes('bhim') && t.includes('upi'))) && el.querySelector('.ui-radiobutton-box');
+                    });
+                    for (const c of upiContainers) {
+                        const box = c.querySelector('.ui-radiobutton-box');
+                        const inp = c.querySelector('input[type="radio"]');
+                        if (box && (box.classList.contains('ui-state-active') || box.querySelector('.ui-radiobutton-icon:not(.ui-icon-blank)') || (inp && inp.checked))) {
+                            return true;
+                        }
+                    }
+                    const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
+                    for (const b of activeBoxes) {
+                        const parentText = (b.closest('.row, .col-xs-12, tr, div')?.innerText || '').toLowerCase();
+                        if (parentText.includes('bhim') || parentText.includes('upi') || parentText.includes('₹10')) return true;
+                    }
+                    return false;
+                };
 
-                const insRadios = payRadios.filter(r => (r.innerText || '').toLowerCase().includes('yes') && (r.innerText || '').toLowerCase().includes('accept'));
-                const insActive = insRadios.length > 0 ? (insRadios[0].querySelector('.ui-state-active') !== null || (insRadios[0].querySelector('input') && insRadios[0].querySelector('input').checked)) : false;
+                const isInsActive = () => {
+                    const insContainers = Array.from(document.querySelectorAll('div, label, tr, p-radiobutton')).filter(el => {
+                        const t = (el.innerText || '').toLowerCase();
+                        return (t.includes('yes, and i accept') || (t.includes('yes') && t.includes('accept'))) && el.querySelector('.ui-radiobutton-box');
+                    });
+                    for (const c of insContainers) {
+                        const box = c.querySelector('.ui-radiobutton-box');
+                        const inp = c.querySelector('input[type="radio"]');
+                        if (box && (box.classList.contains('ui-state-active') || box.querySelector('.ui-radiobutton-icon:not(.ui-icon-blank)') || (inp && inp.checked))) {
+                            return true;
+                        }
+                    }
+                    const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
+                    for (const b of activeBoxes) {
+                        const parentText = (b.closest('.row, .col-xs-12, tr, div')?.innerText || '').toLowerCase();
+                        if (parentText.includes('yes') && (parentText.includes('accept') || parentText.includes('insurance'))) return true;
+                    }
+                    return false;
+                };
+
+                const upiActive = isUpiActive();
+                const insActive = isInsActive();
 
                 result.fields.paymentSelected = upiActive;
                 result.fields.insuranceSelected = insActive;
@@ -1958,20 +2032,36 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if not form_state.get('fields', {}).get('paymentSelected', False) or not form_state.get('fields', {}).get('insuranceSelected', False):
                 log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance radio not active. Applying auto-repair click...", ref)
                 await page.evaluate('''() => {
-                    const allRadios = Array.from(document.querySelectorAll('p-radiobutton, div.ui-radiobutton'));
-                    const upi = allRadios.find(r => (r.innerText || '').toLowerCase().includes('bhim') || (r.innerText || '').toLowerCase().includes('upi'));
-                    if (upi) {
-                        const box = upi.querySelector('.ui-radiobutton-box') || upi;
-                        box.click();
-                        const inp = upi.querySelector('input');
+                    // Force click UPI
+                    const upiContainer = Array.from(document.querySelectorAll('label, div, p-radiobutton')).find(el => {
+                        const t = (el.innerText || '').toLowerCase();
+                        return (t.includes('bhim/upi') || (t.includes('bhim') && t.includes('upi'))) && el.querySelector('.ui-radiobutton-box');
+                    });
+                    if (upiContainer) {
+                        const box = upiContainer.querySelector('.ui-radiobutton-box');
+                        if (box) { box.click(); }
+                        const inp = upiContainer.querySelector('input[type="radio"]');
                         if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
+                    } else {
+                        const paySection = Array.from(document.querySelectorAll('div, section, p-card')).find(d => (d.innerText || '').toLowerCase().includes('payment mode'));
+                        const boxes = paySection ? paySection.querySelectorAll('.ui-radiobutton-box') : [];
+                        if (boxes.length >= 2) boxes[1].click();
                     }
-                    const ins = allRadios.find(r => (r.innerText || '').toLowerCase().includes('yes') && (r.innerText || '').toLowerCase().includes('accept'));
-                    if (ins) {
-                        const box = ins.querySelector('.ui-radiobutton-box') || ins;
-                        box.click();
-                        const inp = ins.querySelector('input');
+
+                    // Force click Travel Insurance Yes
+                    const insContainer = Array.from(document.querySelectorAll('label, div, p-radiobutton')).find(el => {
+                        const t = (el.innerText || '').toLowerCase();
+                        return (t.includes('yes, and i accept') || (t.includes('yes') && t.includes('accept'))) && el.querySelector('.ui-radiobutton-box');
+                    });
+                    if (insContainer) {
+                        const box = insContainer.querySelector('.ui-radiobutton-box');
+                        if (box) { box.click(); }
+                        const inp = insContainer.querySelector('input[type="radio"]');
                         if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
+                    } else {
+                        const insSection = Array.from(document.querySelectorAll('div, section, p-card')).find(d => (d.innerText || '').toLowerCase().includes('travel insurance'));
+                        const boxes = insSection ? insSection.querySelectorAll('.ui-radiobutton-box') : [];
+                        if (boxes.length > 0) boxes[0].click();
                     }
                 }''')
                 await asyncio.sleep(0.4)
@@ -2063,8 +2153,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if not dialog_confirmed:
                 try:
                     confirmed_text = await page.evaluate('''() => {
-                        const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0));
-                        const dialog = Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog[role="dialog"], div[role="dialog"]')).find(d => isVisible(d));
+                        const isVisibleDialog = (el) => {
+                            if (!el || !(el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0)) return false;
+                            const txt = (el.innerText || '').trim();
+                            if (txt.length < 5) return false;
+                            const style = window.getComputedStyle(el);
+                            return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+                        };
+                        const dialog = Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog[role="dialog"], div[role="dialog"]')).find(d => isVisibleDialog(d));
                         if (!dialog) return null;
 
                         const btns = Array.from(dialog.querySelectorAll('button, span.ui-button-text, a.btn, .ui-confirmdialog-yesbutton, .p-confirm-dialog-accept'));
@@ -2128,8 +2224,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 try:
                     # Check that no dialog is currently visible before retrying
                     has_dialog = await page.evaluate('''() => {
-                        const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0));
-                        return Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog')).some(d => isVisible(d));
+                        const isVisibleDialog = (el) => {
+                            if (!el || !(el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0)) return false;
+                            const txt = (el.innerText || '').trim();
+                            if (txt.length < 5) return false;
+                            const style = window.getComputedStyle(el);
+                            return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+                        };
+                        return Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog[role="dialog"], div[role="dialog"]')).some(d => isVisibleDialog(d));
                     }''')
                     if not has_dialog:
                         cont_retry = page.locator(
@@ -2151,10 +2253,17 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             page_diagnostics = ""
             try:
                 page_diagnostics = await page.evaluate('''() => {
-                    const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0));
-                    const dialog = Array.from(document.querySelectorAll('.ui-dialog, p-confirmdialog, div[role="dialog"]')).find(d => isVisible(d));
+                    const isVisibleDialog = (el) => {
+                        if (!el || !(el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0)) return false;
+                        const txt = (el.innerText || '').trim();
+                        if (txt.length < 5) return false;
+                        const style = window.getComputedStyle(el);
+                        return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+                    };
+                    const dialog = Array.from(document.querySelectorAll('.ui-dialog[role="dialog"], p-confirmdialog, div[role="dialog"]')).find(d => isVisibleDialog(d));
                     if (dialog) return 'Dialog visible: ' + (dialog.innerText || '').slice(0, 150).replace(/\\s+/g, ' ');
                     const err = document.querySelector('.ui-message-error, .text-danger, .error-msg, .ui-messages-error');
+                    const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0));
                     if (err && isVisible(err)) return 'Form error: ' + (err.innerText || '').slice(0, 150).replace(/\\s+/g, ' ');
                     return 'URL: ' + window.location.href;
                 }''')
