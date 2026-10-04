@@ -1816,62 +1816,72 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Mobile number entry note: {e}", ref)
 
-        # Select Payment Mode: BHIM/UPI (Convenience Fee: ₹20 + GST)
+        # Select Payment Mode: BHIM/UPI (Convenience Fee: ₹20 + GST / ₹10 + GST)
         try:
-            upi_clicked = await SmartBrowserActions.smart_click(
-                page=page,
-                selectors=[
-                    "p-radiobutton[value='2'] .ui-radiobutton-box",
-                    "p-radiobutton[value='2']",
-                    "input[value='2']",
-                    "label:has-text('BHIM/UPI')",
-                    "div:has-text('Pay through BHIM/UPI')"
-                ],
-                text_keywords=["BHIM/UPI", "Pay through BHIM/UPI"],
-                wait_after_sec=0.3
-            )
-            if not upi_clicked:
-                await page.evaluate('''() => {
-                    const allRadios = Array.from(document.querySelectorAll('p-radiobutton, input[type="radio"], div.ui-radiobutton'));
-                    for (const r of allRadios) {
-                        const text = (r.closest('div, label, tr, p-radiobutton')?.innerText || '').toLowerCase();
-                        const val = r.getAttribute('value') || '';
-                        if (text.includes('bhim') || text.includes('upi') || val === '2' || val === '3') {
-                            const box = r.querySelector('.ui-radiobutton-box') || r.querySelector('label') || r;
-                            box.click();
-                            break;
+            upi_selected = await page.evaluate('''() => {
+                const allRadios = Array.from(document.querySelectorAll('p-radiobutton, div.ui-radiobutton, input[type="radio"]'));
+                for (const r of allRadios) {
+                    const container = r.closest('p-radiobutton, tr, div') || r;
+                    const text = (container.innerText || container.textContent || '').toLowerCase();
+                    const val = r.getAttribute('value') || (r.querySelector('input')?.value) || '';
+                    if (text.includes('bhim') || text.includes('upi') || val === '2' || val === '3') {
+                        const box = r.querySelector('.ui-radiobutton-box') || (r.classList.contains('ui-radiobutton-box') ? r : null) || r;
+                        box.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        box.click();
+                        try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        const inp = container.querySelector('input[type="radio"]') || (r.tagName === 'INPUT' ? r : null);
+                        if (inp) {
+                            inp.checked = true;
+                            inp.dispatchEvent(new Event('input', { bubbles: true }));
+                            inp.dispatchEvent(new Event('change', { bubbles: true }));
                         }
+                        return box.classList.contains('ui-state-active') || (inp && inp.checked);
                     }
-                }''')
+                }
+                return false;
+            }''')
+
+            if not upi_selected:
+                upi_box = page.locator("p-radiobutton:has-text('BHIM/UPI') .ui-radiobutton-box, p-radiobutton[value='2'] .ui-radiobutton-box, div:has-text('Pay through BHIM/UPI') .ui-radiobutton-box").first
+                if await upi_box.count() > 0:
+                    await upi_box.click(force=True)
+                    await asyncio.sleep(0.3)
+
             log_event(db, "INFO", "AUTOMATION", "Selected payment mode: BHIM/UPI", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Payment mode selection note: {e}", ref)
 
         # Travel Insurance: Yes (or No fallback) - Mandatory on IRCTC to proceed!
         try:
-            ins_clicked = await SmartBrowserActions.smart_click(
-                page=page,
-                selectors=[
-                    "p-radiobutton[id='1'] .ui-radiobutton-box",
-                    "p-radiobutton[id='1']",
-                    "label:has-text('Yes, and I accept')",
-                    "p-radiobutton[name='travelInsuranceOpted']"
-                ],
-                text_keywords=["Yes, and I accept"],
-                wait_after_sec=0.3
-            )
-            if not ins_clicked:
-                await page.evaluate('''() => {
-                    const allElements = Array.from(document.querySelectorAll('p-radiobutton, label, div.ui-radiobutton, input[type="radio"]'));
-                    for (const el of allElements) {
-                        const t = (el.innerText || el.getAttribute('label') || '').toLowerCase();
-                        if ((t.includes('yes') && (t.includes('accept') || t.includes('insurance'))) || t.includes('terms & conditions')) {
-                            const box = el.querySelector('.ui-radiobutton-box') || el;
-                            box.click();
-                            break;
+            ins_selected = await page.evaluate('''() => {
+                const allRadios = Array.from(document.querySelectorAll('p-radiobutton, div.ui-radiobutton, input[type="radio"]'));
+                for (const r of allRadios) {
+                    const container = r.closest('p-radiobutton, tr, div') || r;
+                    const text = (container.innerText || container.textContent || '').toLowerCase();
+                    const val = r.getAttribute('value') || r.getAttribute('id') || (r.querySelector('input')?.value) || '';
+                    if ((text.includes('yes') && (text.includes('accept') || text.includes('insurance'))) || val === '1' || val === 'yes') {
+                        const box = r.querySelector('.ui-radiobutton-box') || (r.classList.contains('ui-radiobutton-box') ? r : null) || r;
+                        box.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        box.click();
+                        try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        const inp = container.querySelector('input[type="radio"]') || (r.tagName === 'INPUT' ? r : null);
+                        if (inp) {
+                            inp.checked = true;
+                            inp.dispatchEvent(new Event('input', { bubbles: true }));
+                            inp.dispatchEvent(new Event('change', { bubbles: true }));
                         }
+                        return box.classList.contains('ui-state-active') || (inp && inp.checked);
                     }
-                }''')
+                }
+                return false;
+            }''')
+
+            if not ins_selected:
+                ins_box = page.locator("p-radiobutton:has-text('Yes') .ui-radiobutton-box, p-radiobutton[id='1'] .ui-radiobutton-box").first
+                if await ins_box.count() > 0:
+                    await ins_box.click(force=True)
+                    await asyncio.sleep(0.3)
+
             log_event(db, "INFO", "AUTOMATION", "Selected travel insurance: Yes", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Travel insurance selection note: {e}", ref)
@@ -1910,10 +1920,9 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             }''')
             await asyncio.sleep(0.5)
 
-            # Check Angular form validity before clicking Continue
+            # Check Angular form validity and verify Payment / Insurance radios before clicking Continue
             form_state = await page.evaluate('''() => {
                 const result = {valid: null, errors: [], fields: {}};
-                // Check each passenger field
                 const names = document.querySelectorAll("p-autocomplete[formcontrolname='passengerName'] input, input[placeholder*='Passenger Name' i]");
                 const ages = document.querySelectorAll("input[formcontrolname='passengerAge'], input[placeholder*='Age' i]");
                 const genders = document.querySelectorAll("select[formcontrolname='passengerGender'], p-dropdown[formcontrolname='passengerGender']");
@@ -1924,12 +1933,48 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 result.fields.genderCount = genders.length;
                 result.fields.nationalities = Array.from(nats).map(n => n.value || (n.innerText || '').trim().slice(0, 30));
                 result.fields.mobile = mobiles.length > 0 ? mobiles[0].value : '';
-                // Check visible validation errors
+
+                // Verify radio button states
+                const payRadios = Array.from(document.querySelectorAll('p-radiobutton, div.ui-radiobutton'));
+                const upiRadio = payRadios.find(r => (r.innerText || '').toLowerCase().includes('bhim') || (r.innerText || '').toLowerCase().includes('upi'));
+                const upiActive = upiRadio ? (upiRadio.querySelector('.ui-state-active') !== null || (upiRadio.querySelector('input') && upiRadio.querySelector('input').checked)) : false;
+
+                const insRadios = payRadios.filter(r => (r.innerText || '').toLowerCase().includes('yes') && (r.innerText || '').toLowerCase().includes('accept'));
+                const insActive = insRadios.length > 0 ? (insRadios[0].querySelector('.ui-state-active') !== null || (insRadios[0].querySelector('input') && insRadios[0].querySelector('input').checked)) : false;
+
+                result.fields.paymentSelected = upiActive;
+                result.fields.insuranceSelected = insActive;
+
+                // Visible validation errors
                 const errs = Array.from(document.querySelectorAll('.ui-message-error, .text-danger, .error-msg, span.help-block, .ui-messages-error, .ng-invalid.ng-touched'));
                 result.errors = errs.slice(0, 5).map(e => (e.innerText || e.className || '').trim().slice(0, 100)).filter(t => t.length > 0);
+                const hasInvalid = document.querySelector('form.ng-invalid, .ng-invalid.ng-touched');
+                result.valid = !hasInvalid && upiActive && insActive;
                 return result;
             }''')
             log_event(db, "INFO", "AUTOMATION", f"Pre-Continue form state: {form_state}", ref)
+
+            # Auto-repair payment or insurance if not active
+            if not form_state.get('fields', {}).get('paymentSelected', False) or not form_state.get('fields', {}).get('insuranceSelected', False):
+                log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance radio not active. Applying auto-repair click...", ref)
+                await page.evaluate('''() => {
+                    const allRadios = Array.from(document.querySelectorAll('p-radiobutton, div.ui-radiobutton'));
+                    const upi = allRadios.find(r => (r.innerText || '').toLowerCase().includes('bhim') || (r.innerText || '').toLowerCase().includes('upi'));
+                    if (upi) {
+                        const box = upi.querySelector('.ui-radiobutton-box') || upi;
+                        box.click();
+                        const inp = upi.querySelector('input');
+                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
+                    }
+                    const ins = allRadios.find(r => (r.innerText || '').toLowerCase().includes('yes') && (r.innerText || '').toLowerCase().includes('accept'));
+                    if (ins) {
+                        const box = ins.querySelector('.ui-radiobutton-box') || ins;
+                        box.click();
+                        const inp = ins.querySelector('input');
+                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
+                    }
+                }''')
+                await asyncio.sleep(0.4)
 
             # Save diagnostic screenshot
             try:
