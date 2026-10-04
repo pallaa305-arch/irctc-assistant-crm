@@ -129,70 +129,95 @@ async def dismiss_overlays(page):
                 const userInput = document.querySelector("input[formcontrolname='userid'], #userId");
                 if ((appLogin && isVisible(appLogin)) || (userInput && isVisible(userInput))) return false;
 
-                // CRITICAL: Do NOT touch active business confirmation dialogs (e.g. Waitlist confirmation)
-                const isConfirmDialog = document.querySelector('p-confirmdialog, .ui-confirmdialog');
-                if (isConfirmDialog && isConfirmDialog.offsetParent !== null) return false;
+                const isLanguageDialog = (d) => {
+                    if (!d) return false;
+                    const text = (d.innerText || '').toLowerCase();
+                    return text.includes('language') || text.includes('भाषा') || text.includes('welcome') || text.includes('पसंदीदा') || text.includes('preferred');
+                };
+
+                const isBusinessConfirmDialog = (d) => {
+                    if (!d || !isVisible(d)) return false;
+                    if (isLanguageDialog(d)) return false;
+                    const isConfirm = d.matches('p-confirmdialog, .ui-confirmdialog') || !!d.querySelector('p-confirmdialog, .ui-confirmdialog');
+                    const text = (d.innerText || '').toLowerCase();
+                    const title = (d.querySelector('.ui-dialog-title')?.innerText || '').toLowerCase();
+                    return isConfirm && (title.includes('confirmation') || text.includes('waiting list') || text.includes('wl ') || text.includes('auto upgradation'));
+                };
+
+                // CRITICAL: Do NOT touch active business confirmation dialogs (e.g. Waitlist confirmation on passenger review)
+                const activeBusinessConfirm = Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog')).find(d => isBusinessConfirmDialog(d));
+                if (activeBusinessConfirm) return false;
 
                 let action = false;
 
-                // 1. Language selection dialog handling (Welcome / भाषा चयन)
-                const langDialogs = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"]')).filter(
-                    d => !d.querySelector("input[formcontrolname='userid'], #userId") && !d.matches('p-confirmdialog, .ui-confirmdialog')
-                );
+                // 1. Language selection dialog handling (Welcome / भाषा चयन) — including when inside p-confirmdialog
+                const allDialogs = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"], p-confirmdialog, .ui-confirmdialog, .modal'));
+                const langDialogs = allDialogs.filter(d => !d.querySelector("input[formcontrolname='userid'], #userId") && isLanguageDialog(d));
                 for (const d of langDialogs) {
-                    const text = (d.innerText || '').toLowerCase();
-                    if (text.includes('language') || text.includes('भाषा') || text.includes('welcome') || text.includes('पसंदीदा')) {
-                        const btns = Array.from(d.querySelectorAll('button, a, input[type="radio"], [role="button"], span.ui-button-text'));
-                        const eng = btns.find(b => (b.innerText || b.value || '').trim().toLowerCase().includes('english'));
-                        if (eng) eng.click();
+                    const btns = Array.from(d.querySelectorAll('button, a, input[type="radio"], [role="button"], span.ui-button-text, .ui-button'));
+                    const eng = btns.find(b => {
+                        const t = (b.innerText || b.value || '').trim().toLowerCase();
+                        return t === 'english' || t.includes('english');
+                    });
+                    if (eng) {
+                        eng.click();
+                        try { eng.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        action = true;
+                    }
 
-                        const submit = btns.find(b => {
-                            const t = (b.innerText || b.value || '').trim().toLowerCase();
-                            return t.includes('submit') || t.includes('ok') || t.includes('proceed') || t.includes('continue');
-                        });
-                        if (submit) {
-                            submit.click();
-                        } else {
-                            const close = d.querySelector('.ui-dialog-titlebar-close, .close');
-                            if (close) close.click();
-                            else d.remove();
+                    const submit = btns.find(b => {
+                        const t = (b.innerText || b.value || '').trim().toLowerCase();
+                        return t.includes('submit') || t.includes('ok') || t.includes('proceed') || t.includes('continue');
+                    });
+                    if (submit) {
+                        submit.click();
+                        try { submit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        action = true;
+                    } else {
+                        const close = d.querySelector('.ui-dialog-titlebar-close, .close');
+                        if (close) {
+                            close.click();
+                            action = true;
                         }
+                    }
+                    // Force remove language dialog if still present in DOM
+                    setTimeout(() => { try { d.remove(); } catch(e) {} }, 100);
+                    action = true;
+                }
+
+                // 2. Generic informational disclaimer popups (Kavach, advisory, COVID) - strictly ignore confirmation dialogs and language dialogs
+                const infoDialogs = allDialogs.filter(
+                    d => !d.querySelector("input[formcontrolname='userid'], #userId") && !isBusinessConfirmDialog(d) && !isLanguageDialog(d)
+                );
+                for (const d of infoDialogs) {
+                    const title = (d.querySelector('.ui-dialog-title')?.innerText || '').toLowerCase();
+                    if (title.includes('confirmation')) continue;
+
+                    const okBtn = Array.from(d.querySelectorAll('button, span.ui-button-text, a, [role="button"]')).find(b => {
+                        const t = (b.innerText || '').trim().toLowerCase();
+                        return t === 'ok' || t === 'i agree' || t === 'dismiss' || t === 'theek hai' || t === 'agree' || t === 'close';
+                    });
+                    if (okBtn) {
+                        okBtn.click();
+                        try { okBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
                         action = true;
                     }
                 }
 
-                // 2. Generic informational disclaimer popups (Kavach, advisory, COVID) - strictly ignore confirmation dialogs
-                const infoDialogs = Array.from(document.querySelectorAll('.ui-dialog:not(p-confirmdialog):not(.ui-confirmdialog), .modal:not(p-confirmdialog)')).filter(
-                    d => !d.querySelector("input[formcontrolname='userid'], #userId")
-                );
-                for (const d of infoDialogs) {
-                    const title = (d.querySelector('.ui-dialog-title')?.innerText || '').toLowerCase();
-                    if (title.includes('confirmation') || title.includes('alert')) continue;
-
-                    const okBtn = Array.from(d.querySelectorAll('button, span.ui-button-text')).find(b => {
-                        const t = (b.innerText || '').trim().toLowerCase();
-                        return t === 'ok' || t === 'i agree' || t === 'dismiss' || t === 'theek hai';
-                    });
-                    if (okBtn) {
-                        okBtn.click();
-                        return true;
-                    }
-                }
-
                 // 3. Force-remove masks and blur overlays that block pointer events
-                const isConfirm = document.querySelector('p-confirmdialog, .ui-confirmdialog');
                 const isLoginActive = (appLogin && isVisible(appLogin)) || (userInput && isVisible(userInput));
-                if ((!isConfirm || !isVisible(isConfirm)) && !isLoginActive) {
+                if (!activeBusinessConfirm && !isLoginActive) {
                     const masks = document.querySelectorAll('.custom-blur-mask, .ui-dialog-mask-scrollblocker');
-                    for (const m of masks) m.remove();
-                    // Also check for stray ui-widget-overlay if no visible ui-dialog exists
-                    const anyVisibleDialog = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"]')).some(d => isVisible(d));
-                    if (!anyVisibleDialog) {
+                    for (const m of masks) { m.remove(); action = true; }
+                    // Also check for stray ui-widget-overlay if no visible business dialog exists
+                    const anyVisibleNonLangDialog = allDialogs.some(d => isVisible(d) && !isLanguageDialog(d) && !d.querySelector("input[formcontrolname='userid'], #userId"));
+                    if (!anyVisibleNonLangDialog) {
                         const strayOverlays = document.querySelectorAll('.ui-widget-overlay, .ui-dialog-mask');
-                        for (const so of strayOverlays) so.remove();
+                        for (const so of strayOverlays) { so.remove(); action = true; }
                     }
                     if (document.body && document.body.classList.contains('ui-dialog-mask-scrollblocker')) {
                         document.body.classList.remove('ui-dialog-mask-scrollblocker');
+                        action = true;
                     }
                 }
 
@@ -201,6 +226,16 @@ async def dismiss_overlays(page):
             if js_res:
                 dismissed = True
                 await asyncio.sleep(0.3)
+
+            # Python Playwright direct click fallback for English button in Language Alert
+            try:
+                lang_eng = page.locator("button:has-text('English'), a:has-text('English'), span:has-text('English')").first
+                if await lang_eng.count() > 0 and await lang_eng.is_visible():
+                    await lang_eng.click(timeout=1000, force=True)
+                    dismissed = True
+                    await asyncio.sleep(0.3)
+            except Exception:
+                pass
 
         except Exception:
             pass
@@ -619,10 +654,18 @@ async def _fill_station_autocomplete(page, input_locator, station_text: str, lab
     for attempt in range(3):
         try:
             await input_locator.scroll_into_view_if_needed()
-            await input_locator.click(force=True)
+            try:
+                await input_locator.click()
+            except Exception:
+                await input_locator.click(force=True)
             await asyncio.sleep(0.1)
             
-            # Clear input completely
+            # Clear input completely using Playwright .fill(""), DOM value reset, and keyboard
+            try:
+                await input_locator.fill("")
+            except Exception:
+                pass
+            await input_locator.evaluate("el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); }")
             await page.keyboard.press("Control+A")
             await page.keyboard.press("Backspace")
             await asyncio.sleep(0.1)
@@ -679,12 +722,22 @@ async def _fill_station_autocomplete(page, input_locator, station_text: str, lab
                 # Verify the input value after selection
                 try:
                     selected_val = (await input_locator.input_value()).strip().upper()
-                    if station_code.upper() in selected_val:
+                    if station_code.upper() in selected_val and selected_val.count(station_code.upper()) == 1:
                         log_event(db, "INFO", "AUTOMATION", f"{label} station verified: {selected_val}", ref)
                         return True
+                    elif station_code.upper() in selected_val and selected_val.count(station_code.upper()) > 1:
+                        log_event(db, "WARNING", "AUTOMATION", f"{label} station duplicated ({selected_val})! Clearing and retrying...", ref)
+                        try:
+                            await input_locator.fill("")
+                        except Exception:
+                            pass
+                        continue
                     else:
                         log_event(db, "WARNING", "AUTOMATION", f"{label} station mismatch after selection! Expected '{station_code}', got '{selected_val}'. Retrying...", ref)
-                        # Clear and retry
+                        try:
+                            await input_locator.fill("")
+                        except Exception:
+                            pass
                         continue
                 except Exception:
                     log_event(db, "INFO", "AUTOMATION", f"{label} station selected: {station_code} (dropdown click)", ref)
@@ -803,6 +856,8 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         await asyncio.sleep(2)
                     await dismiss_overlays(page)
 
+                # Always unconditionally dismiss any Language Alert or modal before searching
+                await dismiss_overlays(page)
                 await page.wait_for_selector("p-autocomplete input", timeout=15000)
                 
                 # Use targeted selectors for FROM and TO station autocompletes
@@ -879,7 +934,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 except Exception:
                     pass
 
-                search_btn = page.locator("form button.train_Search, form button.search_btn, app-main-page button.train_Search, app-main-page button.search_btn, button.train_Search:not(.ui-dialog button)").first
+                search_btn = page.locator("form button.train_Search:not(.ui-dialog *):not(p-confirmdialog *), form button.search_btn:not(.ui-dialog *):not(p-confirmdialog *), app-main-page button.train_Search:not(.ui-dialog *):not(p-confirmdialog *), app-main-page button.search_btn:not(.ui-dialog *):not(p-confirmdialog *), button.train_Search:not(.ui-dialog *):not(p-confirmdialog *)").first
                 search_clicked = False
                 if await search_btn.count() > 0 and await search_btn.is_visible():
                     await search_btn.scroll_into_view_if_needed()
@@ -893,10 +948,10 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     search_clicked = await SmartBrowserActions.smart_click(
                         page=page,
                         selectors=[
-                            "form button.train_Search:visible",
-                            "form button.search_btn:visible",
-                            "button.train_Search:visible:not(.ui-dialog button)",
-                            "button.search_btn:visible:not(.ui-dialog button)"
+                            "form button.train_Search:visible:not(.ui-dialog *):not(p-confirmdialog *)",
+                            "form button.search_btn:visible:not(.ui-dialog *):not(p-confirmdialog *)",
+                            "button.train_Search:visible:not(.ui-dialog *):not(p-confirmdialog *)",
+                            "button.search_btn:visible:not(.ui-dialog *):not(p-confirmdialog *)"
                         ],
                         text_keywords=["Search", "SEARCH", "Find Trains"],
                         timeout_ms=4000,
@@ -961,7 +1016,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         const invalidFields = Array.from(document.querySelectorAll('.ng-invalid[formcontrolname]'))
                             .map(e => e.getAttribute('formcontrolname'));
                         // Check search button state
-                        const searchBtn = document.querySelector('button.train_Search, button.search_btn, button[type="submit"]');
+                        const searchBtn = document.querySelector('form button.train_Search, form button.search_btn, button.train_Search:not(.ui-dialog *):not(p-confirmdialog *)');
                         const btnState = searchBtn ? {disabled: searchBtn.disabled, visible: searchBtn.offsetParent !== null, text: (searchBtn.innerText || '').trim()} : null;
                         // Check for loading spinners/overlays
                         const spinner = document.querySelector('.ui-blockui, .loading, .spinner, .cdk-overlay-container .cdk-overlay-backdrop');
