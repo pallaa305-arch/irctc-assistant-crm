@@ -1815,6 +1815,40 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             log_event(db, "INFO", "AUTOMATION", f"Set contact mobile: {digits[:3]}****{digits[-3:]}", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Mobile number entry note: {e}", ref)
+        # Handle IRCTC Co-branded Card Benefits: Select "Skip" if loyalty prompt is present
+        try:
+            cobrand_skipped = await page.evaluate('''() => {
+                const candidates = Array.from(document.querySelectorAll('label, div, p-radiobutton, span, tr'));
+                for (const el of candidates) {
+                    const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                    if (text === 'skip' || (text.includes('skip') && text.length < 50)) {
+                        const box = el.querySelector('.ui-radiobutton-box') || (el.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box'));
+                        if (box) {
+                            box.scrollIntoView({ behavior: 'instant', block: 'center' });
+                            box.click();
+                            try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                            const inp = box.parentElement?.querySelector('input[type="radio"]') || el.querySelector('input[type="radio"]');
+                            if (inp) {
+                                inp.checked = true;
+                                inp.dispatchEvent(new Event('input', { bubbles: true }));
+                                inp.dispatchEvent(new Event('change', { bubbles: true }));
+                            }
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }''')
+            if not cobrand_skipped:
+                skip_loc = page.locator("div:has-text('Co-branded') label:has-text('Skip'), div:has-text('Loyalty') label:has-text('Skip'), p-radiobutton:has-text('Skip') .ui-radiobutton-box, label:has-text('Skip')").first
+                if await skip_loc.count() > 0 and await skip_loc.is_visible():
+                    await skip_loc.click(force=True)
+                    await asyncio.sleep(0.2)
+                    cobrand_skipped = True
+            if cobrand_skipped:
+                log_event(db, "INFO", "AUTOMATION", "Selected 'Skip' on IRCTC Co-branded Card Benefits.", ref)
+        except Exception as e:
+            log_event(db, "WARNING", "AUTOMATION", f"Co-branded card benefit note: {e}", ref)
 
         # Select Payment Mode: BHIM/UPI (Convenience Fee: ₹20 + GST / ₹10 + GST)
         try:
@@ -1840,12 +1874,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     }
                 }
                 // Strategy 2: If payment section exists, click 2nd radiobutton (index 1 = UPI)
-                const paySection = Array.from(document.querySelectorAll('div, section, p-card')).find(d => {
+                const payContainers = Array.from(document.querySelectorAll('div, section, p-card')).filter(d => {
                     const t = (d.innerText || '').toLowerCase();
-                    return t.includes('payment mode') && t.includes('convenience fee');
+                    return t.includes('payment mode') && t.includes('convenience fee') && t.length < 1500;
                 });
-                if (paySection) {
-                    const boxes = paySection.querySelectorAll('.ui-radiobutton-box');
+                payContainers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                if (payContainers.length > 0) {
+                    const boxes = payContainers[0].querySelectorAll('.ui-radiobutton-box');
                     if (boxes.length >= 2) {
                         boxes[1].scrollIntoView({ behavior: 'instant', block: 'center' });
                         boxes[1].click();
@@ -1874,33 +1909,48 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         # Travel Insurance: Yes (or No fallback) - Mandatory on IRCTC to proceed!
         try:
             ins_selected = await page.evaluate('''() => {
-                // Strategy 1: Find container or label matching Yes & Accept text
-                const candidates = Array.from(document.querySelectorAll('label, div, p-radiobutton, tr, span'));
-                for (const el of candidates) {
-                    const text = (el.innerText || '').toLowerCase();
-                    if ((text.includes('yes, and i accept') || (text.includes('yes') && text.includes('insurance') && text.includes('accept'))) && !text.includes('no, i do not')) {
-                        const box = el.querySelector('.ui-radiobutton-box') || (el.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box'));
-                        if (box) {
-                            box.scrollIntoView({ behavior: 'instant', block: 'center' });
-                            box.click();
-                            try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                            const inp = box.parentElement?.querySelector('input[type="radio"]') || el.querySelector('input[type="radio"]');
-                            if (inp) {
-                                inp.checked = true;
-                                inp.dispatchEvent(new Event('input', { bubbles: true }));
-                                inp.dispatchEvent(new Event('change', { bubbles: true }));
-                            }
-                            return true;
+                // Strategy 1: Find tightest innermost label/div matching "Yes, and I accept"
+                const candidates = Array.from(document.querySelectorAll('label, p-radiobutton, span, div'));
+                const matches = candidates.filter(el => {
+                    const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                    return (text.startsWith('yes, and i accept') || (text.includes('yes') && text.includes('accept'))) && text.length < 150 && !text.includes('no, i do not');
+                });
+                matches.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+
+                for (const el of matches) {
+                    // Try clicking label directly
+                    el.click();
+                    let box = el.querySelector('.ui-radiobutton-box') || el.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box') || el.previousElementSibling?.querySelector('.ui-radiobutton-box');
+                    if (box) {
+                        box.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        box.click();
+                        try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        const inp = box.parentElement?.querySelector('input[type="radio"]') || el.parentElement?.querySelector('input[type="radio"]');
+                        if (inp) {
+                            inp.checked = true;
+                            inp.dispatchEvent(new Event('input', { bubbles: true }));
+                            inp.dispatchEvent(new Event('change', { bubbles: true }));
                         }
+                        return true;
                     }
                 }
-                // Strategy 2: If travel insurance section exists, click 1st radiobutton (index 0 = Yes)
-                const insSection = Array.from(document.querySelectorAll('div, section, p-card')).find(d => {
+
+                // Strategy 2: Check form controls specifically named insurance
+                const insRadios = Array.from(document.querySelectorAll("p-radiobutton[formcontrolname*='insurance' i], input[formcontrolname*='insurance' i], p-radiobutton[name*='insurance' i], input[name*='insurance' i]"));
+                if (insRadios.length >= 2) {
+                    const firstBox = insRadios[0].querySelector('.ui-radiobutton-box') || insRadios[0];
+                    firstBox.click();
+                    return true;
+                }
+
+                // Strategy 3: Tightest container matching travel insurance (length < 600, not entire page)
+                const insContainers = Array.from(document.querySelectorAll('div, table, tr, p-card')).filter(d => {
                     const t = (d.innerText || '').toLowerCase();
-                    return t.includes('travel insurance') && (t.includes('terms') || t.includes('0.45') || t.includes('accept'));
+                    return t.includes('travel insurance') && (t.includes('terms') || t.includes('0.45') || t.includes('accept')) && t.length < 600;
                 });
-                if (insSection) {
-                    const boxes = insSection.querySelectorAll('.ui-radiobutton-box');
+                insContainers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                if (insContainers.length > 0) {
+                    const boxes = insContainers[0].querySelectorAll('.ui-radiobutton-box');
                     if (boxes.length > 0) {
                         boxes[0].scrollIntoView({ behavior: 'instant', block: 'center' });
                         boxes[0].click();
@@ -1912,8 +1962,10 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
             if not ins_selected:
                 ins_box = page.locator(
-                    "label:has-text('Yes, and I accept') .ui-radiobutton-box, "
-                    "div:has-text('Yes, and I accept') .ui-radiobutton-box, "
+                    "label:has-text('Yes, and I accept'), "
+                    "p-radiobutton:has-text('Yes, and I accept') .ui-radiobutton-box, "
+                    "div:has-text('Yes, and I accept'):not(:has-text('No, I do not')) .ui-radiobutton-box, "
+                    "label:has-text('Yes') .ui-radiobutton-box, "
                     "label:has-text('Yes, and I accept')"
                 ).first
                 if await ins_box.count() > 0:
@@ -1994,45 +2046,78 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 };
 
                 const isInsActive = () => {
-                    const insContainers = Array.from(document.querySelectorAll('div, label, tr, p-radiobutton')).filter(el => {
-                        const t = (el.innerText || '').toLowerCase();
-                        return (t.includes('yes, and i accept') || (t.includes('yes') && t.includes('accept'))) && el.querySelector('.ui-radiobutton-box');
-                    });
-                    for (const c of insContainers) {
-                        const box = c.querySelector('.ui-radiobutton-box');
-                        const inp = c.querySelector('input[type="radio"]');
-                        if (box && (box.classList.contains('ui-state-active') || box.querySelector('.ui-radiobutton-icon:not(.ui-icon-blank)') || (inp && inp.checked))) {
+                    // Check direct insurance form controls
+                    const insRadios = Array.from(document.querySelectorAll("p-radiobutton[formcontrolname*='insurance' i], input[formcontrolname*='insurance' i], p-radiobutton[name*='insurance' i], input[name*='insurance' i]"));
+                    if (insRadios.length >= 2) {
+                        const firstBox = insRadios[0].querySelector('.ui-radiobutton-box') || insRadios[0];
+                        const firstInp = insRadios[0].querySelector('input') || (insRadios[0].tagName === 'INPUT' ? insRadios[0] : null);
+                        if (firstBox.classList.contains('ui-state-active') || (firstInp && firstInp.checked)) return true;
+                    }
+                    // Check active radio buttons in small containers with Yes text
+                    const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
+                    for (const b of activeBoxes) {
+                        const parent = b.closest('.row, .col-xs-12, tr, td, div');
+                        const parentText = (parent?.innerText || '').toLowerCase();
+                        if (parentText.length < 300 && (parentText.includes('yes') && (parentText.includes('accept') || parentText.includes('insurance'))) && !parentText.includes('no, i do not')) {
                             return true;
                         }
                     }
-                    const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
+                    return false;
+                };
+
+                const isCobrandHandled = () => {
+                    const cobrandSection = Array.from(document.querySelectorAll('div, p-card')).find(d => {
+                        const t = (d.innerText || '').toLowerCase();
+                        return (t.includes('co-branded card') || (t.includes('loyalty points') && t.includes('skip'))) && t.length < 1000;
+                    });
+                    if (!cobrandSection) return true; // section not present
+                    const activeBoxes = Array.from(cobrandSection.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
                     for (const b of activeBoxes) {
-                        const parentText = (b.closest('.row, .col-xs-12, tr, div')?.innerText || '').toLowerCase();
-                        if (parentText.includes('yes') && (parentText.includes('accept') || parentText.includes('insurance'))) return true;
+                        const txt = (b.closest('div, label, tr')?.innerText || '').toLowerCase();
+                        if (txt.includes('skip')) return true;
                     }
                     return false;
                 };
 
                 const upiActive = isUpiActive();
                 const insActive = isInsActive();
+                const cobrandOk = isCobrandHandled();
 
                 result.fields.paymentSelected = upiActive;
                 result.fields.insuranceSelected = insActive;
+                result.fields.cobrandSkipped = cobrandOk;
 
                 // Visible validation errors
                 const errs = Array.from(document.querySelectorAll('.ui-message-error, .text-danger, .error-msg, span.help-block, .ui-messages-error, .ng-invalid.ng-touched'));
                 result.errors = errs.slice(0, 5).map(e => (e.innerText || e.className || '').trim().slice(0, 100)).filter(t => t.length > 0);
                 const hasInvalid = document.querySelector('form.ng-invalid, .ng-invalid.ng-touched');
-                result.valid = !hasInvalid && upiActive && insActive;
+                result.valid = !hasInvalid && upiActive && insActive && cobrandOk;
                 return result;
             }''')
             log_event(db, "INFO", "AUTOMATION", f"Pre-Continue form state: {form_state}", ref)
 
-            # Auto-repair payment or insurance if not active
-            if not form_state.get('fields', {}).get('paymentSelected', False) or not form_state.get('fields', {}).get('insuranceSelected', False):
-                log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance radio not active. Applying auto-repair click...", ref)
+            # Auto-repair payment, insurance, or co-branded card if not active
+            needs_repair = (
+                not form_state.get('fields', {}).get('paymentSelected', False) or 
+                not form_state.get('fields', {}).get('insuranceSelected', False) or 
+                not form_state.get('fields', {}).get('cobrandSkipped', True)
+            )
+            if needs_repair:
+                log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance/Loyalty radio not active. Applying auto-repair click...", ref)
                 await page.evaluate('''() => {
-                    // Force click UPI
+                    // 1. Force click Co-branded Card Skip if present
+                    const skipCandidate = Array.from(document.querySelectorAll('label, div, p-radiobutton, span')).find(el => {
+                        const t = (el.innerText || '').trim().toLowerCase();
+                        return (t === 'skip' || (t.includes('skip') && t.length < 50));
+                    });
+                    if (skipCandidate) {
+                        const box = skipCandidate.querySelector('.ui-radiobutton-box') || skipCandidate.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box');
+                        if (box) { box.click(); }
+                        const inp = skipCandidate.querySelector('input[type="radio"]') || skipCandidate.parentElement?.querySelector('input[type="radio"]');
+                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
+                    }
+
+                    // 2. Force click UPI
                     const upiContainer = Array.from(document.querySelectorAll('label, div, p-radiobutton')).find(el => {
                         const t = (el.innerText || '').toLowerCase();
                         return (t.includes('bhim/upi') || (t.includes('bhim') && t.includes('upi'))) && el.querySelector('.ui-radiobutton-box');
@@ -2043,34 +2128,52 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         const inp = upiContainer.querySelector('input[type="radio"]');
                         if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
                     } else {
-                        const paySection = Array.from(document.querySelectorAll('div, section, p-card')).find(d => (d.innerText || '').toLowerCase().includes('payment mode'));
-                        const boxes = paySection ? paySection.querySelectorAll('.ui-radiobutton-box') : [];
-                        if (boxes.length >= 2) boxes[1].click();
+                        const payContainers = Array.from(document.querySelectorAll('div, section, p-card')).filter(d => {
+                            const t = (d.innerText || '').toLowerCase();
+                            return t.includes('payment mode') && t.includes('convenience fee') && t.length < 1500;
+                        });
+                        payContainers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                        if (payContainers.length > 0) {
+                            const boxes = payContainers[0].querySelectorAll('.ui-radiobutton-box');
+                            if (boxes.length >= 2) boxes[1].click();
+                        }
                     }
 
-                    // Force click Travel Insurance Yes
-                    const insContainer = Array.from(document.querySelectorAll('label, div, p-radiobutton')).find(el => {
-                        const t = (el.innerText || '').toLowerCase();
-                        return (t.includes('yes, and i accept') || (t.includes('yes') && t.includes('accept'))) && el.querySelector('.ui-radiobutton-box');
+                    // 3. Force click Travel Insurance Yes on innermost element
+                    const candidates = Array.from(document.querySelectorAll('label, p-radiobutton, span, div'));
+                    const matches = candidates.filter(el => {
+                        const text = (el.innerText || el.textContent || '').trim().toLowerCase();
+                        return (text.startsWith('yes, and i accept') || (text.includes('yes') && text.includes('accept'))) && text.length < 150 && !text.includes('no, i do not');
                     });
-                    if (insContainer) {
-                        const box = insContainer.querySelector('.ui-radiobutton-box');
-                        if (box) { box.click(); }
-                        const inp = insContainer.querySelector('input[type="radio"]');
-                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
-                    } else {
-                        const insSection = Array.from(document.querySelectorAll('div, section, p-card')).find(d => (d.innerText || '').toLowerCase().includes('travel insurance'));
-                        const boxes = insSection ? insSection.querySelectorAll('.ui-radiobutton-box') : [];
-                        if (boxes.length > 0) boxes[0].click();
+                    matches.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                    let insClicked = false;
+                    for (const el of matches) {
+                        el.click();
+                        const box = el.querySelector('.ui-radiobutton-box') || el.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box');
+                        if (box) { box.click(); insClicked = true; break; }
+                    }
+                    if (!insClicked) {
+                        const insContainers = Array.from(document.querySelectorAll('div, table, tr, p-card')).filter(d => {
+                            const t = (d.innerText || '').toLowerCase();
+                            return t.includes('travel insurance') && (t.includes('terms') || t.includes('0.45') || t.includes('accept')) && t.length < 600;
+                        });
+                        insContainers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                        if (insContainers.length > 0) {
+                            const boxes = insContainers[0].querySelectorAll('.ui-radiobutton-box');
+                            if (boxes.length > 0) boxes[0].click();
+                        }
                     }
                 }''')
                 await asyncio.sleep(0.4)
 
-            # Save diagnostic screenshot
+            # Save full-page diagnostic screenshot
             try:
-                await page.screenshot(path="data/pre_continue_screenshot.png")
+                await page.screenshot(path="data/pre_continue_screenshot.png", full_page=True)
             except Exception:
-                pass
+                try:
+                    await page.screenshot(path="data/pre_continue_screenshot.png")
+                except Exception:
+                    pass
 
             # Check if there are visible validation notices on page
             v_errs = await page.evaluate('''() => {
