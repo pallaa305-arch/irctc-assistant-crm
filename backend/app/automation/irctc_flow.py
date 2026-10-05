@@ -2144,16 +2144,24 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 const isInsActive = () => {
                     // Check direct insurance form controls
                     const insRadios = Array.from(document.querySelectorAll("p-radiobutton[formcontrolname*='insurance' i], input[formcontrolname*='insurance' i], p-radiobutton[name*='insurance' i], input[name*='insurance' i]"));
+                    
+                    // Check insurance containers
+                    const insContainers = Array.from(document.querySelectorAll('div, table, tr, p-card')).filter(d => {
+                        const t = (d.innerText || '').toLowerCase();
+                        return t.includes('travel insurance') && (t.includes('terms') || t.includes('accept') || t.includes('0.45')) && t.length < 600;
+                    });
+
+                    // If Travel Insurance is NOT offered on this train/class (e.g. WL tickets), consider it handled / not applicable
+                    if (insRadios.length === 0 && insContainers.length === 0) {
+                        return true;
+                    }
+
                     if (insRadios.length >= 2) {
                         const firstBox = insRadios[0].querySelector('.ui-radiobutton-box') || insRadios[0];
                         const firstInp = insRadios[0].querySelector('input') || (insRadios[0].tagName === 'INPUT' ? insRadios[0] : null);
                         if (firstBox.classList.contains('ui-state-active') || (firstInp && firstInp.checked)) return true;
                     }
-                    // Index-based: Find tightest insurance container, check 1st radio
-                    const insContainers = Array.from(document.querySelectorAll('div, table, tr, p-card')).filter(d => {
-                        const t = (d.innerText || '').toLowerCase();
-                        return t.includes('travel insurance') && (t.includes('terms') || t.includes('accept') || t.includes('0.45')) && t.length < 600;
-                    });
+                    
                     insContainers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
                     if (insContainers.length > 0) {
                         const section = insContainers[0];
@@ -2391,55 +2399,62 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 arrived_at_review = True
                 break
 
-            # 2. Handle PrimeNG confirmation dialogs (Waitlist alert, travel insurance, auto-upgrade, etc.)
-            # PrimeNG dialogs use position:fixed, so check offsetWidth/offsetHeight/clientRects rather than offsetParent
-            if not dialog_confirmed:
-                try:
-                    confirmed_text = await page.evaluate('''() => {
-                        const isVisibleDialog = (el) => {
-                            if (!el || !(el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0)) return false;
-                            const txt = (el.innerText || '').trim();
-                            if (txt.length < 5) return false;
-                            const style = window.getComputedStyle(el);
-                            return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
-                        };
-                        const dialog = Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog[role="dialog"], div[role="dialog"]')).find(d => isVisibleDialog(d));
-                        if (!dialog) return null;
+            # 2. Handle PrimeNG confirmation dialogs (Waitlist alert, travel insurance, auto-upgrade, senior concession, etc.)
+            # Check in every iteration to handle sequential dialogs (e.g. Senior alert followed by Waitlist alert)
+            try:
+                confirmed_text = await page.evaluate('''() => {
+                    const isVisibleDialog = (el) => {
+                        if (!el || !(el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0)) return false;
+                        const txt = (el.innerText || '').trim();
+                        if (txt.length < 5) return false;
+                        const style = window.getComputedStyle(el);
+                        return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
+                    };
+                    const dialog = Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog[role="dialog"], div[role="dialog"]')).find(d => isVisibleDialog(d));
+                    if (!dialog) return null;
 
-                        const btns = Array.from(dialog.querySelectorAll('button, span.ui-button-text, a.btn, .ui-confirmdialog-yesbutton, .p-confirm-dialog-accept'));
-                        const acceptBtn = btns.find(b => {
-                            const t = (b.innerText || b.getAttribute('label') || '').trim().toLowerCase();
-                            const cls = (b.className || '').toLowerCase();
-                            return t === 'yes' || t === 'i agree' || t === 'agree' || t === 'ok' || t === 'confirm' || t === 'proceed' || cls.includes('yesbutton') || cls.includes('dialog-accept');
-                        });
+                    const btns = Array.from(dialog.querySelectorAll('button, span.ui-button-text, a.btn, .ui-confirmdialog-yesbutton, .p-confirm-dialog-accept'));
+                    const acceptBtn = btns.find(b => {
+                        const t = (b.innerText || b.getAttribute('label') || '').trim().toLowerCase();
+                        const cls = (b.className || '').toLowerCase();
+                        return t === 'yes' || t === 'i agree' || t === 'agree' || t === 'ok' || t === 'confirm' || t === 'proceed' || cls.includes('yesbutton') || cls.includes('dialog-accept');
+                    });
 
-                        if (acceptBtn) {
-                            const dialogMsg = (dialog.innerText || '').slice(0, 150).replace(/\\s+/g, ' ');
-                            const clickTarget = acceptBtn.closest('button') || acceptBtn;
-                            clickTarget.click();
-                            return dialogMsg;
-                        }
-                        return null;
-                    }''')
-                    if confirmed_text:
-                        dialog_confirmed = True
-                        log_event(db, "INFO", "AUTOMATION", f"Accepted IRCTC confirmation dialog: '{confirmed_text}'", ref)
-                        await asyncio.sleep(2.0)
-                        continue
-                except Exception:
-                    pass
+                    if (acceptBtn) {
+                        const dialogMsg = (dialog.innerText || '').slice(0, 150).replace(/\\s+/g, ' ');
+                        const clickTarget = acceptBtn.closest('button') || acceptBtn;
+                        clickTarget.click();
+                        return dialogMsg;
+                    }
+                    return null;
+                }''')
+                if confirmed_text:
+                    dialog_confirmed = True
+                    log_event(db, "INFO", "AUTOMATION", f"Accepted IRCTC confirmation dialog: '{confirmed_text}'", ref)
+                    await asyncio.sleep(1.5)
+                    continue
+            except Exception:
+                pass
 
-                # Playwright fallback for confirmation dialog accept button
-                try:
-                    confirm_yes = page.locator("p-confirmdialog button.ui-confirmdialog-yesbutton, .ui-confirmdialog button:has-text('Yes'), button.p-confirm-dialog-accept, p-confirmdialog button:has-text('Yes'), .ui-dialog button:has-text('Yes'), button:has-text('I Agree')").first
-                    if await confirm_yes.count() > 0 and await confirm_yes.is_visible():
-                        await confirm_yes.click(timeout=1000)
-                        dialog_confirmed = True
-                        log_event(db, "INFO", "AUTOMATION", "Clicked Yes on confirmation dialog via Playwright locator", ref)
-                        await asyncio.sleep(2.0)
-                        continue
-                except Exception:
-                    pass
+            # Playwright fallback for confirmation dialog accept button
+            try:
+                confirm_yes = page.locator(
+                    "p-confirmdialog button.ui-confirmdialog-yesbutton, "
+                    ".ui-confirmdialog button:has-text('Yes'), "
+                    "button.p-confirm-dialog-accept, "
+                    "p-confirmdialog button:has-text('Yes'), "
+                    ".ui-dialog button:has-text('Yes'), "
+                    "button:has-text('I Agree'), "
+                    ".ui-dialog button:has-text('OK')"
+                ).first
+                if await confirm_yes.count() > 0 and await confirm_yes.is_visible():
+                    await confirm_yes.click(timeout=1000)
+                    dialog_confirmed = True
+                    log_event(db, "INFO", "AUTOMATION", "Clicked Yes on confirmation dialog via Playwright locator", ref)
+                    await asyncio.sleep(1.5)
+                    continue
+            except Exception:
+                pass
 
             # 3. Detect IRCTC error page
             if "/nget/error" in page.url.lower():
@@ -2461,34 +2476,6 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 except Exception:
                     pass
                 return
-
-            # 4. Single cautious re-click at 15s ONLY IF no dialog was confirmed and still on passenger input
-            if s == 15 and not dialog_confirmed:
-                try:
-                    # Check that no dialog is currently visible before retrying
-                    has_dialog = await page.evaluate('''() => {
-                        const isVisibleDialog = (el) => {
-                            if (!el || !(el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0)) return false;
-                            const txt = (el.innerText || '').trim();
-                            if (txt.length < 5) return false;
-                            const style = window.getComputedStyle(el);
-                            return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
-                        };
-                        return Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog[role="dialog"], div[role="dialog"]')).some(d => isVisibleDialog(d));
-                    }''')
-                    if not has_dialog:
-                        cont_retry = page.locator(
-                            "app-passenger-input button:has-text('Continue'):visible, "
-                            "form button:has-text('Continue'):visible, "
-                            "button.btnDefault:has-text('Continue'):visible, "
-                            "button[type='submit']:has-text('Continue'):visible, "
-                            "button:has-text('Continue'):visible"
-                        ).first
-                        if await cont_retry.count() > 0 and await cont_retry.is_visible():
-                            log_event(db, "INFO", "AUTOMATION", "Re-attempting single Continue click at 15s...", ref)
-                            await cont_retry.click()
-                except Exception:
-                    pass
 
         # If not arrived at review booking or payment, raise informative error with debug info
         if not arrived_at_review:
