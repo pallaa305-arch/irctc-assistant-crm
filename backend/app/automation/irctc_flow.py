@@ -801,10 +801,34 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
         page = await browser_manager.get_page(owner=ref)
 
-        # Attach non-blocking response listener to capture and log any raw API warnings/errors
+        # Attach scoped request and response listeners for diagnostics without leaking across runs
         try:
+            old_resp = getattr(page, "_irctc_response_listener", None)
+            if old_resp:
+                try:
+                    page.remove_listener("response", old_resp)
+                except Exception:
+                    pass
+            old_req = getattr(page, "_irctc_request_listener", None)
+            if old_req:
+                try:
+                    page.remove_listener("request", old_req)
+                except Exception:
+                    pass
+
+            async def _on_request(req):
+                try:
+                    if session_state.booking_ref != ref:
+                        return
+                    if "allLapAvlFareEnq" in req.url:
+                        log_event(db, "INFO", "AUTOMATION", f"IRCTC Fare Enquiry Request: {req.method} {req.url}", ref)
+                except Exception:
+                    pass
+
             async def _on_response(resp):
                 try:
+                    if session_state.booking_ref != ref:
+                        return
                     if "/eticketing/protected/" in resp.url or "/nget/" in resp.url:
                         if resp.status >= 400:
                             body_snippet = ""
@@ -824,7 +848,11 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                                 pass
                 except Exception:
                     pass
+
+            page.on("request", _on_request)
             page.on("response", _on_response)
+            setattr(page, "_irctc_request_listener", _on_request)
+            setattr(page, "_irctc_response_listener", _on_response)
         except Exception:
             pass
 
@@ -2355,6 +2383,23 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     await page.evaluate("() => window.scrollBy(0, 80)")
                 except Exception:
                     pass
+
+                # Simulate natural human mouse movement & hover to generate authentic Akamai pointer telemetry
+                try:
+                    box = await cont_btn.bounding_box()
+                    if box:
+                        start_x = max(10, box['x'] - 100)
+                        start_y = max(10, box['y'] - 120)
+                        await page.mouse.move(start_x, start_y)
+                        await asyncio.sleep(0.12)
+                        dest_x = box['x'] + (box['width'] / 2)
+                        dest_y = box['y'] + (box['height'] / 2)
+                        await page.mouse.move(dest_x, dest_y, steps=12)
+                        await cont_btn.hover()
+                        await asyncio.sleep(0.3)
+                except Exception:
+                    pass
+
                 try:
                     await cont_btn.click(timeout=4000)
                     clicked_continue = True
@@ -3203,3 +3248,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         booking.status = "FAILED"
         db.commit()
         log_event(db, "ERROR", "AUTOMATION", f"Real IRCTC Flow error: {err_msg} | Details: {tb_str[-250:]}", ref)
+    finally:
+        try:
+            if page:
+                old_resp = getattr(page, "_irctc_response_listener", None)
+                if old_resp:
+                    page.remove_listener("response", old_resp)
+                old_req = getattr(page, "_irctc_request_listener", None)
+                if old_req:
+                    page.remove_listener("request", old_req)
+        except Exception:
+            pass

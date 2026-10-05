@@ -102,8 +102,7 @@ class BrowserManager:
                     "--disable-infobars",
                     "--no-sandbox",
                     "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage",
-                    "--disable-gpu"
+                    "--disable-dev-shm-usage"
                 ],
                 "locale": "en-US"
             }
@@ -148,21 +147,8 @@ class BrowserManager:
                     else:
                         raise e_chromium
 
-        # Stealth and speed optimizer route
-        async def _speed_optimizer_route(route):
-            # Speed optimizer route: bypass heavy analytics and trackers while preserving captcha
-            url = route.request.url.lower()
-            if any(block in url for block in ["google-analytics", "doubleclick", "googletagmanager"]):
-                await route.abort()
-            else:
-                await route.continue_()
-
-        try:
-            await self.context.route("**/*", _speed_optimizer_route)
-            # navigator.webdriver stealth spoof
-            await self.context.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined}); navigator.webdriver = undefined;")
-        except Exception:
-            pass
+        # Preserve native HTTP/2 connection pooling & multiplexing (no CDP route interception)
+        # Real Chrome with --disable-blink-features=AutomationControlled leaves clean navigator.webdriver
 
         if self.context.pages:
             self.page = self.context.pages[0]

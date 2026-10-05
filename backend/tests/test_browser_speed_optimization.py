@@ -2,13 +2,12 @@ import inspect
 from app.automation.browser_manager import BrowserManager
 
 
-def test_browser_manager_speed_optimization_flags():
-    """Verify BrowserManager has bypass_csp, stealth flags, and route speed optimizer."""
+def test_browser_manager_stealth_and_native_network():
+    """Verify BrowserManager uses native HTTP/2 networking, GPU enabled, and AutomationControlled bypass without CDP route interception."""
     src = inspect.getsource(BrowserManager.get_page)
 
     assert "bypass_csp" in src
     assert "AutomationControlled" in src
-    assert "_speed_optimizer_route" in src
-    assert "captcha" in src.lower()
-    assert "navigator.webdriver" in src
-    assert "add_init_script" in src
+    assert "--disable-gpu" not in src
+    assert "_speed_optimizer_route" not in src
+    assert "add_init_script" not in src
