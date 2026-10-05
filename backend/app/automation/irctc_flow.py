@@ -1880,7 +1880,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 log_event(db, "INFO", "AUTOMATION", f"Selected 'Skip' on IRCTC Co-branded Card Benefits (strategy: {cobrand_skipped}).", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Co-branded card benefit note: {e}", ref)
-
+        await asyncio.sleep(0.3)  # Let Angular digest cobrand click before payment selection
         # Select Payment Mode: BHIM/UPI (Convenience Fee: ₹20 + GST / ₹10 + GST)
         try:
             upi_selected = await page.evaluate('''() => {
@@ -1936,7 +1936,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             log_event(db, "INFO", "AUTOMATION", "Selected payment mode: BHIM/UPI", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Payment mode selection note: {e}", ref)
-
+        await asyncio.sleep(0.3)  # Let Angular digest payment click before insurance selection
         # Travel Insurance: Yes (or No fallback) - Mandatory on IRCTC to proceed!
         try:
             ins_selected = await page.evaluate('''() => {
@@ -2084,6 +2084,20 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         const firstInp = insRadios[0].querySelector('input') || (insRadios[0].tagName === 'INPUT' ? insRadios[0] : null);
                         if (firstBox.classList.contains('ui-state-active') || (firstInp && firstInp.checked)) return true;
                     }
+                    // Index-based: Find tightest insurance container, check 1st radio
+                    const insContainers = Array.from(document.querySelectorAll('div, table, tr, p-card')).filter(d => {
+                        const t = (d.innerText || '').toLowerCase();
+                        return t.includes('travel insurance') && (t.includes('terms') || t.includes('accept') || t.includes('0.45')) && t.length < 600;
+                    });
+                    insContainers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                    if (insContainers.length > 0) {
+                        const section = insContainers[0];
+                        const boxes = Array.from(section.querySelectorAll('.ui-radiobutton-box'));
+                        const radios = Array.from(section.querySelectorAll('input[type="radio"]'));
+                        // 1st radio = "Yes, and I accept"
+                        if (boxes.length >= 1 && boxes[0].classList.contains('ui-state-active')) return true;
+                        if (radios.length >= 1 && radios[0].checked) return true;
+                    }
                     // Check active radio buttons in small containers with Yes text
                     const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
                     for (const b of activeBoxes) {
@@ -2097,16 +2111,27 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 };
 
                 const isCobrandHandled = () => {
-                    const cobrandSection = Array.from(document.querySelectorAll('div, p-card')).find(d => {
+                    const cobrandSections = Array.from(document.querySelectorAll('div, p-card')).filter(d => {
                         const t = (d.innerText || '').toLowerCase();
                         return (t.includes('co-branded card') || (t.includes('loyalty points') && t.includes('skip'))) && t.length < 1000;
                     });
-                    if (!cobrandSection) return true; // section not present
-                    const activeBoxes = Array.from(cobrandSection.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
+                    cobrandSections.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                    if (cobrandSections.length === 0) return true; // section not present
+                    const section = cobrandSections[0];
+                    const boxes = Array.from(section.querySelectorAll('.ui-radiobutton-box'));
+                    const radios = Array.from(section.querySelectorAll('input[type="radio"]'));
+                    // Index-based: 3rd radio (index 2) = Skip
+                    if (boxes.length >= 3 && boxes[2].classList.contains('ui-state-active')) return true;
+                    if (radios.length >= 3 && radios[2].checked) return true;
+                    // Fallback: any checked/active radio whose label text is "skip"
+                    const activeBoxes = Array.from(section.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
                     for (const b of activeBoxes) {
-                        const txt = (b.closest('div, label, tr')?.innerText || '').toLowerCase();
-                        if (txt.includes('skip')) return true;
+                        const parent = b.closest('p-radiobutton, label, div');
+                        const txt = (parent?.innerText || parent?.textContent || '').trim().toLowerCase();
+                        if (txt.includes('skip') && txt.length < 50) return true;
                     }
+                    // Check if "Earn Loyalty Points" is NOT active (default) — means user changed it
+                    if (boxes.length >= 1 && !boxes[0].classList.contains('ui-state-active') && radios.length >= 1 && !radios[0].checked) return true;
                     return false;
                 };
 
