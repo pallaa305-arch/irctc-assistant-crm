@@ -1818,35 +1818,66 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         # Handle IRCTC Co-branded Card Benefits: Select "Skip" if loyalty prompt is present
         try:
             cobrand_skipped = await page.evaluate('''() => {
-                const candidates = Array.from(document.querySelectorAll('label, div, p-radiobutton, span, tr'));
-                for (const el of candidates) {
-                    const text = (el.innerText || el.textContent || '').trim().toLowerCase();
-                    if (text === 'skip' || (text.includes('skip') && text.length < 50)) {
-                        const box = el.querySelector('.ui-radiobutton-box') || (el.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box'));
-                        if (box) {
-                            box.scrollIntoView({ behavior: 'instant', block: 'center' });
-                            box.click();
-                            try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                            const inp = box.parentElement?.querySelector('input[type="radio"]') || el.querySelector('input[type="radio"]');
-                            if (inp) {
-                                inp.checked = true;
-                                inp.dispatchEvent(new Event('input', { bubbles: true }));
-                                inp.dispatchEvent(new Event('change', { bubbles: true }));
-                            }
-                            return true;
-                        }
+                // Strategy 1 (INDEX-BASED): Find cobrand section, click 3rd radiobutton (Skip)
+                const cobrandSections = Array.from(document.querySelectorAll('div, p-card, section')).filter(d => {
+                    const t = (d.innerText || '').toLowerCase();
+                    return (t.includes('co-branded card') || (t.includes('loyalty points') && t.includes('skip'))) && t.length < 1000;
+                });
+                cobrandSections.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                if (cobrandSections.length > 0) {
+                    const section = cobrandSections[0];
+                    const boxes = Array.from(section.querySelectorAll('.ui-radiobutton-box'));
+                    // 3rd radio (index 2) is "Skip"
+                    if (boxes.length >= 3) {
+                        const skipBox = boxes[2];
+                        skipBox.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        skipBox.click();
+                        try { skipBox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        const inp = skipBox.parentElement?.querySelector('input[type="radio"]');
+                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', { bubbles: true })); inp.dispatchEvent(new Event('input', { bubbles: true })); }
+                        return 'index';
+                    }
+                }
+                // Strategy 2 (SIBLING): Find Skip text label, navigate to its paired radiobutton
+                const skipLabels = Array.from(document.querySelectorAll('label, span, div')).filter(el => {
+                    const t = (el.innerText || el.textContent || '').trim().toLowerCase();
+                    return (t === 'skip' || (t.includes('skip') && t.length < 30));
+                });
+                skipLabels.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                for (const lbl of skipLabels) {
+                    // Check parent p-radiobutton or immediate sibling for the box
+                    const pRadio = lbl.closest('p-radiobutton');
+                    let box = pRadio ? pRadio.querySelector('.ui-radiobutton-box') : null;
+                    if (!box) box = lbl.parentElement?.querySelector('.ui-radiobutton-box');
+                    if (!box) box = lbl.previousElementSibling?.classList?.contains('ui-radiobutton') ? lbl.previousElementSibling.querySelector('.ui-radiobutton-box') : null;
+                    if (!box) box = lbl.previousElementSibling?.querySelector?.('.ui-radiobutton-box');
+                    if (box) {
+                        box.scrollIntoView({ behavior: 'instant', block: 'center' });
+                        box.click();
+                        try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        const inp = box.parentElement?.querySelector('input[type="radio"]');
+                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', { bubbles: true })); inp.dispatchEvent(new Event('input', { bubbles: true })); }
+                        return 'sibling';
                     }
                 }
                 return false;
             }''')
             if not cobrand_skipped:
-                skip_loc = page.locator("div:has-text('Co-branded') label:has-text('Skip'), div:has-text('Loyalty') label:has-text('Skip'), p-radiobutton:has-text('Skip') .ui-radiobutton-box, label:has-text('Skip')").first
-                if await skip_loc.count() > 0 and await skip_loc.is_visible():
-                    await skip_loc.click(force=True)
-                    await asyncio.sleep(0.2)
-                    cobrand_skipped = True
+                # Strategy 3 (PLAYWRIGHT): Direct locator with text matching
+                try:
+                    skip_loc = page.locator("p-radiobutton:has-text('Skip')").first
+                    if await skip_loc.count() > 0 and await skip_loc.is_visible():
+                        box_loc = skip_loc.locator(".ui-radiobutton-box").first
+                        if await box_loc.count() > 0:
+                            await box_loc.click(force=True)
+                        else:
+                            await skip_loc.click(force=True)
+                        await asyncio.sleep(0.2)
+                        cobrand_skipped = 'playwright'
+                except Exception:
+                    pass
             if cobrand_skipped:
-                log_event(db, "INFO", "AUTOMATION", "Selected 'Skip' on IRCTC Co-branded Card Benefits.", ref)
+                log_event(db, "INFO", "AUTOMATION", f"Selected 'Skip' on IRCTC Co-branded Card Benefits (strategy: {cobrand_skipped}).", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Co-branded card benefit note: {e}", ref)
 
@@ -2105,16 +2136,22 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if needs_repair:
                 log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance/Loyalty radio not active. Applying auto-repair click...", ref)
                 await page.evaluate('''() => {
-                    // 1. Force click Co-branded Card Skip if present
-                    const skipCandidate = Array.from(document.querySelectorAll('label, div, p-radiobutton, span')).find(el => {
-                        const t = (el.innerText || '').trim().toLowerCase();
-                        return (t === 'skip' || (t.includes('skip') && t.length < 50));
+                    // 1. Force click Co-branded Card Skip if present (INDEX-BASED: 3rd radio = Skip)
+                    const cobrandSections = Array.from(document.querySelectorAll('div, p-card, section')).filter(d => {
+                        const t = (d.innerText || '').toLowerCase();
+                        return (t.includes('co-branded card') || (t.includes('loyalty points') && t.includes('skip'))) && t.length < 1000;
                     });
-                    if (skipCandidate) {
-                        const box = skipCandidate.querySelector('.ui-radiobutton-box') || skipCandidate.closest('.col-xs-12, .row, div, tr')?.querySelector('.ui-radiobutton-box');
-                        if (box) { box.click(); }
-                        const inp = skipCandidate.querySelector('input[type="radio"]') || skipCandidate.parentElement?.querySelector('input[type="radio"]');
-                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
+                    cobrandSections.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                    if (cobrandSections.length > 0) {
+                        const section = cobrandSections[0];
+                        const boxes = Array.from(section.querySelectorAll('.ui-radiobutton-box'));
+                        if (boxes.length >= 3) {
+                            const skipBox = boxes[2];
+                            skipBox.click();
+                            try { skipBox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                            const inp = skipBox.parentElement?.querySelector('input[type="radio"]');
+                            if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
+                        }
                     }
 
                     // 2. Force click UPI
