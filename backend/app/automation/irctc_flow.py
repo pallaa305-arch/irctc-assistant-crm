@@ -807,7 +807,12 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 try:
                     if "/eticketing/protected/" in resp.url or "/nget/" in resp.url:
                         if resp.status >= 400:
-                            log_event(db, "WARNING", "AUTOMATION", f"IRCTC API HTTP {resp.status} on {resp.url.split('?')[0]}", ref)
+                            body_snippet = ""
+                            try:
+                                body_snippet = (await resp.text())[:300].replace("\n", " ").strip()
+                            except Exception:
+                                pass
+                            log_event(db, "WARNING", "AUTOMATION", f"IRCTC API HTTP {resp.status} on {resp.url.split('?')[0]} | body: {body_snippet}", ref)
                         elif resp.request.method == "POST" and "json" in (resp.headers.get("content-type") or ""):
                             try:
                                 data = await resp.json()
@@ -1832,11 +1837,11 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     loc = page.locator(skip_sel).first
                     if await loc.count() > 0 and await loc.is_visible():
                         await loc.scroll_into_view_if_needed()
-                        await loc.click(force=True)
-                        await asyncio.sleep(0.2)
                         box = loc.locator(".ui-radiobutton-box").first
                         if await box.count() > 0:
-                            await box.click(force=True)
+                            await box.click(timeout=1500)
+                        else:
+                            await loc.click(timeout=1500)
                         cobrand_skipped = f'pw-{skip_sel}'
                         break
                 except Exception:
@@ -1922,11 +1927,11 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     loc = page.locator(upi_sel).first
                     if await loc.count() > 0 and await loc.is_visible():
                         await loc.scroll_into_view_if_needed()
-                        await loc.click(force=True)
-                        await asyncio.sleep(0.2)
                         box = loc.locator(".ui-radiobutton-box").first
                         if await box.count() > 0:
-                            await box.click(force=True)
+                            await box.click(timeout=1500)
+                        else:
+                            await loc.click(timeout=1500)
                         upi_selected = f'pw-{upi_sel}'
                         break
                 except Exception:
@@ -2233,33 +2238,35 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             )
             if needs_repair:
                 log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance/Loyalty radio not active. Applying auto-repair click...", ref)
-                # 1. Force click Co-branded Card Skip using PLAYWRIGHT direct text locators
+                # 1. Click Co-branded Card Skip using PLAYWRIGHT direct text locators
                 if not form_state.get('fields', {}).get('cobrandSkipped', True):
                     try:
                         for skip_sel in ["text='Skip'", "label:has-text('Skip')", "span:text-is('Skip')"]:
                             loc = page.locator(skip_sel).first
                             if await loc.count() > 0:
                                 await loc.scroll_into_view_if_needed()
-                                await loc.click(force=True)
                                 box = loc.locator(".ui-radiobutton-box").first
                                 if await box.count() > 0:
-                                    await box.click(force=True)
+                                    await box.click(timeout=1500)
+                                else:
+                                    await loc.click(timeout=1500)
                                 await asyncio.sleep(0.2)
                                 break
                     except Exception:
                         pass
 
-                # 2. Force click BHIM/UPI using PLAYWRIGHT direct text locators
+                # 2. Click BHIM/UPI using PLAYWRIGHT direct text locators
                 if not form_state.get('fields', {}).get('paymentSelected', False):
                     try:
                         for upi_sel in ["text='Pay through BHIM/UPI'", "label:has-text('Pay through BHIM/UPI')", "text='BHIM/UPI'"]:
                             loc = page.locator(upi_sel).first
                             if await loc.count() > 0:
                                 await loc.scroll_into_view_if_needed()
-                                await loc.click(force=True)
                                 box = loc.locator(".ui-radiobutton-box").first
                                 if await box.count() > 0:
-                                    await box.click(force=True)
+                                    await box.click(timeout=1500)
+                                else:
+                                    await loc.click(timeout=1500)
                                 await asyncio.sleep(0.2)
                                 break
                     except Exception:
@@ -2343,7 +2350,11 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             ).first
             if await cont_btn.count() > 0 and await cont_btn.is_visible():
                 await cont_btn.scroll_into_view_if_needed()
-                await asyncio.sleep(0.3)
+                await asyncio.sleep(0.4)
+                try:
+                    await page.evaluate("() => window.scrollBy(0, 80)")
+                except Exception:
+                    pass
                 try:
                     await cont_btn.click(timeout=4000)
                     clicked_continue = True
@@ -2391,6 +2402,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         for s in range(35):
             await asyncio.sleep(1)
 
+            # Diagnostic snapshots during wait to identify modals or errors early
+            if s in (2, 8):
+                try:
+                    await page.screenshot(path=f"data/wait_review_s{s}.png")
+                except Exception:
+                    pass
+
             # 1. Check if arrived at Review or Payment page
             if "review" in page.url.lower() or "payment" in page.url.lower():
                 arrived_at_review = True
@@ -2410,14 +2428,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         const style = window.getComputedStyle(el);
                         return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
                     };
-                    const dialog = Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, .ui-dialog[role="dialog"], div[role="dialog"]')).find(d => isVisibleDialog(d));
+                    const dialog = Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, p-dialog, .ui-dialog, div[role="dialog"], .modal-dialog, app-custom-dialog')).find(d => isVisibleDialog(d));
                     if (!dialog) return null;
 
-                    const btns = Array.from(dialog.querySelectorAll('button, span.ui-button-text, a.btn, .ui-confirmdialog-yesbutton, .p-confirm-dialog-accept'));
+                    const btns = Array.from(dialog.querySelectorAll('button, span.ui-button-text, a.btn, .ui-confirmdialog-yesbutton, .p-confirm-dialog-accept, input[type="button"]'));
                     const acceptBtn = btns.find(b => {
-                        const t = (b.innerText || b.getAttribute('label') || '').trim().toLowerCase();
+                        const t = (b.innerText || b.getAttribute('label') || b.value || '').trim().toLowerCase();
                         const cls = (b.className || '').toLowerCase();
-                        return t === 'yes' || t === 'i agree' || t === 'agree' || t === 'ok' || t === 'confirm' || t === 'proceed' || cls.includes('yesbutton') || cls.includes('dialog-accept');
+                        return t.includes('yes') || t.includes('continue') || t.includes('agree') || t.includes('proceed') || t.includes('confirm') || t.includes('ok') || cls.includes('yesbutton') || cls.includes('dialog-accept') || cls.includes('accept');
                     });
 
                     if (acceptBtn) {
@@ -2441,16 +2459,20 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 confirm_yes = page.locator(
                     "p-confirmdialog button.ui-confirmdialog-yesbutton, "
                     ".ui-confirmdialog button:has-text('Yes'), "
+                    ".ui-confirmdialog button:has-text('Continue'), "
                     "button.p-confirm-dialog-accept, "
-                    "p-confirmdialog button:has-text('Yes'), "
+                    "p-dialog button:has-text('Yes'), "
+                    "p-dialog button:has-text('Continue'), "
                     ".ui-dialog button:has-text('Yes'), "
+                    ".ui-dialog button:has-text('Continue'), "
+                    ".ui-dialog button:has-text('Proceed'), "
                     "button:has-text('I Agree'), "
                     ".ui-dialog button:has-text('OK')"
                 ).first
                 if await confirm_yes.count() > 0 and await confirm_yes.is_visible():
                     await confirm_yes.click(timeout=1000)
                     dialog_confirmed = True
-                    log_event(db, "INFO", "AUTOMATION", "Clicked Yes on confirmation dialog via Playwright locator", ref)
+                    log_event(db, "INFO", "AUTOMATION", "Clicked Yes/Continue on confirmation dialog via Playwright locator", ref)
                     await asyncio.sleep(1.5)
                     continue
             except Exception:
