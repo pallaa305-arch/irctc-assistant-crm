@@ -1816,68 +1816,84 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Mobile number entry note: {e}", ref)
         # Handle IRCTC Co-branded Card Benefits: Select "Skip" if loyalty prompt is present
+        # NOTE: Must use Playwright native clicks (not evaluate JS clicks) because
+        # PrimeNG Angular components need proper browser events for NgZone change detection.
+        cobrand_skipped = False
         try:
-            cobrand_skipped = await page.evaluate('''() => {
-                // Strategy 1 (INDEX-BASED): Find cobrand section, click 3rd radiobutton (Skip)
-                const cobrandSections = Array.from(document.querySelectorAll('div, p-card, section')).filter(d => {
-                    const t = (d.innerText || '').toLowerCase();
-                    return (t.includes('co-branded card') || (t.includes('loyalty points') && t.includes('skip'))) && t.length < 1000;
-                });
-                cobrandSections.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
-                if (cobrandSections.length > 0) {
-                    const section = cobrandSections[0];
-                    const boxes = Array.from(section.querySelectorAll('.ui-radiobutton-box'));
-                    // 3rd radio (index 2) is "Skip"
-                    if (boxes.length >= 3) {
-                        const skipBox = boxes[2];
-                        skipBox.scrollIntoView({ behavior: 'instant', block: 'center' });
-                        skipBox.click();
-                        try { skipBox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                        const inp = skipBox.parentElement?.querySelector('input[type="radio"]');
-                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', { bubbles: true })); inp.dispatchEvent(new Event('input', { bubbles: true })); }
-                        return 'index';
-                    }
-                }
-                // Strategy 2 (SIBLING): Find Skip text label, navigate to its paired radiobutton
-                const skipLabels = Array.from(document.querySelectorAll('label, span, div')).filter(el => {
-                    const t = (el.innerText || el.textContent || '').trim().toLowerCase();
-                    return (t === 'skip' || (t.includes('skip') && t.length < 30));
-                });
-                skipLabels.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
-                for (const lbl of skipLabels) {
-                    // Check parent p-radiobutton or immediate sibling for the box
-                    const pRadio = lbl.closest('p-radiobutton');
-                    let box = pRadio ? pRadio.querySelector('.ui-radiobutton-box') : null;
-                    if (!box) box = lbl.parentElement?.querySelector('.ui-radiobutton-box');
-                    if (!box) box = lbl.previousElementSibling?.classList?.contains('ui-radiobutton') ? lbl.previousElementSibling.querySelector('.ui-radiobutton-box') : null;
-                    if (!box) box = lbl.previousElementSibling?.querySelector?.('.ui-radiobutton-box');
-                    if (box) {
-                        box.scrollIntoView({ behavior: 'instant', block: 'center' });
-                        box.click();
-                        try { box.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                        const inp = box.parentElement?.querySelector('input[type="radio"]');
-                        if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', { bubbles: true })); inp.dispatchEvent(new Event('input', { bubbles: true })); }
-                        return 'sibling';
-                    }
-                }
-                return false;
-            }''')
+            # Strategy 1 (PLAYWRIGHT): Click p-radiobutton containing "Skip" text
+            try:
+                skip_radio = page.locator("p-radiobutton:has-text('Skip')").first
+                if await skip_radio.count() > 0 and await skip_radio.is_visible():
+                    box = skip_radio.locator(".ui-radiobutton-box").first
+                    if await box.count() > 0:
+                        await box.scroll_into_view_if_needed()
+                        await box.click(force=True)
+                        await asyncio.sleep(0.3)
+                        cobrand_skipped = 'pw-radiobutton'
+            except Exception:
+                pass
+
+            # Strategy 2 (PLAYWRIGHT INDEX): Find cobrand section, click 3rd .ui-radiobutton-box
             if not cobrand_skipped:
-                # Strategy 3 (PLAYWRIGHT): Direct locator with text matching
                 try:
-                    skip_loc = page.locator("p-radiobutton:has-text('Skip')").first
-                    if await skip_loc.count() > 0 and await skip_loc.is_visible():
-                        box_loc = skip_loc.locator(".ui-radiobutton-box").first
-                        if await box_loc.count() > 0:
-                            await box_loc.click(force=True)
-                        else:
-                            await skip_loc.click(force=True)
-                        await asyncio.sleep(0.2)
-                        cobrand_skipped = 'playwright'
+                    cobrand_containers = page.locator("div:has-text('Co-branded Card'), div:has-text('Loyalty Points')").filter(has=page.locator(".ui-radiobutton-box"))
+                    count = await cobrand_containers.count()
+                    for i in range(count):
+                        container = cobrand_containers.nth(i)
+                        boxes_loc = container.locator(".ui-radiobutton-box")
+                        box_count = await boxes_loc.count()
+                        if 2 <= box_count <= 5:
+                            skip_box = boxes_loc.nth(box_count - 1)  # Last radio = Skip
+                            await skip_box.scroll_into_view_if_needed()
+                            await skip_box.click(force=True)
+                            await asyncio.sleep(0.3)
+                            cobrand_skipped = 'pw-index'
+                            break
                 except Exception:
                     pass
+
+            # Strategy 3 (PLAYWRIGHT LABEL): Click label/span with "Skip" text
+            if not cobrand_skipped:
+                try:
+                    skip_label = page.locator("label:has-text('Skip')").first
+                    if await skip_label.count() > 0 and await skip_label.is_visible():
+                        await skip_label.click(force=True)
+                        await asyncio.sleep(0.3)
+                        cobrand_skipped = 'pw-label'
+                except Exception:
+                    pass
+
+            # Strategy 4 (EVALUATE FALLBACK): JS click as last resort
+            if not cobrand_skipped:
+                try:
+                    result = await page.evaluate('''() => {
+                        const sections = Array.from(document.querySelectorAll('div, p-card')).filter(d => {
+                            const t = (d.innerText || '').toLowerCase();
+                            return (t.includes('co-branded card') || (t.includes('loyalty points') && t.includes('skip'))) && t.length < 1000;
+                        });
+                        sections.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
+                        if (sections.length > 0) {
+                            const boxes = Array.from(sections[0].querySelectorAll('.ui-radiobutton-box'));
+                            if (boxes.length >= 3) {
+                                boxes[2].scrollIntoView({ behavior: 'instant', block: 'center' });
+                                boxes[2].click();
+                                boxes[2].dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window }));
+                                const inp = boxes[2].parentElement?.querySelector('input[type="radio"]');
+                                if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', { bubbles: true })); }
+                                return 'eval-index';
+                            }
+                        }
+                        return false;
+                    }''')
+                    if result:
+                        cobrand_skipped = result
+                except Exception:
+                    pass
+
             if cobrand_skipped:
                 log_event(db, "INFO", "AUTOMATION", f"Selected 'Skip' on IRCTC Co-branded Card Benefits (strategy: {cobrand_skipped}).", ref)
+            else:
+                log_event(db, "WARNING", "AUTOMATION", "Could not find/click Co-branded Card Skip button.", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Co-branded card benefit note: {e}", ref)
         await asyncio.sleep(0.3)  # Let Angular digest cobrand click before payment selection
@@ -2160,26 +2176,25 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             )
             if needs_repair:
                 log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance/Loyalty radio not active. Applying auto-repair click...", ref)
+                # 1. Force click Co-branded Card Skip using PLAYWRIGHT (evaluate doesn't trigger Angular)
+                if not form_state.get('fields', {}).get('cobrandSkipped', True):
+                    try:
+                        skip_radio = page.locator("p-radiobutton:has-text('Skip')").first
+                        if await skip_radio.count() > 0:
+                            box = skip_radio.locator(".ui-radiobutton-box").first
+                            if await box.count() > 0:
+                                await box.click(force=True)
+                                await asyncio.sleep(0.3)
+                    except Exception:
+                        try:
+                            skip_label = page.locator("label:has-text('Skip')").first
+                            if await skip_label.count() > 0:
+                                await skip_label.click(force=True)
+                                await asyncio.sleep(0.3)
+                        except Exception:
+                            pass
+                # 2 & 3. Force click UPI and Insurance via evaluate (these work with evaluate)
                 await page.evaluate('''() => {
-                    // 1. Force click Co-branded Card Skip if present (INDEX-BASED: 3rd radio = Skip)
-                    const cobrandSections = Array.from(document.querySelectorAll('div, p-card, section')).filter(d => {
-                        const t = (d.innerText || '').toLowerCase();
-                        return (t.includes('co-branded card') || (t.includes('loyalty points') && t.includes('skip'))) && t.length < 1000;
-                    });
-                    cobrandSections.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
-                    if (cobrandSections.length > 0) {
-                        const section = cobrandSections[0];
-                        const boxes = Array.from(section.querySelectorAll('.ui-radiobutton-box'));
-                        if (boxes.length >= 3) {
-                            const skipBox = boxes[2];
-                            skipBox.click();
-                            try { skipBox.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                            const inp = skipBox.parentElement?.querySelector('input[type="radio"]');
-                            if (inp) { inp.checked = true; inp.dispatchEvent(new Event('change', {bubbles: true})); }
-                        }
-                    }
-
-                    // 2. Force click UPI
                     const upiContainer = Array.from(document.querySelectorAll('label, div, p-radiobutton')).find(el => {
                         const t = (el.innerText || '').toLowerCase();
                         return (t.includes('bhim/upi') || (t.includes('bhim') && t.includes('upi'))) && el.querySelector('.ui-radiobutton-box');
