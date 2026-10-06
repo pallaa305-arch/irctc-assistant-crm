@@ -168,6 +168,19 @@ class BrowserManager:
 
         return self.page
 
+    async def reset_akamai_cookies(self):
+        """Clears Akamai bot detector cookies so retried requests aren't immediately blocked with 403."""
+        if self.context:
+            try:
+                cookies = await self.context.cookies()
+                akamai_names = {"_abck", "bm_sz", "bm_sv", "ak_bmsc"}
+                to_keep = [c for c in cookies if c.get("name") not in akamai_names]
+                await self.context.clear_cookies()
+                if to_keep:
+                    await self.context.add_cookies(to_keep)
+            except Exception:
+                pass
+
     async def close(self):
         try:
             if self.page and not self.page.is_closed():

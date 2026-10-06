@@ -115,14 +115,25 @@ async def dismiss_overlays(page):
     """
     Automatically dismisses language selection dialogs, alert popups,
     Senior citizen notices, COVID/KAVACH disclaimers, beta banners,
-    or lingering dialog overlays.
+    or lingering dialog overlays. Never forcibly removes DOM nodes
+    to prevent breaking Angular PrimeNG form state.
     """
     if not page:
         return
     for _ in range(3):
         dismissed = False
         try:
-            # Native DOM evaluation for safe dismissal without double-clicks or aborting confirmation dialogs
+            # 1. Direct Playwright click on English button or Close button of Language Dialog
+            try:
+                lang_eng = page.locator("button:has-text('English'), a:has-text('English'), span:has-text('English')").first
+                if await lang_eng.count() > 0 and await lang_eng.is_visible():
+                    await lang_eng.click(timeout=1000)
+                    dismissed = True
+                    await asyncio.sleep(0.3)
+            except Exception:
+                pass
+
+            # 2. Native DOM button clicks without synthetic dispatchEvent or d.remove()
             js_res = await page.evaluate('''() => {
                 const isVisible = (el) => !!(el && (el.offsetWidth || el.offsetHeight || el.getClientRects().length));
                 const appLogin = document.querySelector('app-login');
@@ -150,9 +161,9 @@ async def dismiss_overlays(page):
 
                 let action = false;
 
-                // 1. Language selection dialog handling (Welcome / भाषा चयन) — including when inside p-confirmdialog
+                // 1. Language selection dialog handling (Welcome / भाषा चयन)
                 const allDialogs = Array.from(document.querySelectorAll('.ui-dialog, p-dialog, div[role="dialog"], p-confirmdialog, .ui-confirmdialog, .modal'));
-                const langDialogs = allDialogs.filter(d => !d.querySelector("input[formcontrolname='userid'], #userId") && isLanguageDialog(d));
+                const langDialogs = allDialogs.filter(d => isVisible(d) && !d.querySelector("input[formcontrolname='userid'], #userId") && isLanguageDialog(d));
                 for (const d of langDialogs) {
                     const btns = Array.from(d.querySelectorAll('button, a, input[type="radio"], [role="button"], span.ui-button-text, .ui-button'));
                     const eng = btns.find(b => {
@@ -161,7 +172,6 @@ async def dismiss_overlays(page):
                     });
                     if (eng) {
                         eng.click();
-                        try { eng.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
                         action = true;
                     }
 
@@ -171,7 +181,6 @@ async def dismiss_overlays(page):
                     });
                     if (submit) {
                         submit.click();
-                        try { submit.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
                         action = true;
                     } else {
                         const close = d.querySelector('.ui-dialog-titlebar-close, .close');
@@ -180,14 +189,11 @@ async def dismiss_overlays(page):
                             action = true;
                         }
                     }
-                    // Force remove language dialog if still present in DOM
-                    setTimeout(() => { try { d.remove(); } catch(e) {} }, 100);
-                    action = true;
                 }
 
-                // 2. Generic informational disclaimer popups (Kavach, advisory, COVID) - strictly ignore confirmation dialogs and language dialogs
+                // 2. Generic informational disclaimer popups (Kavach, advisory, COVID)
                 const infoDialogs = allDialogs.filter(
-                    d => !d.querySelector("input[formcontrolname='userid'], #userId") && !isBusinessConfirmDialog(d) && !isLanguageDialog(d)
+                    d => isVisible(d) && !d.querySelector("input[formcontrolname='userid'], #userId") && !isBusinessConfirmDialog(d) && !isLanguageDialog(d)
                 );
                 for (const d of infoDialogs) {
                     const title = (d.querySelector('.ui-dialog-title')?.innerText || '').toLowerCase();
@@ -199,24 +205,6 @@ async def dismiss_overlays(page):
                     });
                     if (okBtn) {
                         okBtn.click();
-                        try { okBtn.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
-                        action = true;
-                    }
-                }
-
-                // 3. Force-remove masks and blur overlays that block pointer events
-                const isLoginActive = (appLogin && isVisible(appLogin)) || (userInput && isVisible(userInput));
-                if (!activeBusinessConfirm && !isLoginActive) {
-                    const masks = document.querySelectorAll('.custom-blur-mask, .ui-dialog-mask-scrollblocker');
-                    for (const m of masks) { m.remove(); action = true; }
-                    // Also check for stray ui-widget-overlay if no visible business dialog exists
-                    const anyVisibleNonLangDialog = allDialogs.some(d => isVisible(d) && !isLanguageDialog(d) && !d.querySelector("input[formcontrolname='userid'], #userId"));
-                    if (!anyVisibleNonLangDialog) {
-                        const strayOverlays = document.querySelectorAll('.ui-widget-overlay, .ui-dialog-mask');
-                        for (const so of strayOverlays) { so.remove(); action = true; }
-                    }
-                    if (document.body && document.body.classList.contains('ui-dialog-mask-scrollblocker')) {
-                        document.body.classList.remove('ui-dialog-mask-scrollblocker');
                         action = true;
                     }
                 }
@@ -226,16 +214,6 @@ async def dismiss_overlays(page):
             if js_res:
                 dismissed = True
                 await asyncio.sleep(0.3)
-
-            # Python Playwright direct click fallback for English button in Language Alert
-            try:
-                lang_eng = page.locator("button:has-text('English'), a:has-text('English'), span:has-text('English')").first
-                if await lang_eng.count() > 0 and await lang_eng.is_visible():
-                    await lang_eng.click(timeout=1000, force=True)
-                    dismissed = True
-                    await asyncio.sleep(0.3)
-            except Exception:
-                pass
 
         except Exception:
             pass
@@ -460,7 +438,7 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
                         });
                         if (l) {
                             l.click();
-                            try { l.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                            // clean click
                         }
                     }''')
                     await asyncio.sleep(1.0)
@@ -510,7 +488,7 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
                     });
                     if (l) {
                         l.click();
-                        try { l.dispatchEvent(new MouseEvent('click', { bubbles: true, cancelable: true, view: window })); } catch(e) {}
+                        // clean click
                     }
                 }''')
                 await asyncio.sleep(2.0)
@@ -522,19 +500,17 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
         if await user_input.count() > 0 and await user_input.is_visible():
             # Fill username
             await user_input.click()
-            await user_input.fill("")
+            await page.keyboard.press("Control+A")
+            await page.keyboard.press("Backspace")
             await user_input.press_sequentially(settings.IRCTC_USERNAME, delay=35)
-            await user_input.dispatch_event("input")
-            await user_input.dispatch_event("change")
             log_event(db, "INFO", "AUTOMATION", f"Auto-filled username: {settings.IRCTC_USERNAME[:4]}**** (attempt {attempt})", ref)
 
             # Fill password
             if await pass_input.count() > 0 and settings.IRCTC_PASSWORD:
                 await pass_input.click()
-                await pass_input.fill("")
+                await page.keyboard.press("Control+A")
+                await page.keyboard.press("Backspace")
                 await pass_input.press_sequentially(settings.IRCTC_PASSWORD, delay=35)
-                await pass_input.dispatch_event("input")
-                await pass_input.dispatch_event("change")
 
             # Wait up to 8s for visual captcha image to load in DOM
             try:
@@ -649,6 +625,12 @@ async def ensure_authenticated_session(page, ref: str, db: Session, session_stat
 
 async def _fill_station_autocomplete(page, input_locator, station_text: str, label: str, db: Session, ref: str):
     """Robustly fills IRCTC station autocomplete with dropdown verification."""
+    if isinstance(input_locator, str):
+        if input_locator.lower() in ("from", "origin"):
+            input_locator = page.locator("p-autocomplete[formcontrolname='origin'] input, #origin input, input[placeholder*='From*' i], input[placeholder*='From' i]").first
+        else:
+            input_locator = page.locator("p-autocomplete[formcontrolname='destination'] input, #destination input, input[placeholder*='To*' i], input[placeholder*='To' i]").first
+
     station_code = resolve_station_code(station_text)
     
     for attempt in range(3):
@@ -660,12 +642,7 @@ async def _fill_station_autocomplete(page, input_locator, station_text: str, lab
                 await input_locator.click(force=True)
             await asyncio.sleep(0.1)
             
-            # Clear input completely using Playwright .fill(""), DOM value reset, and keyboard
-            try:
-                await input_locator.fill("")
-            except Exception:
-                pass
-            await input_locator.evaluate("el => { el.value = ''; el.dispatchEvent(new Event('input', {bubbles: true})); el.dispatchEvent(new Event('change', {bubbles: true})); }")
+            # Clear input completely using keyboard only (no synthetic dispatchEvent)
             await page.keyboard.press("Control+A")
             await page.keyboard.press("Backspace")
             await asyncio.sleep(0.1)
@@ -727,17 +704,13 @@ async def _fill_station_autocomplete(page, input_locator, station_text: str, lab
                         return True
                     elif station_code.upper() in selected_val and selected_val.count(station_code.upper()) > 1:
                         log_event(db, "WARNING", "AUTOMATION", f"{label} station duplicated ({selected_val})! Clearing and retrying...", ref)
-                        try:
-                            await input_locator.fill("")
-                        except Exception:
-                            pass
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
                         continue
                     else:
                         log_event(db, "WARNING", "AUTOMATION", f"{label} station mismatch after selection! Expected '{station_code}', got '{selected_val}'. Retrying...", ref)
-                        try:
-                            await input_locator.fill("")
-                        except Exception:
-                            pass
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
                         continue
                 except Exception:
                     log_event(db, "INFO", "AUTOMATION", f"{label} station selected: {station_code} (dropdown click)", ref)
@@ -837,6 +810,9 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             except Exception:
                                 pass
                             log_event(db, "WARNING", "AUTOMATION", f"IRCTC API HTTP {resp.status} on {resp.url.split('?')[0]} | body: {body_snippet}", ref)
+                            if resp.status == 403:
+                                log_event(db, "WARNING", "AUTOMATION", f"Akamai WAF HTTP 403 detected on {resp.url.split('?')[0]}. Resetting Akamai bot detector cookies...", ref)
+                                asyncio.create_task(browser_manager.reset_akamai_cookies())
                         elif resp.request.method == "POST" and "json" in (resp.headers.get("content-type") or ""):
                             try:
                                 data = await resp.json()
@@ -953,35 +929,21 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     except Exception as e:
                         log_event(db, "WARNING", "AUTOMATION", f"Failed to type date into calendar input: {e}", ref)
 
-                # Sync JS value without deleting any PrimeNG DOM nodes
-                await page.evaluate('''(dStr) => {
-                    const dInputs = Array.from(document.querySelectorAll("p-calendar input, #jDate input, input[placeholder*='Date' i]"));
-                    for (const d of dInputs) {
-                        if (d.value !== dStr) {
-                            d.value = dStr;
-                            d.dispatchEvent(new Event('input', { bubbles: true }));
-                            d.dispatchEvent(new Event('change', { bubbles: true }));
-                        }
-                    }
-                }''', date_str)
-                await asyncio.sleep(0.3)
+                # 4. Quota — General Quota (GN) is selected by IRCTC by default. Do not touch unless specific quota required.
+                quota_needed = (getattr(booking, 'journey_quota', 'GN') or 'GN').upper()
+                if quota_needed not in ('GN', 'GENERAL'):
+                    try:
+                        quota_dropdown = page.locator("p-dropdown[formcontrolname='journeyQuota']").first
+                        if await quota_dropdown.count() > 0 and await quota_dropdown.is_visible():
+                            await quota_dropdown.click()
+                            await asyncio.sleep(0.3)
+                            opt = page.locator(f"li[aria-label*='{quota_needed}' i], span:has-text('{quota_needed}')").first
+                            if await opt.count() > 0:
+                                await opt.click()
+                    except Exception as e:
+                        log_event(db, "WARNING", "AUTOMATION", f"Quota selection note: {e}", ref)
 
-                # 4. Ensure Quota dropdown is set (General Quota by default)
-                try:
-                    await page.evaluate('''() => {
-                        const quotaDropdown = document.querySelector("p-dropdown[formcontrolname='journeyQuota'], select[formcontrolname='journeyQuota']");
-                        if (quotaDropdown) {
-                            const sel = quotaDropdown.querySelector('select');
-                            if (sel) {
-                                sel.value = 'GN';
-                                sel.dispatchEvent(new Event('change', {bubbles: true}));
-                            }
-                        }
-                    }''')
-                except Exception:
-                    pass
-
-                # 5. Click Search Button (SINGLE CLEAN CLICK - prevent double submission error)
+                # 5. Click Search Button with natural mouse movement & hover
                 await dismiss_overlays(page)
                 try:
                     await page.keyboard.press("Escape")
@@ -994,6 +956,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 if await search_btn.count() > 0 and await search_btn.is_visible():
                     await search_btn.scroll_into_view_if_needed()
                     try:
+                        box = await search_btn.bounding_box()
+                        if box:
+                            dest_x = box['x'] + (box['width'] / 2)
+                            dest_y = box['y'] + (box['height'] / 2)
+                            await page.mouse.move(dest_x, dest_y, steps=8)
+                            await search_btn.hover()
+                            await asyncio.sleep(0.2)
                         await search_btn.click(timeout=4000)
                         search_clicked = True
                     except Exception:
@@ -1470,22 +1439,32 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     from_code = booking.from_station or ""
                     to_code = booking.to_station or ""
                     
-                    await _fill_station_autocomplete(page, "from", from_code, ref, db)
-                    await _fill_station_autocomplete(page, "to", to_code, ref, db)
+                    await _fill_station_autocomplete(page, "from", from_code, "FROM", db, ref)
+                    await _fill_station_autocomplete(page, "to", to_code, "TO", db, ref)
                     
                     # Re-fill date
                     date_input = page.locator("input[id='jDate'], p-calendar input, input.ng-tns-c58-10").first
                     if await date_input.count() > 0:
                         await date_input.click(force=True)
-                        await asyncio.sleep(0.3)
-                        await date_input.fill(date_str)
+                        await asyncio.sleep(0.1)
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
+                        await date_input.press_sequentially(date_str, delay=30)
+                        await page.keyboard.press("Tab")
                         await page.keyboard.press("Escape")
-                        await asyncio.sleep(0.3)
+                        await asyncio.sleep(0.2)
                     
                     # Click search
                     await dismiss_overlays(page)
                     search_btn = page.locator("form button.train_Search, button:has-text('Search Trains')").first
                     if await search_btn.count() > 0:
+                        box = await search_btn.bounding_box()
+                        if box:
+                            dest_x = box['x'] + (box['width'] / 2)
+                            dest_y = box['y'] + (box['height'] / 2)
+                            await page.mouse.move(dest_x, dest_y, steps=8)
+                            await search_btn.hover()
+                            await asyncio.sleep(0.2)
                         await search_btn.click(force=True)
                     
                     # Wait for results
@@ -1790,21 +1769,16 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 except Exception:
                     pass
 
-                # Nationality — ensure "India" is selected by matching option text, never blanking out the field
+                # Nationality — default is India. Only select if empty or non-Indian
                 try:
-                    await page.evaluate(f'''(idx) => {{
-                        const sels = document.querySelectorAll("select[formcontrolname='passengerNationality']");
-                        if (sels.length > idx) {{
-                            const sel = sels[idx];
-                            if (!sel.value) {{
-                                const indiaOpt = Array.from(sel.options).find(o => (o.text || '').toLowerCase().includes('india'));
-                                if (indiaOpt) {{
-                                    sel.value = indiaOpt.value;
-                                    sel.dispatchEvent(new Event('change', {{bubbles: true}}));
-                                }}
-                            }}
-                        }}
-                    }}''', idx)
+                    nat_selects = page.locator("select[formcontrolname='passengerNationality']")
+                    if await nat_selects.count() > idx:
+                        cur_val = await nat_selects.nth(idx).input_value()
+                        if not cur_val or cur_val == "":
+                            try:
+                                await nat_selects.nth(idx).select_option(label="India")
+                            except Exception:
+                                pass
                 except Exception:
                     pass
 
