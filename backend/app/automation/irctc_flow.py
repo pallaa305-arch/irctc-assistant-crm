@@ -794,7 +794,8 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     if session_state.booking_ref != ref:
                         return
                     if "allLapAvlFareEnq" in req.url:
-                        log_event(db, "INFO", "AUTOMATION", f"IRCTC Fare Enquiry Request: {req.method} {req.url}", ref)
+                        p_data = (req.post_data or "")[:120].replace("\n", " ").strip()
+                        log_event(db, "INFO", "AUTOMATION", f"IRCTC Fare Enquiry Request: {req.method} {req.url} | data: {p_data}", ref)
                 except Exception:
                     pass
 
@@ -809,7 +810,9 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                                 body_snippet = (await resp.text())[:300].replace("\n", " ").strip()
                             except Exception:
                                 pass
-                            log_event(db, "WARNING", "AUTOMATION", f"IRCTC API HTTP {resp.status} on {resp.url.split('?')[0]} | body: {body_snippet}", ref)
+                            server_h = resp.headers.get("server", "")
+                            ref_h = resp.headers.get("x-akamai-transformed", "") or resp.headers.get("x-reference-id", "")
+                            log_event(db, "WARNING", "AUTOMATION", f"IRCTC API HTTP {resp.status} on {resp.url.split('?')[0]} [srv:{server_h}] | body: {body_snippet}", ref)
                             if resp.status == 403:
                                 log_event(db, "WARNING", "AUTOMATION", f"Akamai WAF HTTP 403 detected on {resp.url.split('?')[0]}. Resetting Akamai bot detector cookies...", ref)
                                 asyncio.create_task(browser_manager.reset_akamai_cookies())
@@ -1699,30 +1702,47 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         await SmartBrowserActions.smart_click(page, selectors=["a:has-text('+ Add Passenger')", "button:has-text('Add Passenger')"], text_keywords=["+ Add Passenger", "Add Passenger"])
                         await asyncio.sleep(0.8)
 
-                # Name — type then Tab to commit (do NOT press Escape — it kills PrimeNG autocomplete binding)
+                # Name — type naturally with human cadence and mouse trajectory
                 name_inputs = page.locator("input[placeholder*='Passenger Name' i], p-autocomplete[formcontrolname='passengerName'] input")
                 if await name_inputs.count() > idx:
                     name_input = name_inputs.nth(idx)
-                    await name_input.click(force=True)
-                    await asyncio.sleep(0.1)
+                    await name_input.scroll_into_view_if_needed()
+                    try:
+                        box = await name_input.bounding_box()
+                        if box:
+                            await page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2, steps=6)
+                    except Exception:
+                        pass
+                    await name_input.click()
+                    await asyncio.sleep(0.2)
                     await page.keyboard.press("Control+A")
                     await page.keyboard.press("Backspace")
-                    await name_input.press_sequentially(p.name, delay=30)
-                    await asyncio.sleep(0.5)
-                    # Tab out to commit the value and close any autocomplete dropdown
+                    await asyncio.sleep(0.1)
+                    await name_input.press_sequentially(p.name, delay=60)
+                    await asyncio.sleep(0.4)
                     await page.keyboard.press("Tab")
                     await asyncio.sleep(0.3)
 
-                # Age
+                # Age — type naturally with human cadence and mouse trajectory
                 age_inputs = page.locator("input[placeholder*='Age' i], input[formcontrolname='passengerAge']")
                 if await age_inputs.count() > idx:
                     age_input = age_inputs.nth(idx)
-                    await age_input.click(force=True)
+                    await age_input.scroll_into_view_if_needed()
+                    try:
+                        box = await age_input.bounding_box()
+                        if box:
+                            await page.mouse.move(box['x'] + box['width'] / 2, box['y'] + box['height'] / 2, steps=5)
+                    except Exception:
+                        pass
+                    await age_input.click()
+                    await asyncio.sleep(0.15)
                     await page.keyboard.press("Control+A")
                     await page.keyboard.press("Backspace")
-                    await age_input.press_sequentially(str(p.age), delay=30)
+                    await asyncio.sleep(0.1)
+                    await age_input.press_sequentially(str(p.age), delay=60)
+                    await asyncio.sleep(0.3)
                     await page.keyboard.press("Tab")
-                    await asyncio.sleep(0.2)
+                    await asyncio.sleep(0.3)
 
                 # Gender — handle both native select and PrimeNG p-dropdown
                 gender_selects = page.locator("select[formcontrolname='passengerGender']")
@@ -2235,6 +2255,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             # Check in every iteration to handle sequential dialogs (e.g. Senior alert followed by Waitlist alert)
             try:
                 confirmed_text = await page.evaluate('''() => {
+                    // If loading spinner ("Please Wait...") is actively spinning, let the request complete without interference
+                    const hasSpinner = Array.from(document.querySelectorAll('div, p, span')).some(el => {
+                        const t = (el.innerText || '').trim().toLowerCase();
+                        return (t === 'please wait...' || t === 'please wait') && (el.offsetWidth > 0 || el.offsetHeight > 0);
+                    });
+                    if (hasSpinner) return null;
+
                     const isVisibleDialog = (el) => {
                         if (!el || !(el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0)) return false;
                         const txt = (el.innerText || '').trim();
