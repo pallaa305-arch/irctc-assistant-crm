@@ -91,7 +91,7 @@ class BrowserManager:
                 "user_data_dir": profile_dir,
                 "headless": settings.BROWSER_HEADLESS,
                 "slow_mo": settings.BROWSER_SLOW_MO,
-                "bypass_csp": True,
+                
                 "ignore_https_errors": True,
                 "no_viewport": not settings.BROWSER_HEADLESS,
                 "ignore_default_args": ["--enable-automation"],
@@ -99,12 +99,9 @@ class BrowserManager:
                     "--start-maximized",
                     "--disable-blink-features=AutomationControlled",
                     "--no-first-run",
-                    "--disable-infobars",
-                    "--no-sandbox",
-                    "--disable-setuid-sandbox",
-                    "--disable-dev-shm-usage"
+                    "--disable-infobars"
                 ],
-                "locale": "en-US"
+                "locale": "en-IN"
             }
             if settings.BROWSER_HEADLESS:
                 launch_args["viewport"] = {"width": 1366, "height": 768}
