@@ -803,7 +803,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 try:
                     if session_state.booking_ref != ref:
                         return
-                    if "/eticketing/protected/" in resp.url or "/nget/" in resp.url:
+                    if "ZRgaKN" in resp.url or "sensor" in resp.url or "_bm" in resp.url:
+                        set_c = resp.headers.get("set-cookie", "")
+                        if "_abck" in set_c:
+                            abck_part = next((p.split("=")[1] for p in set_c.split(";") if "_abck" in p), "")
+                            is_v = "~0~" in abck_part
+                            log_event(db, "INFO", "AUTOMATION", f"Akamai sensor update: valid={is_v} (_abck prefix={abck_part[:35]}...)", ref)
+                    elif "/eticketing/protected/" in resp.url or "/nget/" in resp.url:
                         if resp.status >= 400:
                             body_snippet = ""
                             try:
@@ -1881,29 +1887,42 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             log_event(db, "WARNING", "AUTOMATION", f"Co-branded card benefit note: {e}", ref)
         await asyncio.sleep(0.3)
 
-        # Select Payment Mode: BHIM/UPI using trusted Playwright clicks (zero synthetic dispatchEvent)
+        # Select Payment Mode: BHIM/UPI using robust PrimeNG radio box click and verification
         try:
             upi_selected = False
             for upi_sel in [
-                "text='Pay through BHIM/UPI'",
-                "label:has-text('Pay through BHIM/UPI')",
+                "p-radiobutton:has-text('BHIM/UPI') .ui-radiobutton-box",
+                "p-radiobutton[value='2'] .ui-radiobutton-box",
                 "div:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
-                "label:has-text('BHIM/UPI') .ui-radiobutton-box"
+                "p-radiobutton:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
+                "label:has-text('BHIM/UPI') .ui-radiobutton-box",
+                "label:has-text('Pay through BHIM/UPI')",
+                "p-radiobutton:has-text('BHIM/UPI')"
             ]:
                 try:
                     loc = page.locator(upi_sel).first
                     if await loc.count() > 0 and await loc.is_visible():
                         await loc.scroll_into_view_if_needed()
-                        await loc.click(timeout=2000)
-                        upi_selected = upi_sel
+                        await SmartBrowserActions.human_click(page, loc)
+                        upi_selected = True
                         break
                 except Exception:
                     pass
 
-            if upi_selected:
-                log_event(db, "INFO", "AUTOMATION", f"Selected payment mode: BHIM/UPI (strategy: {upi_selected})", ref)
-            else:
-                log_event(db, "WARNING", "AUTOMATION", "Could not find/click BHIM/UPI payment mode", ref)
+            await asyncio.sleep(0.3)
+            # Verify and enforce active radio state directly on PrimeNG component
+            is_upi_active = await page.evaluate('''() => {
+                const upiRadios = Array.from(document.querySelectorAll('p-radiobutton')).filter(r => (r.innerText || '').includes('BHIM/UPI'));
+                for (const r of upiRadios) {
+                    const box = r.querySelector('.ui-radiobutton-box');
+                    const inp = r.querySelector('input[type="radio"]');
+                    if ((box && box.classList.contains('ui-state-active')) || (inp && inp.checked)) return true;
+                    if (box) box.click();
+                    return (box && box.classList.contains('ui-state-active')) || (inp && inp.checked);
+                }
+                return false;
+            }''')
+            log_event(db, "INFO", "AUTOMATION", f"Selected payment mode: BHIM/UPI (active={is_upi_active})", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Payment mode selection note: {e}", ref)
         await asyncio.sleep(0.3)
@@ -2088,9 +2107,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 result.valid = !hasInvalid && upiActive && insActive && cobrandOk;
                 return result;
             }''')
-            # If UPI payment mode was already selected above, honor it so we never double-click
-            if upi_selected:
-                form_state.setdefault('fields', {})['paymentSelected'] = True
+            # Allow form_state to report accurate DOM radio state without artificial override
 
             log_event(db, "INFO", "AUTOMATION", f"Pre-Continue form state: {form_state}", ref)
 
@@ -2113,14 +2130,25 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     except Exception:
                         pass
 
-                # 2. Click BHIM/UPI if not active
+                # 2. Click BHIM/UPI if not active using direct .ui-radiobutton-box
                 if not form_state.get('fields', {}).get('paymentSelected', False):
                     try:
-                        for upi_sel in ["text='Pay through BHIM/UPI'", "label:has-text('Pay through BHIM/UPI')", "text='BHIM/UPI'"]:
+                        for upi_sel in [
+                            "p-radiobutton:has-text('BHIM/UPI') .ui-radiobutton-box",
+                            "p-radiobutton[value='2'] .ui-radiobutton-box",
+                            "div:has-text('Pay through BHIM/UPI') .ui-radiobutton-box"
+                        ]:
                             loc = page.locator(upi_sel).first
                             if await loc.count() > 0 and await loc.is_visible():
                                 await SmartBrowserActions.human_click(page, loc)
                                 break
+                        await page.evaluate('''() => {
+                            const upi = Array.from(document.querySelectorAll('p-radiobutton')).find(r => (r.innerText || '').includes('BHIM/UPI'));
+                            if (upi) {
+                                const box = upi.querySelector('.ui-radiobutton-box') || upi;
+                                box.click();
+                            }
+                        }''')
                     except Exception:
                         pass
                 await asyncio.sleep(0.5)

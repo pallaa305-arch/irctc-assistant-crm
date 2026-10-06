@@ -92,7 +92,17 @@ class BrowserManager:
                 "slow_mo": settings.BROWSER_SLOW_MO,
                 "ignore_https_errors": True,
                 "no_viewport": not settings.BROWSER_HEADLESS,
-                "ignore_default_args": ["--enable-automation"],
+                "ignore_default_args": [
+                    "--enable-automation",
+                    "--disable-extensions",
+                    "--enable-unsafe-swiftshader",
+                    "--disable-component-update",
+                    "--disable-background-networking",
+                    "--metrics-recording-only",
+                    "--disable-client-side-phishing-detection",
+                    "--disable-default-apps",
+                    "--disable-sync"
+                ],
                 "args": [
                     "--start-maximized",
                     "--disable-blink-features=AutomationControlled",

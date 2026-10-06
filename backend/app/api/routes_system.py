@@ -1,4 +1,5 @@
 import os
+import base64
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 from sqlalchemy import text
@@ -11,7 +12,6 @@ router = APIRouter(prefix="/api/system", tags=["System"])
 @router.get("/status")
 async def get_system_status(db: Session = Depends(get_db)):
     """Health check for all subcomponents."""
-    # 1. Database
     db_connected = False
     try:
         db.execute(text("SELECT 1"))
@@ -19,16 +19,10 @@ async def get_system_status(db: Session = Depends(get_db)):
     except Exception:
         db_connected = False
 
-    # 2. Browser Automation status
     browser_status = "Busy" if browser_manager.is_busy else "Ready"
-
-    # 3. Telegram
     telegram_connected = bool(settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_CHAT_ID and settings.TELEGRAM_ENABLED)
-
-    # 4. WhatsApp
     whatsapp_connected = bool(settings.WHATSAPP_API_KEY and settings.WHATSAPP_PHONE_NUMBER_ID and settings.WHATSAPP_ENABLED)
 
-    # 5. Excel
     excel_ready = True
     try:
         if not os.path.exists(settings.EXCEL_FILE_PATH):
@@ -50,7 +44,6 @@ async def get_system_status(db: Session = Depends(get_db)):
 
 @router.get("/diagnostics/page")
 async def get_page_diagnostics():
-    import base64
     try:
         page = await browser_manager.get_page()
         if not page.url or "irctc" not in page.url:
@@ -65,6 +58,15 @@ async def get_page_diagnostics():
             "text": body_text,
             "screenshot_b64": base64.b64encode(screenshot_bytes).decode('ascii')
         }
+    except Exception as e:
+        return {"error": str(e)}
+
+@router.get("/diagnostics/cookies")
+async def get_page_cookies():
+    try:
+        page = await browser_manager.get_page()
+        cookies = await page.context.cookies(["https://www.irctc.co.in"])
+        return {"cookies": cookies}
     except Exception as e:
         return {"error": str(e)}
 
@@ -98,4 +100,3 @@ async def inspect_login():
     except Exception as e:
         import traceback
         return {"error": f"{type(e).__name__}: {str(e)}", "trace": traceback.format_exc()}
-
