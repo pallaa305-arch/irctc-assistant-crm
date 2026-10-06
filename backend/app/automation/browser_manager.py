@@ -1,9 +1,8 @@
+import os
 import asyncio
 from typing import Optional
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 from app.config import settings, BROWSER_PROFILE_DIR
-
-import os
 
 def focus_browser_window():
     """Forces the Chrome / IRCTC automation window to the foreground on Windows."""
@@ -91,7 +90,6 @@ class BrowserManager:
                 "user_data_dir": profile_dir,
                 "headless": settings.BROWSER_HEADLESS,
                 "slow_mo": settings.BROWSER_SLOW_MO,
-                
                 "ignore_https_errors": True,
                 "no_viewport": not settings.BROWSER_HEADLESS,
                 "ignore_default_args": ["--enable-automation"],
@@ -99,7 +97,8 @@ class BrowserManager:
                     "--start-maximized",
                     "--disable-blink-features=AutomationControlled",
                     "--no-first-run",
-                    "--disable-infobars"
+                    "--disable-infobars",
+                    "--lang=en-IN,en-GB,en-US,en"
                 ],
                 "locale": "en-IN"
             }
@@ -144,9 +143,6 @@ class BrowserManager:
                     else:
                         raise e_chromium
 
-        # Preserve native HTTP/2 connection pooling & multiplexing (no CDP route interception)
-        # Real Chrome with --disable-blink-features=AutomationControlled leaves clean navigator.webdriver
-
         if self.context.pages:
             self.page = self.context.pages[0]
         else:
@@ -169,17 +165,11 @@ class BrowserManager:
         return self.page
 
     async def reset_akamai_cookies(self):
-        """Clears Akamai bot detector cookies so retried requests aren't immediately blocked with 403."""
-        if self.context:
-            try:
-                cookies = await self.context.cookies()
-                akamai_names = {"_abck", "bm_sz", "bm_sv", "ak_bmsc"}
-                to_keep = [c for c in cookies if c.get("name") not in akamai_names]
-                await self.context.clear_cookies()
-                if to_keep:
-                    await self.context.add_cookies(to_keep)
-            except Exception:
-                pass
+        """
+        No-op: Preserves Akamai telemetry cookies (_abck, bm_sz, bm_sv) across requests.
+        Wiping cookies destroys session trust and triggers Akamai Bot Manager challenge hold.
+        """
+        pass
 
     async def close(self):
         try:

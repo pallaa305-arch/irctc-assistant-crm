@@ -814,8 +814,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             ref_h = resp.headers.get("x-akamai-transformed", "") or resp.headers.get("x-reference-id", "")
                             log_event(db, "WARNING", "AUTOMATION", f"IRCTC API HTTP {resp.status} on {resp.url.split('?')[0]} [srv:{server_h}] | body: {body_snippet}", ref)
                             if resp.status == 403:
-                                log_event(db, "WARNING", "AUTOMATION", f"Akamai WAF HTTP 403 detected on {resp.url.split('?')[0]}. Resetting Akamai bot detector cookies...", ref)
-                                asyncio.create_task(browser_manager.reset_akamai_cookies())
+                                log_event(db, "WARNING", "AUTOMATION", f"Akamai WAF HTTP 403 detected on {resp.url.split('?')[0]}. Preserving session cookies...", ref)
                         elif resp.request.method == "POST" and "json" in (resp.headers.get("content-type") or ""):
                             try:
                                 data = await resp.json()
@@ -1975,29 +1974,34 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 // Verify radio button states accurately
                 const isUpiActive = () => {
                     // Check active radio buttons in payment section
-                    const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
+                    const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked, [aria-checked="true"]'));
                     for (const b of activeBoxes) {
-                        const parent = b.closest('p-radiobutton, .ui-radiobutton, label, .row, .col-xs-12, tr, td, div');
-                        const parentText = (parent?.innerText || parent?.textContent || '').toLowerCase();
-                        // Strictly skip if this is the Credit Card option
-                        if (parentText.includes('credit') || parentText.includes('debit') || parentText.includes('net banking')) {
-                            continue;
-                        }
-                        if ((parentText.includes('bhim') || parentText.includes('upi')) && (parentText.includes('10') || parentText.includes('pay through') || parentText.includes('convenience'))) {
+                        // Inspect container card/row
+                        const row = b.closest('.row, p-card, .col-xs-12, tr, form, app-passenger-input') || b.parentElement?.parentElement;
+                        const txt = (row?.innerText || row?.textContent || '').toLowerCase();
+                        if ((txt.includes('bhim') || txt.includes('upi')) && !txt.includes('credit card / debit card')) {
                             return true;
+                        }
+                        // Check sibling or parent label
+                        const pRadio = b.closest('p-radiobutton, .ui-radiobutton');
+                        if (pRadio) {
+                            const lbl = pRadio.nextElementSibling || pRadio.parentElement?.querySelector('label');
+                            const lTxt = (lbl?.innerText || lbl?.textContent || '').toLowerCase();
+                            if (lTxt.includes('bhim') || lTxt.includes('upi')) {
+                                return true;
+                            }
                         }
                     }
                     // Strategy 2: Check 2nd radio in Payment Mode container
                     const payContainers = Array.from(document.querySelectorAll('div, section, p-card')).filter(d => {
                         const t = (d.innerText || '').toLowerCase();
-                        return t.includes('payment mode') && t.includes('convenience fee') && t.length < 1500;
+                        return (t.includes('payment mode') || t.includes('convenience fee')) && t.length < 1500;
                     });
                     payContainers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
                     if (payContainers.length > 0) {
                         const boxes = payContainers[0].querySelectorAll('.ui-radiobutton-box');
                         const inps = payContainers[0].querySelectorAll('input[type="radio"]');
-                        if (boxes.length >= 2 && boxes[1].classList.contains('ui-state-active')) return true;
-                        if (inps.length >= 2 && inps[1].checked) return true;
+                        if (boxes.length >= 2 && (boxes[1].classList.contains('ui-state-active') || inps[1]?.checked)) return true;
                     }
                     return false;
                 };
@@ -2084,9 +2088,13 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 result.valid = !hasInvalid && upiActive && insActive && cobrandOk;
                 return result;
             }''')
+            # If UPI payment mode was already selected above, honor it so we never double-click
+            if upi_selected:
+                form_state.setdefault('fields', {})['paymentSelected'] = True
+
             log_event(db, "INFO", "AUTOMATION", f"Pre-Continue form state: {form_state}", ref)
 
-            # Auto-repair payment, insurance, or co-branded card if not active
+            # Auto-repair payment, insurance, or co-branded card ONLY if genuinely missing
             needs_repair = (
                 not form_state.get('fields', {}).get('paymentSelected', False) or 
                 not form_state.get('fields', {}).get('insuranceSelected', False) or 
@@ -2094,67 +2102,34 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             )
             if needs_repair:
                 log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance/Loyalty radio not active. Applying auto-repair click...", ref)
-                # 1. Click Co-branded Card Skip using PLAYWRIGHT direct text locators
+                # 1. Click Co-branded Card Skip if not active
                 if not form_state.get('fields', {}).get('cobrandSkipped', True):
                     try:
                         for skip_sel in ["text='Skip'", "label:has-text('Skip')", "span:text-is('Skip')"]:
                             loc = page.locator(skip_sel).first
-                            if await loc.count() > 0:
-                                await loc.scroll_into_view_if_needed()
-                                box = loc.locator(".ui-radiobutton-box").first
-                                if await box.count() > 0:
-                                    await box.click(timeout=1500)
-                                else:
-                                    await loc.click(timeout=1500)
-                                await asyncio.sleep(0.2)
+                            if await loc.count() > 0 and await loc.is_visible():
+                                await SmartBrowserActions.human_click(page, loc)
                                 break
                     except Exception:
                         pass
 
-                # 2. Click BHIM/UPI using PLAYWRIGHT direct text locators
+                # 2. Click BHIM/UPI if not active
                 if not form_state.get('fields', {}).get('paymentSelected', False):
                     try:
                         for upi_sel in ["text='Pay through BHIM/UPI'", "label:has-text('Pay through BHIM/UPI')", "text='BHIM/UPI'"]:
                             loc = page.locator(upi_sel).first
-                            if await loc.count() > 0:
-                                await loc.scroll_into_view_if_needed()
-                                box = loc.locator(".ui-radiobutton-box").first
-                                if await box.count() > 0:
-                                    await box.click(timeout=1500)
-                                else:
-                                    await loc.click(timeout=1500)
-                                await asyncio.sleep(0.2)
+                            if await loc.count() > 0 and await loc.is_visible():
+                                await SmartBrowserActions.human_click(page, loc)
                                 break
                     except Exception:
                         pass
-
-                # Fallback trusted locator click for UPI if needed
-                if not form_state.get('fields', {}).get('paymentSelected', False):
-                    try:
-                        upi_fallback = page.locator("text='Pay through BHIM/UPI'").first
-                        if await upi_fallback.count() > 0:
-                            await upi_fallback.click()
-                    except Exception:
-                        pass
-                await asyncio.sleep(0.4)
-
-            # Dump DOM if form is still invalid for diagnostics
-            if not form_state.get('valid', False):
-                try:
-                    dom_html = await page.evaluate("() => document.querySelector('form, body')?.innerHTML?.slice(0, 50000) || ''")
-                    with open("data/passenger_page_dom.html", "w", encoding="utf-8") as f:
-                        f.write(dom_html)
-                except Exception:
-                    pass
+                await asyncio.sleep(0.5)
 
             # Save full-page diagnostic screenshot
             try:
-                await page.screenshot(path="data/pre_continue_screenshot.png", full_page=True)
+                await page.screenshot(path="data/pre_continue_screenshot.png")
             except Exception:
-                try:
-                    await page.screenshot(path="data/pre_continue_screenshot.png")
-                except Exception:
-                    pass
+                pass
 
             # Check if there are visible validation notices on page
             v_errs = await page.evaluate('''() => {
@@ -2164,8 +2139,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             if v_errs:
                 log_event(db, "WARNING", "AUTOMATION", f"Visible form notices: {'; '.join(v_errs[:3])}", ref)
 
-            # Click Continue button cleanly without double-clicking
-            clicked_continue = False
+            # Locate Continue button
             cont_btn = page.locator(
                 "app-passenger-input button:has-text('Continue'), "
                 "form button.train_Search:has-text('Continue'), "
@@ -2174,46 +2148,69 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 "button[type='submit']:has-text('Continue'), "
                 "button:has-text('Continue')"
             ).first
-            if await cont_btn.count() > 0 and await cont_btn.is_visible():
-                await cont_btn.scroll_into_view_if_needed()
-                await asyncio.sleep(0.4)
-                try:
-                    await page.evaluate("() => window.scrollBy(0, 80)")
-                except Exception:
-                    pass
 
-                # Simulate natural human mouse movement & hover to generate authentic Akamai pointer telemetry
-                try:
+            # Natural human dwell & telemetry collection on passenger page (mirroring manual video dwell)
+            try:
+                # Smooth scroll to ensure fare summary and Continue button are in view
+                await page.evaluate("window.scrollBy({ top: 250, behavior: 'smooth' })")
+                await asyncio.sleep(1.0)
+
+                # Move mouse naturally across the form using cubic Bézier trajectory
+                if await cont_btn.count() > 0 and await cont_btn.is_visible():
                     box = await cont_btn.bounding_box()
                     if box:
-                        start_x = max(10, box['x'] - 100)
-                        start_y = max(10, box['y'] - 120)
-                        await page.mouse.move(start_x, start_y)
-                        await asyncio.sleep(0.12)
+                        # Approach from upper-left of Continue button with human curve
+                        start_x = max(50.0, box['x'] - 120.0)
+                        start_y = max(50.0, box['y'] - 100.0)
+                        await SmartBrowserActions.human_mouse_move(page, start_x, start_y)
+                        await asyncio.sleep(0.8)
+
+                        # Gentle micro-movement
+                        mid_x = start_x + 40.0
+                        mid_y = start_y + 30.0
+                        await SmartBrowserActions.human_mouse_move(page, mid_x, mid_y)
+                        await asyncio.sleep(0.6)
+
+                        # Move directly onto the center of Continue button
                         dest_x = box['x'] + (box['width'] / 2)
                         dest_y = box['y'] + (box['height'] / 2)
-                        await page.mouse.move(dest_x, dest_y, steps=12)
+                        await SmartBrowserActions.human_mouse_move(page, dest_x, dest_y)
+                        # Hover dwell before click (matching real human eye-confirm before click)
                         await cont_btn.hover()
-                        await asyncio.sleep(0.3)
-                except Exception:
-                    pass
+                        await asyncio.sleep(1.2)
+            except Exception:
+                pass
 
+            # Log Akamai _abck status before dispatching Continue
+            try:
+                c_list = await page.context.cookies(["https://www.irctc.co.in"])
+                abck_cookie = next((c['value'] for c in c_list if c['name'] == '_abck'), None)
+                if abck_cookie:
+                    is_valid = "~0~" in abck_cookie
+                    log_event(db, "INFO", "AUTOMATION", f"Passenger page Akamai sensor state: valid_token={is_valid} (_abck prefix={abck_cookie[:35]}...)", ref)
+            except Exception:
+                pass
+
+            # Click Continue button with authentic single click (down/up dwell, zero rapid double-clicks)
+            clicked_continue = False
+            if await cont_btn.count() > 0 and await cont_btn.is_visible():
                 try:
-                    await cont_btn.click(timeout=4000)
+                    await page.mouse.down()
+                    await asyncio.sleep(0.08)
+                    await page.mouse.up()
                     clicked_continue = True
-                    log_event(db, "INFO", "AUTOMATION", "Clicked Continue button on Passenger page.", ref)
+                    log_event(db, "INFO", "AUTOMATION", "Clicked Continue button on Passenger page via authentic human click.", ref)
                 except Exception:
-                    await cont_btn.click(force=True)
+                    await cont_btn.click(timeout=3000)
                     clicked_continue = True
-                    log_event(db, "INFO", "AUTOMATION", "Force-clicked Continue button on Passenger page.", ref)
+                    log_event(db, "INFO", "AUTOMATION", "Clicked Continue button on Passenger page via Playwright.", ref)
 
             if not clicked_continue:
                 # Playwright fallback locator
                 try:
                     alt_btn = page.locator("button:has-text('Continue')").last
                     if await alt_btn.count() > 0 and await alt_btn.is_visible():
-                        await alt_btn.scroll_into_view_if_needed()
-                        await alt_btn.click()
+                        await SmartBrowserActions.human_click(page, alt_btn)
                         clicked_continue = True
                         log_event(db, "INFO", "AUTOMATION", "Clicked Continue button via secondary locator.", ref)
                 except Exception:
