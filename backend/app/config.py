@@ -46,7 +46,7 @@ class Settings(BaseSettings):
     
     # Browser Automation Settings
     BROWSER_HEADLESS: bool = False  # Visible browser by default as requested
-    BROWSER_SLOW_MO: int = 150      # Slower pace for visual inspection
+    BROWSER_SLOW_MO: int = 0        # Zero artificial CDP throttling for authentic human mouse/keystroke cadence
     DEMO_MODE: bool = False         # Live Official IRCTC Mode by default
     IRCTC_USERNAME: str = ""
     IRCTC_PASSWORD: str = ""

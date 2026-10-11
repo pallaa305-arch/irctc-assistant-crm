@@ -698,11 +698,36 @@ async def _fill_station_autocomplete(page, input_locator, station_text: str, lab
                 
                 # Verify the input value after selection
                 try:
-                    selected_val = (await input_locator.input_value()).strip().upper()
-                    if station_code.upper() in selected_val and selected_val.count(station_code.upper()) == 1:
+                    selected_val = (await input_locator.input_value()).strip()
+                    val_u = selected_val.upper()
+                    code_u = station_code.upper()
+
+                    # Check for genuine duplication (e.g. "NEW DELHI - NDLS - NDLS" or repeated values)
+                    is_duplicated = (
+                        val_u.count(" - ") > 1
+                        or val_u.count(f"- {code_u}") > 1
+                        or val_u.count(f"-{code_u}") > 1
+                        or val_u.count(f"({code_u})") > 1
+                        or (len(code_u) >= 3 and f"{code_u}{code_u}" in val_u)
+                    )
+
+                    # Standard IRCTC format is "STATION NAME - CODE" (e.g. "KOTA JN - KOTA", "NEW DELHI - NDLS")
+                    is_valid_selection = False
+                    if " - " in val_u:
+                        parts = val_u.split(" - ")
+                        code_part = parts[-1].strip()
+                        if (code_part == code_u or code_part.startswith(code_u)) and not is_duplicated:
+                            is_valid_selection = True
+                    elif val_u.endswith(f"({code_u})") or val_u == code_u:
+                        if not is_duplicated:
+                            is_valid_selection = True
+                    elif code_u in val_u and not is_duplicated:
+                        is_valid_selection = True
+
+                    if is_valid_selection:
                         log_event(db, "INFO", "AUTOMATION", f"{label} station verified: {selected_val}", ref)
                         return True
-                    elif station_code.upper() in selected_val and selected_val.count(station_code.upper()) > 1:
+                    elif is_duplicated:
                         log_event(db, "WARNING", "AUTOMATION", f"{label} station duplicated ({selected_val})! Clearing and retrying...", ref)
                         await page.keyboard.press("Control+A")
                         await page.keyboard.press("Backspace")
@@ -799,17 +824,19 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 except Exception:
                     pass
 
+            setattr(page, "_last_akamai_403", False)
+            setattr(page, "_irctc_maintenance_msg", None)
+
             async def _on_response(resp):
                 try:
                     if session_state.booking_ref != ref:
                         return
-                    if "ZRgaKN" in resp.url or "sensor" in resp.url or "_bm" in resp.url:
-                        set_c = resp.headers.get("set-cookie", "")
-                        if "_abck" in set_c:
-                            abck_part = next((p.split("=")[1] for p in set_c.split(";") if "_abck" in p), "")
-                            is_v = "~0~" in abck_part
-                            log_event(db, "INFO", "AUTOMATION", f"Akamai sensor update: valid={is_v} (_abck prefix={abck_part[:35]}...)", ref)
-                    elif "/eticketing/protected/" in resp.url or "/nget/" in resp.url:
+                    set_c = resp.headers.get("set-cookie", "")
+                    if "_abck=" in set_c and resp.request.method == "POST" and "/eticketing/" not in resp.url:
+                        abck_part = next((p.split("=", 1)[1] for p in set_c.split(";") if "_abck=" in p), "")
+                        is_v = "~0~" in abck_part
+                        log_event(db, "INFO", "AUTOMATION", f"Akamai sensor update: valid={is_v} (_abck prefix={abck_part[:35]}...)", ref)
+                    if "/eticketing/protected/" in resp.url or "/nget/" in resp.url:
                         if resp.status >= 400:
                             body_snippet = ""
                             try:
@@ -817,17 +844,20 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             except Exception:
                                 pass
                             server_h = resp.headers.get("server", "")
-                            ref_h = resp.headers.get("x-akamai-transformed", "") or resp.headers.get("x-reference-id", "")
                             log_event(db, "WARNING", "AUTOMATION", f"IRCTC API HTTP {resp.status} on {resp.url.split('?')[0]} [srv:{server_h}] | body: {body_snippet}", ref)
                             if resp.status == 403:
-                                log_event(db, "WARNING", "AUTOMATION", f"Akamai WAF HTTP 403 detected on {resp.url.split('?')[0]}. Preserving session cookies...", ref)
+                                setattr(page, "_last_akamai_403", True)
+                                log_event(db, "WARNING", "AUTOMATION", f"Akamai WAF HTTP 403 detected on {resp.url.split('?')[0]}. Marked flagged sensor cookie for refresh.", ref)
                         elif resp.request.method == "POST" and "json" in (resp.headers.get("content-type") or ""):
                             try:
                                 data = await resp.json()
                                 if isinstance(data, dict):
                                     err = data.get("errorMessage") or data.get("error")
                                     if err:
-                                        log_event(db, "WARNING", "AUTOMATION", f"IRCTC API response notice: {err}", ref)
+                                        err_str = str(err).strip()
+                                        log_event(db, "WARNING", "AUTOMATION", f"IRCTC API response notice: {err_str}", ref)
+                                        if "maintenance downtime" in err_str.lower() or "services will resume at" in err_str.lower():
+                                            setattr(page, "_irctc_maintenance_msg", err_str)
                             except Exception:
                                 pass
                 except Exception:
@@ -846,8 +876,22 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         session_state.set_stage("OPENING_IRCTC")
         log_event(db, "INFO", "AUTOMATION", f"Navigating to official IRCTC website: {URLS['HOME']}", ref)
         await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=45000)
-        await asyncio.sleep(2)
+        await browser_manager.unregister_service_workers()
+        # Check if Akamai cookie is flagged (~-1~) or bm_sz is missing; if so, clear after SW unregister and reload from edge
+        cleared_flagged = await browser_manager.reset_akamai_cookies(force=False)
+        if cleared_flagged:
+            log_event(db, "INFO", "AUTOMATION", "Cleared stale/flagged Akamai cookie and ServiceWorker cache; reloading fresh edge session...", ref)
+            await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=45000)
+            await browser_manager.unregister_service_workers()
+        await asyncio.sleep(1.5)
         await dismiss_overlays(page)
+        # Perform natural initial mouse movement so Akamai sensor posts telemetry with fresh bm_sz cookie
+        try:
+            await SmartBrowserActions.human_mouse_move(page, 420.0, 280.0)
+            await asyncio.sleep(0.3)
+            await SmartBrowserActions.human_mouse_move(page, 580.0, 340.0)
+        except Exception:
+            pass
 
         # ══════════════════════════════════════════════════
         # Step 3: Verified IRCTC Authentication Check
@@ -871,21 +915,37 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         db.commit()
         log_event(db, "INFO", "AUTOMATION", f"Entering route: {booking.from_station} ➔ {booking.to_station}", ref)
 
-        # Re-verify logged in state before train search
-        if not await check_logged_in_state(page):
-            log_event(db, "WARNING", "AUTOMATION", "Session not logged in before search. Re-authenticating...", ref)
-            await ensure_authenticated_session(page, ref, db, session_state, booking)
-
         search_success = False
         date_str = booking.journey_date.strftime("%d/%m/%Y")
 
         for search_attempt in range(3):
             try:
+                # Abort immediately if IRCTC reported daily maintenance downtime
+                maint_err = getattr(page, "_irctc_maintenance_msg", None)
+                if maint_err:
+                    log_event(db, "WARNING", "AUTOMATION", f"IRCTC Maintenance Notice: {maint_err}", ref)
+                    session_state.set_stage("FAILED", "FAILED")
+                    session_state.error_message = maint_err
+                    booking.status = "FAILED"
+                    db.commit()
+                    if settings.TELEGRAM_ENABLED:
+                        await send_telegram_message(f"⚠️ *IRCTC Maintenance* (Ref: `{ref}`)\n\n{maint_err}")
+                    return
+
                 # If train list already loaded, break out immediately
                 if "/train-list" in page.url or await page.locator("app-train-list, div.train-heading, app-train-avl-enq").count() > 0:
                     log_event(db, "INFO", "AUTOMATION", "Train search results already visible.", ref)
                     search_success = True
                     break
+
+                # If previous attempt triggered Akamai WAF HTTP 403, purge flagged cookies and reload home
+                if getattr(page, "_last_akamai_403", False):
+                    setattr(page, "_last_akamai_403", False)
+                    await browser_manager.reset_akamai_cookies(force=True)
+                    log_event(db, "INFO", "AUTOMATION", f"Refreshed flagged Akamai cookies before search attempt {search_attempt+1}.", ref)
+                    await page.goto(URLS["HOME"], wait_until="domcontentloaded", timeout=30000)
+                    await asyncio.sleep(2)
+                    await dismiss_overlays(page)
 
                 # Ensure search inputs are ready
                 has_search_inputs = await page.locator("p-autocomplete input").count() > 0
@@ -895,8 +955,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         await asyncio.sleep(2)
                     await dismiss_overlays(page)
 
-                # Always unconditionally dismiss any Language Alert or modal before searching
+                # Always unconditionally dismiss any Language Alert or modal before checking login & searching
                 await dismiss_overlays(page)
+
+                # Re-verify logged in state on EVERY search attempt (since /nget/error redirects log the user out)
+                if not await check_logged_in_state(page):
+                    log_event(db, "WARNING", "AUTOMATION", f"Session not logged in on search attempt {search_attempt+1}. Re-authenticating...", ref)
+                    await ensure_authenticated_session(page, ref, db, session_state, booking)
+                    await dismiss_overlays(page)
                 await page.wait_for_selector("p-autocomplete input", timeout=15000)
                 
                 # Use targeted selectors for FROM and TO station autocompletes
@@ -999,6 +1065,18 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     if "/train-list" in page.url or await page.locator("app-train-list, div.train-heading, div.form-group:has(.train-name), app-train-avl-enq").count() > 0:
                         search_success = True
                         break
+
+                    # Check if IRCTC API returned maintenance downtime message
+                    maint_err = getattr(page, "_irctc_maintenance_msg", None)
+                    if maint_err:
+                        log_event(db, "WARNING", "AUTOMATION", f"IRCTC Maintenance Notice: {maint_err}", ref)
+                        session_state.set_stage("FAILED", "FAILED")
+                        session_state.error_message = maint_err
+                        booking.status = "FAILED"
+                        db.commit()
+                        if settings.TELEGRAM_ENABLED:
+                            await send_telegram_message(f"⚠️ *IRCTC Maintenance* (Ref: `{ref}`)\n\n{maint_err}")
+                        return
 
                     # If redirected to IRCTC error page, recover immediately
                     if "/nget/error" in page.url.lower():
@@ -1837,14 +1915,10 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     curr_mob = (await mob_input.input_value()).strip()
                 except Exception:
                     pass
-                if len(curr_mob) == 10 and curr_mob.isdigit():
-                    log_event(db, "INFO", "AUTOMATION", f"Preserved pre-filled registered mobile: {curr_mob[:3]}****{curr_mob[-3:]}", ref)
-                else:
-                    await mob_input.click()
-                    await page.keyboard.press("Control+A")
-                    await page.keyboard.press("Backspace")
-                    await mob_input.press_sequentially(digits, delay=40)
-                    log_event(db, "INFO", "AUTOMATION", f"Set contact mobile: {digits[:3]}****{digits[-3:]}", ref)
+                target_mob = curr_mob if (len(curr_mob) == 10 and curr_mob.isdigit()) else digits
+                await SmartBrowserActions.smart_type(page, mob_input, target_mob, delay_ms=35, clear_first=True)
+                await page.keyboard.press("Tab")
+                log_event(db, "INFO", "AUTOMATION", f"Set contact mobile: {target_mob[:3]}****{target_mob[-3:]}", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Mobile number entry note: {e}", ref)
         # Handle IRCTC Co-branded Card Benefits: Skip is active by default; click only if needed
@@ -1887,45 +1961,71 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             log_event(db, "WARNING", "AUTOMATION", f"Co-branded card benefit note: {e}", ref)
         await asyncio.sleep(0.3)
 
-        # Select Payment Mode: BHIM/UPI using robust PrimeNG radio box click and verification
+        # Select Payment Mode: BHIM/UPI using exact IRCTC PassengerInputComponent DOM selectors
+        # In IRCTC's template: <tr><label for="2"><p-radiobutton id="2" value="2"></p-radiobutton> Pay through BHIM/UPI </label></tr>
         try:
-            upi_selected = False
-            for upi_sel in [
-                "p-radiobutton:has-text('BHIM/UPI') .ui-radiobutton-box",
-                "p-radiobutton[value='2'] .ui-radiobutton-box",
-                "div:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
-                "p-radiobutton:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
-                "label:has-text('BHIM/UPI') .ui-radiobutton-box",
-                "label:has-text('Pay through BHIM/UPI')",
-                "p-radiobutton:has-text('BHIM/UPI')"
-            ]:
+            upi_selectors = [
+                "p-radiobutton[id='2'] .ui-radiobutton-box",
+                "label[for='2'] .ui-radiobutton-box",
+                "tr:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
+                "label:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
+                "label[for='2']",
+                "label:has-text('Pay through BHIM/UPI')"
+            ]
+            for upi_sel in upi_selectors:
                 try:
                     loc = page.locator(upi_sel).first
                     if await loc.count() > 0 and await loc.is_visible():
                         await loc.scroll_into_view_if_needed()
                         await SmartBrowserActions.human_click(page, loc)
-                        upi_selected = True
                         break
                 except Exception:
                     pass
 
-            await asyncio.sleep(0.3)
-            # Verify and enforce active radio state directly on PrimeNG component
+            await asyncio.sleep(0.25)
+            # Verify active state on Option 2 (BHIM/UPI) without confusing it with Option 1 (UPI_CC)
             is_upi_active = await page.evaluate('''() => {
-                const upiRadios = Array.from(document.querySelectorAll('p-radiobutton')).filter(r => (r.innerText || '').includes('BHIM/UPI'));
-                for (const r of upiRadios) {
-                    const box = r.querySelector('.ui-radiobutton-box');
-                    const inp = r.querySelector('input[type="radio"]');
+                const r2 = document.querySelector("p-radiobutton[id='2'], label[for='2'] p-radiobutton");
+                if (r2) {
+                    const box = r2.querySelector('.ui-radiobutton-box');
+                    const inp = r2.querySelector('input[type="radio"]');
                     if ((box && box.classList.contains('ui-state-active')) || (inp && inp.checked)) return true;
-                    if (box) box.click();
-                    return (box && box.classList.contains('ui-state-active')) || (inp && inp.checked);
+                }
+                const labels = Array.from(document.querySelectorAll('label, tr'));
+                for (const l of labels) {
+                    const t = (l.innerText || '').toLowerCase();
+                    if (t.includes('bhim/upi') && !t.includes('credit') && !t.includes('debit')) {
+                        const box = l.querySelector('.ui-radiobutton-box');
+                        const inp = l.querySelector('input[type="radio"]');
+                        if ((box && box.classList.contains('ui-state-active')) || (inp && inp.checked)) return true;
+                    }
                 }
                 return false;
             }''')
+            if not is_upi_active:
+                # Fallback trusted Playwright click directly on label[for='2'] or p-radiobutton[id='2']
+                for fallback_sel in ["label[for='2']", "p-radiobutton[id='2'] .ui-radiobutton-box", "label:has-text('Pay through BHIM/UPI')"]:
+                    try:
+                        loc = page.locator(fallback_sel).first
+                        if await loc.count() > 0 and await loc.is_visible():
+                            await loc.click(timeout=2000, force=True)
+                            await asyncio.sleep(0.25)
+                            break
+                    except Exception:
+                        pass
+                is_upi_active = await page.evaluate('''() => {
+                    const r2 = document.querySelector("p-radiobutton[id='2'], label[for='2'] p-radiobutton");
+                    if (r2) {
+                        const box = r2.querySelector('.ui-radiobutton-box');
+                        const inp = r2.querySelector('input[type="radio"]');
+                        return Boolean((box && box.classList.contains('ui-state-active')) || (inp && inp.checked));
+                    }
+                    return false;
+                }''')
             log_event(db, "INFO", "AUTOMATION", f"Selected payment mode: BHIM/UPI (active={is_upi_active})", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Payment mode selection note: {e}", ref)
-        await asyncio.sleep(0.3)
+        await asyncio.sleep(0.2)
 
         # Travel Insurance: Yes (if present on the page) using trusted Playwright clicks
         try:
@@ -1990,37 +2090,21 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 result.fields.nationalities = Array.from(nats).map(n => n.value || (n.innerText || '').trim().slice(0, 30));
                 result.fields.mobile = mobiles.length > 0 ? mobiles[0].value : '';
 
-                // Verify radio button states accurately
+                // Verify BHIM/UPI radio button state accurately (Option 2: id="2" / for="2")
                 const isUpiActive = () => {
-                    // Check active radio buttons in payment section
-                    const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked, [aria-checked="true"]'));
+                    const r2 = document.querySelector("p-radiobutton[id='2'], label[for='2'] p-radiobutton");
+                    if (r2) {
+                        const box = r2.querySelector('.ui-radiobutton-box');
+                        const inp = r2.querySelector('input[type="radio"]');
+                        if ((box && box.classList.contains('ui-state-active')) || (inp && inp.checked)) return true;
+                    }
+                    const activeBoxes = Array.from(document.querySelectorAll('.ui-radiobutton-box.ui-state-active, input[type="radio"]:checked'));
                     for (const b of activeBoxes) {
-                        // Inspect container card/row
-                        const row = b.closest('.row, p-card, .col-xs-12, tr, form, app-passenger-input') || b.parentElement?.parentElement;
+                        const row = b.closest('label, tr');
                         const txt = (row?.innerText || row?.textContent || '').toLowerCase();
-                        if ((txt.includes('bhim') || txt.includes('upi')) && !txt.includes('credit card / debit card')) {
+                        if (txt.includes('bhim/upi') && !txt.includes('credit') && !txt.includes('debit')) {
                             return true;
                         }
-                        // Check sibling or parent label
-                        const pRadio = b.closest('p-radiobutton, .ui-radiobutton');
-                        if (pRadio) {
-                            const lbl = pRadio.nextElementSibling || pRadio.parentElement?.querySelector('label');
-                            const lTxt = (lbl?.innerText || lbl?.textContent || '').toLowerCase();
-                            if (lTxt.includes('bhim') || lTxt.includes('upi')) {
-                                return true;
-                            }
-                        }
-                    }
-                    // Strategy 2: Check 2nd radio in Payment Mode container
-                    const payContainers = Array.from(document.querySelectorAll('div, section, p-card')).filter(d => {
-                        const t = (d.innerText || '').toLowerCase();
-                        return (t.includes('payment mode') || t.includes('convenience fee')) && t.length < 1500;
-                    });
-                    payContainers.sort((a, b) => (a.innerText || '').length - (b.innerText || '').length);
-                    if (payContainers.length > 0) {
-                        const boxes = payContainers[0].querySelectorAll('.ui-radiobutton-box');
-                        const inps = payContainers[0].querySelectorAll('input[type="radio"]');
-                        if (boxes.length >= 2 && (boxes[1].classList.contains('ui-state-active') || inps[1]?.checked)) return true;
                     }
                     return false;
                 };
@@ -2130,28 +2214,23 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     except Exception:
                         pass
 
-                # 2. Click BHIM/UPI if not active using direct .ui-radiobutton-box
+                # 2. Click BHIM/UPI if not active using exact Option 2 selectors
                 if not form_state.get('fields', {}).get('paymentSelected', False):
                     try:
                         for upi_sel in [
-                            "p-radiobutton:has-text('BHIM/UPI') .ui-radiobutton-box",
-                            "p-radiobutton[value='2'] .ui-radiobutton-box",
-                            "div:has-text('Pay through BHIM/UPI') .ui-radiobutton-box"
+                            "p-radiobutton[id='2'] .ui-radiobutton-box",
+                            "label[for='2'] .ui-radiobutton-box",
+                            "tr:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
+                            "label[for='2']",
+                            "label:has-text('Pay through BHIM/UPI')"
                         ]:
                             loc = page.locator(upi_sel).first
                             if await loc.count() > 0 and await loc.is_visible():
                                 await SmartBrowserActions.human_click(page, loc)
                                 break
-                        await page.evaluate('''() => {
-                            const upi = Array.from(document.querySelectorAll('p-radiobutton')).find(r => (r.innerText || '').includes('BHIM/UPI'));
-                            if (upi) {
-                                const box = upi.querySelector('.ui-radiobutton-box') || upi;
-                                box.click();
-                            }
-                        }''')
                     except Exception:
                         pass
-                await asyncio.sleep(0.5)
+                await asyncio.sleep(0.3)
 
             # Save full-page diagnostic screenshot
             try:
@@ -2177,35 +2256,18 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 "button:has-text('Continue')"
             ).first
 
-            # Natural human dwell & telemetry collection on passenger page (mirroring manual video dwell)
+            # Natural human trajectory onto Continue button
             try:
-                # Smooth scroll to ensure fare summary and Continue button are in view
-                await page.evaluate("window.scrollBy({ top: 250, behavior: 'smooth' })")
-                await asyncio.sleep(1.0)
-
-                # Move mouse naturally across the form using cubic Bézier trajectory
                 if await cont_btn.count() > 0 and await cont_btn.is_visible():
+                    await cont_btn.scroll_into_view_if_needed()
+                    await asyncio.sleep(0.2)
                     box = await cont_btn.bounding_box()
                     if box:
-                        # Approach from upper-left of Continue button with human curve
-                        start_x = max(50.0, box['x'] - 120.0)
-                        start_y = max(50.0, box['y'] - 100.0)
-                        await SmartBrowserActions.human_mouse_move(page, start_x, start_y)
-                        await asyncio.sleep(0.8)
-
-                        # Gentle micro-movement
-                        mid_x = start_x + 40.0
-                        mid_y = start_y + 30.0
-                        await SmartBrowserActions.human_mouse_move(page, mid_x, mid_y)
-                        await asyncio.sleep(0.6)
-
-                        # Move directly onto the center of Continue button
                         dest_x = box['x'] + (box['width'] / 2)
                         dest_y = box['y'] + (box['height'] / 2)
                         await SmartBrowserActions.human_mouse_move(page, dest_x, dest_y)
-                        # Hover dwell before click (matching real human eye-confirm before click)
                         await cont_btn.hover()
-                        await asyncio.sleep(1.2)
+                        await asyncio.sleep(0.35)
             except Exception:
                 pass
 
@@ -2219,19 +2281,17 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             except Exception:
                 pass
 
-            # Click Continue button with authentic single click (down/up dwell, zero rapid double-clicks)
+            # Click Continue button cleanly (proven c4285fc single click)
             clicked_continue = False
             if await cont_btn.count() > 0 and await cont_btn.is_visible():
                 try:
-                    await page.mouse.down()
-                    await asyncio.sleep(0.08)
-                    await page.mouse.up()
+                    await cont_btn.click(timeout=4000)
                     clicked_continue = True
-                    log_event(db, "INFO", "AUTOMATION", "Clicked Continue button on Passenger page via authentic human click.", ref)
+                    log_event(db, "INFO", "AUTOMATION", "Clicked Continue button on Passenger page.", ref)
                 except Exception:
-                    await cont_btn.click(timeout=3000)
+                    await cont_btn.click(force=True)
                     clicked_continue = True
-                    log_event(db, "INFO", "AUTOMATION", "Clicked Continue button on Passenger page via Playwright.", ref)
+                    log_event(db, "INFO", "AUTOMATION", "Force-clicked Continue button on Passenger page.", ref)
 
             if not clicked_continue:
                 # Playwright fallback locator
@@ -2254,11 +2314,11 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         session_state.set_stage("REVIEW_BOOKING")
         log_event(db, "INFO", "AUTOMATION", "Navigating to Review Booking page...", ref)
 
-        # Wait up to 35s for Review page, cleanly handling any confirmation dialogs (Waitlist/Insurance/Senior)
+        # Wait up to 65s for Review page (IRCTC enforces a 45s minPsgnInputTime countdown via timeWait() before firing allLapAvlFareEnq/Y)
         arrived_at_review = False
         dialog_confirmed = False
 
-        for s in range(35):
+        for s in range(65):
             await asyncio.sleep(1)
 
             # Diagnostic snapshots during wait to identify modals or errors early
@@ -2277,50 +2337,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 break
 
             # 2. Handle PrimeNG confirmation dialogs (Waitlist alert, travel insurance, auto-upgrade, senior concession, etc.)
-            # Check in every iteration to handle sequential dialogs (e.g. Senior alert followed by Waitlist alert)
-            try:
-                confirmed_text = await page.evaluate('''() => {
-                    // If loading spinner ("Please Wait...") is actively spinning, let the request complete without interference
-                    const hasSpinner = Array.from(document.querySelectorAll('div, p, span')).some(el => {
-                        const t = (el.innerText || '').trim().toLowerCase();
-                        return (t === 'please wait...' || t === 'please wait') && (el.offsetWidth > 0 || el.offsetHeight > 0);
-                    });
-                    if (hasSpinner) return null;
-
-                    const isVisibleDialog = (el) => {
-                        if (!el || !(el.offsetWidth || el.offsetHeight || el.getClientRects().length > 0)) return false;
-                        const txt = (el.innerText || '').trim();
-                        if (txt.length < 5) return false;
-                        const style = window.getComputedStyle(el);
-                        return !(style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0');
-                    };
-                    const dialog = Array.from(document.querySelectorAll('p-confirmdialog, .ui-confirmdialog, p-dialog, .ui-dialog, div[role="dialog"], .modal-dialog, app-custom-dialog')).find(d => isVisibleDialog(d));
-                    if (!dialog) return null;
-
-                    const btns = Array.from(dialog.querySelectorAll('button, span.ui-button-text, a.btn, .ui-confirmdialog-yesbutton, .p-confirm-dialog-accept, input[type="button"]'));
-                    const acceptBtn = btns.find(b => {
-                        const t = (b.innerText || b.getAttribute('label') || b.value || '').trim().toLowerCase();
-                        const cls = (b.className || '').toLowerCase();
-                        return t.includes('yes') || t.includes('continue') || t.includes('agree') || t.includes('proceed') || t.includes('confirm') || t.includes('ok') || cls.includes('yesbutton') || cls.includes('dialog-accept') || cls.includes('accept');
-                    });
-
-                    if (acceptBtn) {
-                        const dialogMsg = (dialog.innerText || '').slice(0, 150).replace(/\\s+/g, ' ');
-                        const clickTarget = acceptBtn.closest('button') || acceptBtn;
-                        clickTarget.click();
-                        return dialogMsg;
-                    }
-                    return null;
-                }''')
-                if confirmed_text:
-                    dialog_confirmed = True
-                    log_event(db, "INFO", "AUTOMATION", f"Accepted IRCTC confirmation dialog: '{confirmed_text}'", ref)
-                    await asyncio.sleep(1.5)
-                    continue
-            except Exception:
-                pass
-
-            # Playwright fallback for confirmation dialog accept button
+            # Use trusted Playwright human click FIRST so Angular PrimeNG ConfirmDialog triggers immediately
             try:
                 confirm_yes = page.locator(
                     "p-confirmdialog button.ui-confirmdialog-yesbutton, "
@@ -2332,14 +2349,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     ".ui-dialog button:has-text('Yes'), "
                     ".ui-dialog button:has-text('Continue'), "
                     ".ui-dialog button:has-text('Proceed'), "
-                    "button:has-text('I Agree'), "
+                    ".ui-dialog button:has-text('I Agree'), "
                     ".ui-dialog button:has-text('OK')"
                 ).first
                 if await confirm_yes.count() > 0 and await confirm_yes.is_visible():
-                    await confirm_yes.click(timeout=1000)
+                    await SmartBrowserActions.human_click(page, confirm_yes, wait_after_sec=0.5)
                     dialog_confirmed = True
-                    log_event(db, "INFO", "AUTOMATION", "Clicked Yes/Continue on confirmation dialog via Playwright locator", ref)
-                    await asyncio.sleep(1.5)
+                    log_event(db, "INFO", "AUTOMATION", "Accepted IRCTC confirmation dialog via trusted Playwright click.", ref)
+                    await asyncio.sleep(1.0)
                     continue
             except Exception:
                 pass

@@ -48,6 +48,8 @@ PROMAX_*/
 backend/scratch_debug_page.py
 backend/test_qr.png
 render_live_irctc.png
+inspect_joining.py
+outputs/
 
 # OS files
 .DS_Store

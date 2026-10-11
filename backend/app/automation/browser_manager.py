@@ -1,8 +1,10 @@
 import os
+import shutil
 import asyncio
 from typing import Optional
 from playwright.async_api import async_playwright, Browser, BrowserContext, Page, Playwright
 from app.config import settings, BROWSER_PROFILE_DIR
+
 
 def focus_browser_window():
     """Forces the Chrome / IRCTC automation window to the foreground on Windows."""
@@ -38,6 +40,7 @@ def focus_browser_window():
         except Exception:
             pass
 
+
 class BrowserManager:
     """
     Manages a single visible browser session for low-spec optimization (4GB RAM target).
@@ -69,6 +72,19 @@ class BrowserManager:
             cls._instance = cls()
         return cls._instance
 
+    @staticmethod
+    def _purge_service_worker_cache(profile_dir: str):
+        """
+        Removes cached Angular ServiceWorker (ngsw-worker.js) storage from the profile
+        so /nget/train-search always hits Akamai's edge server and receives fresh bm_sz / _abck cookies.
+        """
+        sw_dir = os.path.join(profile_dir, "Default", "Service Worker")
+        if os.path.exists(sw_dir):
+            try:
+                shutil.rmtree(sw_dir, ignore_errors=True)
+            except Exception:
+                pass
+
     async def get_page(self, *, owner: Optional[str] = None, foreground: bool = True) -> Page:
         if self.owner and self.owner != owner:
             raise RuntimeError("IRCTC browser belongs to another active booking.")
@@ -86,32 +102,28 @@ class BrowserManager:
 
         profile_dir = str(BROWSER_PROFILE_DIR)
         if not self.context:
+            self._purge_service_worker_cache(profile_dir)
+
             launch_args = {
                 "user_data_dir": profile_dir,
                 "headless": settings.BROWSER_HEADLESS,
-                "slow_mo": settings.BROWSER_SLOW_MO,
+                "bypass_csp": True,
                 "ignore_https_errors": True,
                 "no_viewport": not settings.BROWSER_HEADLESS,
-                "ignore_default_args": [
-                    "--enable-automation",
-                    "--disable-extensions",
-                    "--enable-unsafe-swiftshader",
-                    "--disable-component-update",
-                    "--disable-background-networking",
-                    "--metrics-recording-only",
-                    "--disable-client-side-phishing-detection",
-                    "--disable-default-apps",
-                    "--disable-sync"
-                ],
+                "ignore_default_args": ["--enable-automation"],
                 "args": [
                     "--start-maximized",
                     "--disable-blink-features=AutomationControlled",
                     "--no-first-run",
                     "--disable-infobars",
-                    "--lang=en-IN,en-GB,en-US,en"
+                    "--no-sandbox",
+                    "--disable-setuid-sandbox",
+                    "--disable-dev-shm-usage"
                 ],
-                "locale": "en-IN"
+                "locale": "en-US"
             }
+            if settings.BROWSER_SLOW_MO > 0:
+                launch_args["slow_mo"] = settings.BROWSER_SLOW_MO
             if settings.BROWSER_HEADLESS:
                 launch_args["viewport"] = {"width": 1366, "height": 768}
 
@@ -146,12 +158,16 @@ class BrowserManager:
                                     os.remove(lp)
                                 except Exception:
                                     pass
+                        self._purge_service_worker_cache(profile_dir)
                         await asyncio.sleep(1.0)
                         self.context = await self.playwright.chromium.launch_persistent_context(
                             **launch_args
                         )
                     else:
                         raise e_chromium
+
+        # Preserve native HTTP/2 connection pooling & multiplexing (no CDP route interception)
+        # Real Chrome with --disable-blink-features=AutomationControlled leaves clean navigator.webdriver
 
         if self.context.pages:
             self.page = self.context.pages[0]
@@ -174,12 +190,62 @@ class BrowserManager:
 
         return self.page
 
-    async def reset_akamai_cookies(self):
+    async def unregister_service_workers(self):
+        """Unregisters Angular ServiceWorker (ngsw-worker.js) and clears CacheStorage in the active page."""
+        if not self.page or self.page.is_closed():
+            return
+        try:
+            await self.page.evaluate("""async () => {
+                try {
+                    if ('serviceWorker' in navigator) {
+                        const regs = await navigator.serviceWorker.getRegistrations();
+                        for (const r of regs) {
+                            await r.unregister();
+                        }
+                    }
+                } catch (e) {}
+                try {
+                    if ('caches' in window) {
+                        const keys = await caches.keys();
+                        for (const k of keys) {
+                            await caches.delete(k);
+                        }
+                    }
+                } catch (e) {}
+            }""")
+        except Exception:
+            pass
+
+    async def reset_akamai_cookies(self, force: bool = False) -> bool:
         """
-        No-op: Preserves Akamai telemetry cookies (_abck, bm_sz, bm_sv) across requests.
-        Wiping cookies destroys session trust and triggers Akamai Bot Manager challenge hold.
+        Clears flagged or blacklisted Akamai Bot Manager cookies (_abck, bm_*)
+        when force=True (after HTTP 403) or when _abck is in a flagged (~-1~) state or bm_sz is missing.
+        Also unregisters Angular ServiceWorker so the next navigation hits Akamai's edge server.
+        Preserves valid (~0~) cookies during normal operation.
         """
-        pass
+        if not self.context:
+            return False
+        try:
+            await self.unregister_service_workers()
+            cookies = await self.context.cookies(["https://www.irctc.co.in"])
+            abck = next((c["value"] for c in cookies if c["name"] == "_abck"), "")
+            bm_sz = next((c["value"] for c in cookies if c["name"] == "bm_sz"), "")
+            is_valid = ("~0~" in abck) and bool(bm_sz)
+            if not force and is_valid:
+                return False
+
+            akamai_names = {
+                "_abck", "bm_sz", "bm_sv", "bm_s", "bm_so", "bm_lso",
+                "ak_bmsc", "PIM-SESSION-ID", "X-AK-PIM-INJECT"
+            }
+            for name in akamai_names:
+                try:
+                    await self.context.clear_cookies(name=name)
+                except Exception:
+                    pass
+            return True
+        except Exception:
+            return False
 
     async def close(self):
         try:
@@ -198,5 +264,6 @@ class BrowserManager:
             self.playwright = None
             self.is_busy = False
             self.owner = None
+
 
 browser_manager = BrowserManager.get_instance()

@@ -48,11 +48,11 @@ class SmartBrowserActions:
             mid_y = (start_y + target_y) / 2
             ctrl1 = (start_x + random.uniform(-60, 60), mid_y + random.uniform(-40, 40))
             ctrl2 = (mid_x + random.uniform(-40, 40), target_y + random.uniform(-30, 30))
-            steps = random.randint(14, 22)
+            steps = random.randint(12, 18)
             points = SmartBrowserActions.get_bezier_curve((start_x, start_y), ctrl1, ctrl2, (target_x, target_y), steps)
             for px, py in points:
                 await page.mouse.move(px, py)
-                await asyncio.sleep(random.uniform(0.008, 0.020))
+                await asyncio.sleep(random.uniform(0.006, 0.016))
             page._last_mouse_pos = (target_x, target_y)
         except Exception:
             try:
@@ -96,7 +96,7 @@ class SmartBrowserActions:
         try:
             if await locator.count() > 0 and await locator.first.is_visible():
                 await locator.first.scroll_into_view_if_needed()
-                await asyncio.sleep(0.1)
+                await asyncio.sleep(0.08)
                 box = await locator.first.bounding_box()
                 if box and box["width"] > 0 and box["height"] > 0:
                     cx = box["x"] + box["width"] / 2
@@ -116,10 +116,10 @@ class SmartBrowserActions:
         wait_after_sec: float = 0.5
     ) -> bool:
         """
-        Executes a bulletproof multi-layer click:
+        Executes a bulletproof multi-layer click using trusted pointer events:
         Layer 1: Playwright locator bounding-box -> human mouse move & click at center coords
         Layer 2: Playwright locator standard click (force=True)
-        Layer 3: DOM tree text/role inspection -> evaluate getBoundingClientRect -> mouse.click
+        Layer 3: DOM tree text/role inspection -> evaluate getBoundingClientRect -> trusted mouse.click
         """
         container = scope_locator if scope_locator is not None else page
 
@@ -129,15 +129,15 @@ class SmartBrowserActions:
                 loc = container.locator(sel).first
                 if await loc.count() > 0 and await loc.is_visible():
                     await loc.scroll_into_view_if_needed()
-                    await asyncio.sleep(0.1)
+                    await asyncio.sleep(0.08)
                     
                     # Try native center-coordinate human click
                     coords = await SmartBrowserActions.get_element_center_coordinates(page, loc)
                     if coords:
                         await SmartBrowserActions.human_mouse_move(page, coords[0], coords[1])
-                        await asyncio.sleep(0.06)
+                        await asyncio.sleep(random.uniform(0.05, 0.10))
                         await page.mouse.down()
-                        await asyncio.sleep(0.07)
+                        await asyncio.sleep(random.uniform(0.05, 0.09))
                         await page.mouse.up()
                         await asyncio.sleep(wait_after_sec)
                         return True
@@ -149,10 +149,10 @@ class SmartBrowserActions:
             except Exception:
                 continue
 
-        # Layer 3: Deep DOM search via JS for text_keywords
+        # Layer 3: Deep DOM search via JS for coordinates only (never synthetic el.click())
         if text_keywords:
             try:
-                clicked = await page.evaluate('''(keywords) => {
+                target_coords = await page.evaluate('''(keywords) => {
                     const allElems = Array.from(document.querySelectorAll('button, a, div, span, td, label, p, h6, input[type="button"], input[type="submit"]'));
                     for (const kw of keywords) {
                         const targetKw = kw.trim().toUpperCase();
@@ -163,12 +163,11 @@ class SmartBrowserActions:
                                             t.startsWith(targetKw + ' ') || 
                                             t.endsWith(' ' + targetKw) || 
                                             t.includes('(' + targetKw + ')') ||
-                                            t.includes(targetKw);
+                                            (t.length < 40 && t.includes(targetKw));
                             if (matches) {
                                 el.scrollIntoView({ behavior: 'instant', block: 'center' });
                                 const rect = el.getBoundingClientRect();
                                 if (rect.width > 0 && rect.height > 0) {
-                                    if (typeof el.click === 'function') el.click();
                                     return { success: true, x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
                                 }
                             }
@@ -177,15 +176,12 @@ class SmartBrowserActions:
                     return { success: false };
                 }''', text_keywords)
 
-                if clicked and clicked.get("success"):
-                    if "x" in clicked and "y" in clicked:
-                        try:
-                            await SmartBrowserActions.human_mouse_move(page, clicked["x"], clicked["y"])
-                            await page.mouse.down()
-                            await asyncio.sleep(0.06)
-                            await page.mouse.up()
-                        except Exception:
-                            pass
+                if target_coords and target_coords.get("success") and "x" in target_coords and "y" in target_coords:
+                    await SmartBrowserActions.human_mouse_move(page, target_coords["x"], target_coords["y"])
+                    await asyncio.sleep(random.uniform(0.05, 0.10))
+                    await page.mouse.down()
+                    await asyncio.sleep(random.uniform(0.05, 0.09))
+                    await page.mouse.up()
                     await asyncio.sleep(wait_after_sec)
                     return True
             except Exception as e:
@@ -202,7 +198,8 @@ class SmartBrowserActions:
         clear_first: bool = True
     ) -> bool:
         """
-        Types text with authentic human cadence and trusted Chromium keypresses.
+        Types text with authentic human cadence (randomized per-character jitter)
+        and trusted Chromium keypresses so Akamai kact telemetry records natural variance.
         """
         try:
             if await locator.count() == 0:
@@ -211,22 +208,24 @@ class SmartBrowserActions:
             coords = await SmartBrowserActions.get_element_center_coordinates(page, locator)
             if coords:
                 await SmartBrowserActions.human_mouse_move(page, coords[0], coords[1])
-                await asyncio.sleep(0.08)
+                await asyncio.sleep(random.uniform(0.06, 0.12))
                 await page.mouse.down()
-                await asyncio.sleep(0.07)
+                await asyncio.sleep(random.uniform(0.05, 0.09))
                 await page.mouse.up()
             else:
                 await locator.first.click()
             await asyncio.sleep(0.12)
 
             if clear_first:
-                # Select all and delete
                 await page.keyboard.press("Control+A")
                 await page.keyboard.press("Backspace")
                 await asyncio.sleep(0.08)
 
-            # Type with natural delay (trusted native events)
-            await locator.first.press_sequentially(text, delay=delay_ms)
+            # Type character-by-character with randomized human delay
+            base_delay = max(20, delay_ms)
+            for ch in str(text):
+                jitter_delay = random.randint(max(15, base_delay - 20), base_delay + 35)
+                await locator.first.press_sequentially(ch, delay=jitter_delay)
             await asyncio.sleep(0.15)
             return True
         except Exception as e:
@@ -373,16 +372,15 @@ class SmartBrowserActions:
         # 5. Handle PrimeNG Confirmation Dialogs & Check Navigation
         for _ in range(25):
             try:
-                await page.evaluate('''() => {
-                    const dialogs = Array.from(document.querySelectorAll('.ui-dialog, p-confirmdialog, .ui-confirmdialog, div[role="dialog"]')).filter(d => d.offsetParent !== null);
-                    for (const d of dialogs) {
-                        const btn = Array.from(d.querySelectorAll('button, span.ui-button-text')).find(b => {
-                            const t = (b.innerText || '').trim().toLowerCase();
-                            return t === 'yes' || t === 'i agree' || t === 'ok' || t === 'continue' || t === 'confirm';
-                        });
-                        if (btn) btn.click();
-                    }
-                }''')
+                confirm_btn = page.locator(
+                    "p-confirmdialog button.ui-confirmdialog-yesbutton, "
+                    ".ui-confirmdialog button:has-text('Yes'), "
+                    ".ui-dialog button:has-text('Yes'), "
+                    ".ui-dialog button:has-text('I Agree'), "
+                    ".ui-dialog button:has-text('OK')"
+                ).first
+                if await confirm_btn.count() > 0 and await confirm_btn.is_visible():
+                    await confirm_btn.click(timeout=1500)
             except Exception:
                 pass
 

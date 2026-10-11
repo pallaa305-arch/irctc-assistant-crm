@@ -10,3 +10,12 @@ def test_browser_manager_stealth_and_native_network():
     assert "--disable-gpu" not in src
     assert "_speed_optimizer_route" not in src
     assert "add_init_script" not in src
+    assert "_purge_service_worker_cache" in src
+
+
+def test_browser_manager_service_worker_and_akamai_cookie_handling():
+    """Verify BrowserManager unregisters Angular ServiceWorker before resetting flagged Akamai cookies."""
+    src = inspect.getsource(BrowserManager.reset_akamai_cookies)
+    assert "unregister_service_workers" in src
+    assert "bm_sz" in src
+    assert "~0~" in src
