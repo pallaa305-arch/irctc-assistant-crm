@@ -1882,17 +1882,90 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                                 await nat_selects.nth(idx).select_option(label="India")
                             except Exception:
                                 pass
+                    else:
+                        nat_dropdown = page.locator("p-dropdown[formcontrolname='passengerNationality']").nth(idx)
+                        if await nat_dropdown.count() > 0:
+                            cur_nat = (await nat_dropdown.inner_text()).strip().lower()
+                            if not cur_nat or "select" in cur_nat or "nationality" in cur_nat:
+                                await SmartBrowserActions.smart_click(page, selectors=[], scope_locator=nat_dropdown)
+                                await asyncio.sleep(0.3)
+                                in_opt = page.locator(".ui-dropdown-panel li:has-text('India'), .p-dropdown-panel li:has-text('India')").first
+                                if await in_opt.count() > 0:
+                                    await in_opt.click()
+                                    await asyncio.sleep(0.2)
                 except Exception:
                     pass
 
-                # Food preference (for Rajdhani/Shatabdi/Duronto)
-                food_val = getattr(p, 'food_preference', 'D') or 'D'
+                # Food preference (for Rajdhani/Shatabdi/Duronto/Vande Bharat/Tejas)
+                raw_food = (getattr(p, 'food_preference', 'D') or 'D').strip().upper()
+                if raw_food in ("V", "VEG", "VEGETARIAN"):
+                    food_code = "V"
+                    food_label = "Veg"
+                elif raw_food in ("N", "NON_VEG", "NON VEG", "NON-VEG", "NONVEG"):
+                    food_code = "N"
+                    food_label = "Non Veg"
+                else:
+                    food_code = "D"
+                    food_label = "No Food"
+
                 try:
                     food_selects = page.locator("select[formcontrolname='passengerFoodChoice']")
                     if await food_selects.count() > idx:
-                        await food_selects.nth(idx).select_option(value=food_val)
-                except Exception:
-                    pass
+                        sel = food_selects.nth(idx)
+                        try:
+                            await sel.select_option(value=food_code)
+                        except Exception:
+                            try:
+                                await sel.select_option(label=food_label)
+                            except Exception:
+                                pass
+                        log_event(db, "INFO", "AUTOMATION", f"Selected food choice '{food_label}' (code={food_code}) via native select for passenger {idx+1}", ref)
+                    else:
+                        food_dropdown = page.locator("p-dropdown[formcontrolname='passengerFoodChoice']").nth(idx)
+                        if await food_dropdown.count() > 0:
+                            curr_text = (await food_dropdown.inner_text()).strip()
+                            needs_click = True
+                            if food_code == "V" and ("veg" in curr_text.lower() and "non" not in curr_text.lower()):
+                                needs_click = False
+                            elif food_code == "N" and "non" in curr_text.lower():
+                                needs_click = False
+                            elif food_code == "D" and "no food" in curr_text.lower():
+                                needs_click = False
+
+                            if needs_click:
+                                await food_dropdown.scroll_into_view_if_needed()
+                                await SmartBrowserActions.smart_click(page, selectors=[], scope_locator=food_dropdown)
+                                await asyncio.sleep(0.35)
+
+                                opt_selected = False
+                                if food_code == "V":
+                                    opt = page.locator(".ui-dropdown-panel li, .p-dropdown-panel li, p-dropdownitem li").filter(
+                                        has_text=re.compile(r"^\s*veg(etarian)?\s*$", re.I)
+                                    ).first
+                                    if await opt.count() == 0:
+                                        opt = page.locator(".ui-dropdown-panel li:has-text('Veg'):not(:has-text('Non')), .p-dropdown-panel li:has-text('Veg'):not(:has-text('Non'))").first
+                                elif food_code == "N":
+                                    opt = page.locator(".ui-dropdown-panel li, .p-dropdown-panel li, p-dropdownitem li").filter(
+                                        has_text=re.compile(r"^\s*non[\s-]?veg", re.I)
+                                    ).first
+                                else:
+                                    opt = page.locator(".ui-dropdown-panel li, .p-dropdown-panel li, p-dropdownitem li").filter(
+                                        has_text=re.compile(r"no\s*food", re.I)
+                                    ).first
+
+                                if opt and await opt.count() > 0 and await opt.is_visible():
+                                    await opt.click()
+                                    opt_selected = True
+                                else:
+                                    any_opt = page.locator(".ui-dropdown-panel li, .p-dropdown-panel li, p-dropdownitem li").first
+                                    if await any_opt.count() > 0 and await any_opt.is_visible():
+                                        await any_opt.click()
+                                        opt_selected = True
+
+                                await asyncio.sleep(0.25)
+                                log_event(db, "INFO", "AUTOMATION", f"Selected food choice '{food_label}' (found={opt_selected}) via PrimeNG dropdown for passenger {idx+1}", ref)
+                except Exception as fe:
+                    log_event(db, "WARNING", "AUTOMATION", f"Food preference selection note: {fe}", ref)
 
                 log_event(db, "INFO", "AUTOMATION", f"Filled passenger {idx+1}: {p.name}, {p.age}, {p.gender}, berth={berth_irctc}", ref)
 
@@ -2185,24 +2258,63 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 result.fields.cobrandSkipped = cobrandOk;
 
                 // Visible validation errors
-                const errs = Array.from(document.querySelectorAll('.ui-message-error, .text-danger, .error-msg, span.help-block, .ui-messages-error, .ng-invalid.ng-touched'));
+                // Check all input controls that are invalid
+                const invalidEls = Array.from(document.querySelectorAll(
+                    "input.ng-invalid, select.ng-invalid, p-dropdown.ng-invalid, p-autocomplete.ng-invalid, textarea.ng-invalid"
+                ));
+                result.invalidControls = invalidEls.map(el => {
+                    return (el.getAttribute('formcontrolname') || el.name || el.id || el.tagName.toLowerCase()).trim();
+                });
+
+                // Check unselected food dropdowns on catering trains
+                const unselectedFood = Array.from(document.querySelectorAll("p-dropdown[formcontrolname='passengerFoodChoice']")).filter(fd => {
+                    const txt = (fd.innerText || '').trim().toLowerCase();
+                    return !txt || txt.includes('select') || txt.includes('food choice') || txt.includes('choose');
+                });
+                if (unselectedFood.length > 0 && !result.invalidControls.includes('passengerFoodChoice')) {
+                    result.invalidControls.push('passengerFoodChoice');
+                }
+
+                // Visible validation errors
+                const errs = Array.from(document.querySelectorAll('.ui-message-error, .text-danger, .error-msg, span.help-block, .ui-messages-error'));
                 result.errors = errs.slice(0, 5).map(e => (e.innerText || e.className || '').trim().slice(0, 100)).filter(t => t.length > 0);
-                const hasInvalid = document.querySelector('form.ng-invalid, .ng-invalid.ng-touched');
-                result.valid = !hasInvalid && upiActive && insActive && cobrandOk;
+
+                result.valid = (result.invalidControls.length === 0) && upiActive && insActive && cobrandOk;
                 return result;
             }''')
             # Allow form_state to report accurate DOM radio state without artificial override
 
             log_event(db, "INFO", "AUTOMATION", f"Pre-Continue form state: {form_state}", ref)
 
-            # Auto-repair payment, insurance, or co-branded card ONLY if genuinely missing
+            # Auto-repair payment, insurance, co-branded card, or unselected food choice
             needs_repair = (
                 not form_state.get('fields', {}).get('paymentSelected', False) or 
                 not form_state.get('fields', {}).get('insuranceSelected', False) or 
-                not form_state.get('fields', {}).get('cobrandSkipped', True)
+                not form_state.get('fields', {}).get('cobrandSkipped', True) or
+                "passengerFoodChoice" in form_state.get("invalidControls", [])
             )
             if needs_repair:
-                log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance/Loyalty radio not active. Applying auto-repair click...", ref)
+                log_event(db, "WARNING", "AUTOMATION", "Payment/Insurance/Loyalty radio or food choice needs attention. Applying auto-repair...", ref)
+                # 0. Auto-fix food choice if invalid or unselected
+                if "passengerFoodChoice" in form_state.get("invalidControls", []):
+                    try:
+                        food_drops = page.locator("p-dropdown[formcontrolname='passengerFoodChoice'].ng-invalid, p-dropdown[formcontrolname='passengerFoodChoice']")
+                        for fi in range(await food_drops.count()):
+                            fd = food_drops.nth(fi)
+                            f_txt = (await fd.inner_text()).strip().lower()
+                            if not f_txt or "select" in f_txt or "food" in f_txt or "choose" in f_txt:
+                                await SmartBrowserActions.smart_click(page, selectors=[], scope_locator=fd)
+                                await asyncio.sleep(0.35)
+                                d_opt = page.locator(".ui-dropdown-panel li, .p-dropdown-panel li, p-dropdownitem li").filter(has_text=re.compile(r"no\s*food", re.I)).first
+                                if await d_opt.count() > 0 and await d_opt.is_visible():
+                                    await d_opt.click()
+                                else:
+                                    any_o = page.locator(".ui-dropdown-panel li, .p-dropdown-panel li, p-dropdownitem li").first
+                                    if await any_o.count() > 0 and await any_o.is_visible():
+                                        await any_o.click()
+                                await asyncio.sleep(0.2)
+                    except Exception as ex_f:
+                        log_event(db, "WARNING", "AUTOMATION", f"Food auto-repair note: {ex_f}", ref)
                 # 1. Click Co-branded Card Skip if not active
                 if not form_state.get('fields', {}).get('cobrandSkipped', True):
                     try:
@@ -2382,6 +2494,50 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     pass
                 return
 
+
+            # 4. Check if page is stuck on psgninput without a spinner/countdown running
+            if s in (5, 12, 22, 35) and "psgninput" in page.url.lower():
+                try:
+                    is_busy = await page.evaluate('''() => {
+                        const spinners = document.querySelectorAll(
+                            ".loading, .ui-blockui, app-loader, #timeWaitSpinner, .overlay, .ui-dialog-mask, .progress, .spinner"
+                        );
+                        for (const el of spinners) {
+                            if (el.offsetWidth > 0 && el.offsetHeight > 0 && window.getComputedStyle(el).display !== 'none') return true;
+                        }
+                        const txt = (document.body.innerText || '').toLowerCase();
+                        return txt.includes('please wait') || txt.includes('processing your request');
+                    }''')
+
+                    if not is_busy:
+                        # Fix any unselected food dropdown
+                        unfixed_food = page.locator("p-dropdown[formcontrolname='passengerFoodChoice'].ng-invalid, p-dropdown[formcontrolname='passengerFoodChoice']").first
+                        if await unfixed_food.count() > 0:
+                            f_txt = (await unfixed_food.inner_text()).strip().lower()
+                            if not f_txt or "select" in f_txt or "food" in f_txt or "choose" in f_txt:
+                                log_event(db, "WARNING", "AUTOMATION", f"Found unselected food choice at s={s}. Selecting fallback 'No Food'...", ref)
+                                await SmartBrowserActions.smart_click(page, selectors=[], scope_locator=unfixed_food)
+                                await asyncio.sleep(0.3)
+                                any_opt = page.locator(".ui-dropdown-panel li, .p-dropdown-panel li, p-dropdownitem li").first
+                                if await any_opt.count() > 0 and await any_opt.is_visible():
+                                    await any_opt.click()
+                                    await asyncio.sleep(0.2)
+
+                        # Re-click Continue button if still visible and enabled
+                        retry_cont = page.locator(
+                            "app-passenger-input button:has-text('Continue'), "
+                            "form button.train_Search:has-text('Continue'), "
+                            "button.btnDefault:has-text('Continue'), "
+                            "button:has-text('Continue')"
+                        ).first
+                        if await retry_cont.count() > 0 and await retry_cont.is_visible():
+                            log_event(db, "INFO", "AUTOMATION", f"Re-clicking Continue button at s={s} as page remained on psgninput without active loader.", ref)
+                            try:
+                                await retry_cont.click(timeout=3000)
+                            except Exception:
+                                await retry_cont.click(force=True)
+                except Exception:
+                    pass
         # If not arrived at review booking or payment, raise informative error with debug info
         if not arrived_at_review:
             current_url = page.url
