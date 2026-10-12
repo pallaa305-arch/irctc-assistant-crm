@@ -1,6 +1,6 @@
 import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 from sqlalchemy.orm import Session
 from app.automation.browser_manager import browser_manager, focus_browser_window
@@ -856,7 +856,8 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                                     if err:
                                         err_str = str(err).strip()
                                         log_event(db, "WARNING", "AUTOMATION", f"IRCTC API response notice: {err_str}", ref)
-                                        if "maintenance downtime" in err_str.lower() or "services will resume at" in err_str.lower():
+                                        setattr(page, "_last_irctc_api_error", err_str)
+                                        if "maintenance downtime" in err_str.lower() or "services will resume at" in err_str.lower() or "unable to perform transaction" in err_str.lower():
                                             setattr(page, "_irctc_maintenance_msg", err_str)
                             except Exception:
                                 pass
@@ -2473,6 +2474,50 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             except Exception:
                 pass
 
+            # 2.5 Check if IRCTC API rejected booking or triggered maintenance downtime
+            api_err = getattr(page, "_last_irctc_api_error", None)
+            maint_msg = getattr(page, "_irctc_maintenance_msg", None)
+            if api_err or maint_msg:
+                active_err = maint_msg or api_err
+                now_utc = datetime.now(timezone.utc)
+                now_ist = now_utc + timedelta(hours=5, minutes=30)
+                ist_min = now_ist.hour * 60 + now_ist.minute
+                is_maintenance_window = (ist_min >= 23 * 60 + 45) or (ist_min < 30)
+
+                is_txn_error = (
+                    "unable to perform transaction" in active_err.lower() or 
+                    "maintenance" in active_err.lower() or 
+                    "downtime" in active_err.lower() or 
+                    "booking not allowed" in active_err.lower() or 
+                    "session expired" in active_err.lower()
+                )
+
+                if is_txn_error or is_maintenance_window:
+                    err_detail = (
+                        f"IRCTC Night Maintenance Downtime (23:45 - 00:30 IST): IRCTC server ne error diya: "
+                        f"'{active_err}'. Kripya maintenance window khatam hone (00:30 IST) ke baad dobara try karein."
+                    )
+                else:
+                    err_detail = f"IRCTC API Error: {active_err}"
+
+                log_event(db, "ERROR", "AUTOMATION", err_detail, ref)
+                session_state.set_stage("FAILED", "FAILED")
+                session_state.error_message = err_detail
+                booking.status = "FAILED"
+                db.commit()
+                if settings.TELEGRAM_ENABLED:
+                    await send_telegram_message(
+                        f"❌ *Booking Error* (Ref: `{ref}`)\n\n"
+                        f"{err_detail}\n\n"
+                        f"👉 Kripya dobara try karein.",
+                        reply_markup={"inline_keyboard": [[{"text": "🎫 Nayi Booking Karein", "callback_data": "cmd_book"}]]}
+                    )
+                try:
+                    await page.screenshot(path="data/irctc_api_error.png")
+                except Exception:
+                    pass
+                return
+
             # 3. Detect IRCTC error page
             if "/nget/error" in page.url.lower():
                 err = f"IRCTC redirected to error page ({page.url}). This usually means passenger details validation failed or session expired on IRCTC side."
@@ -2510,6 +2555,10 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     }''')
 
                     if not is_busy:
+                        # If a fatal API error has already arrived, do not spam Continue
+                        if getattr(page, "_last_irctc_api_error", None) or getattr(page, "_irctc_maintenance_msg", None):
+                            break
+
                         # Fix any unselected food dropdown
                         unfixed_food = page.locator("p-dropdown[formcontrolname='passengerFoodChoice'].ng-invalid, p-dropdown[formcontrolname='passengerFoodChoice']").first
                         if await unfixed_food.count() > 0:
@@ -2560,7 +2609,11 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                 }''')
             except Exception:
                 pass
-            err = f"Could not transition from Passenger page to Review Booking page ({page_diagnostics or current_url}). Please check passenger details or browser dialog."
+            captured_err = getattr(page, "_last_irctc_api_error", None) or getattr(page, "_irctc_maintenance_msg", None)
+            if captured_err:
+                err = f"IRCTC server rejected the booking: {captured_err}."
+            else:
+                err = f"Could not transition from Passenger page to Review Booking page ({page_diagnostics or current_url}). Please check passenger details or browser dialog."
             session_state.set_stage("FAILED", "FAILED")
             session_state.error_message = err
             booking.status = "FAILED"
