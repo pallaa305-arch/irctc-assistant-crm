@@ -40,6 +40,9 @@ class BookingCreateRequest(BaseModel):
     passengers: List[PassengerInput] = Field(..., min_length=1)
     allow_duplicate: bool = False
     demo_mode: bool = False
+    is_tatkal: bool = False
+    tatkal_quota_type: Optional[str] = "TQ"
+    preferred_payment_mode: Optional[str] = "UPI_QR" 
 
 class ActionRequest(BaseModel):
     action: str = Field(..., pattern="^(continue|pause|cancel)$")
@@ -92,13 +95,24 @@ async def start_booking(
                 detail=f"Duplicate passenger warning: Passenger '{matched_passenger}' already has a booking ({duplicate_found.booking_ref}) for {payload.from_station} ➔ {payload.to_station} on {payload.journey_date}."
             )
 
-    # Reserve the one browser before creating/dispatching a live booking.
+    is_tatkal = bool(payload.is_tatkal)
+    tatkal_warmup = None
+    initial_status = "INITIATED"
+    prefix = "TK" if is_tatkal else "BK"
+
+    if is_tatkal:
+        from app.automation.tatkal_scheduler import compute_tatkal_timings
+        timings = compute_tatkal_timings(payload.journey_date, payload.journey_class)
+        tatkal_warmup = timings["warmup_time"]
+        initial_status = "SCHEDULED_TATKAL"
+
+    # Reserve browser only if executing immediately (non-tatkal live)
     is_demo = bool(payload.demo_mode or settings.DEMO_MODE)
-    if not is_demo and browser_manager.owner:
+    if not is_demo and not is_tatkal and browser_manager.owner:
         raise HTTPException(status_code=409, detail="IRCTC browser is reserved by an active booking. Finish or cancel it first.")
 
     # 2. Create internal reference & DB record
-    ref = f"BK-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+    ref = f"{prefix}-{datetime.utcnow().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
     booking = Booking(
         booking_ref=ref,
         from_station=payload.from_station.strip().upper(),
@@ -106,13 +120,18 @@ async def start_booking(
         boarding_station=(payload.boarding_station or payload.from_station).strip().upper(),
         journey_date=payload.journey_date,
         journey_class=payload.journey_class,
-        quota=payload.quota,
+        quota=payload.tatkal_quota_type if is_tatkal else payload.quota,
         train_number=payload.train_preference or "",
-        train_name="Auto-Selected Train",
+        train_name="Tatkal Train" if is_tatkal else "Auto-Selected Train",
         passenger_count=len(payload.passengers),
         contact_mobile=payload.contact_mobile or getattr(settings, "DEFAULT_CONTACT_MOBILE", "9876543210"),
         contact_email=payload.contact_email,
-        status="INITIATED",
+        status=initial_status,
+        is_tatkal=is_tatkal,
+        tatkal_quota_type=payload.tatkal_quota_type or "TQ",
+        preferred_payment_mode=payload.preferred_payment_mode or "UPI_QR",
+        scheduled_trigger_time=tatkal_warmup,
+        master_list_synced=False,
         payment_status="PENDING"
     )
     db.add(booking)
@@ -139,7 +158,33 @@ async def start_booking(
     session_state = get_or_create_session(ref)
     session_state.set_stage("PREPARING", "INITIATED")
 
-    # 5. Dispatch Automation (Mock for Demo Mode / Tests, Real IRCTC for Live Bookings)
+    # 5. Dispatch Automation
+    if is_tatkal:
+        # Background Master List Sync ahead of morning rush
+        from app.automation.master_list_sync import sync_passengers_to_irctc_master_list
+        pax_dicts = [p.dict() for p in payload.passengers]
+        async def sync_bg():
+            s_db = SessionLocal()
+            try:
+                await sync_passengers_to_irctc_master_list(
+                    passengers=pax_dicts,
+                    booking_ref=ref,
+                    db=s_db,
+                    live_mode=getattr(settings, "LIVE_IRCTC", not settings.DEMO_MODE)
+                )
+            finally:
+                s_db.close()
+        asyncio.create_task(sync_bg())
+
+        return {
+            "success": True,
+            "booking_id": booking.id,
+            "booking_ref": ref,
+            "status": "SCHEDULED_TATKAL",
+            "scheduled_trigger_time": str(tatkal_warmup),
+            "message": f"Tatkal booking scheduled for {tatkal_warmup.strftime('%I:%M %p') if tatkal_warmup else 'morning'}. Master list sync initialized."
+        }
+
     is_demo = bool(payload.demo_mode or settings.DEMO_MODE)
     flow_fn = run_mock_booking_flow if is_demo else run_real_irctc_booking_flow
     if not is_demo:
