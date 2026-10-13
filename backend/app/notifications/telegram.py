@@ -178,28 +178,36 @@ async def answer_callback_query(
     except Exception:
         return False
 
-def format_booking_confirmation_telegram(booking, passengers) -> str:
+def format_booking_confirmation_telegram(booking, passengers, base_url: Optional[str] = None) -> str:
     passenger_lines = []
     for p in passengers:
         seat_str = f" ({p.allocated_seat})" if p.allocated_seat else ""
         passenger_lines.append(f"• {p.name} ({p.age}/{p.gender}) - {p.status}{seat_str}")
     
     passengers_text = "\n".join(passenger_lines) if passenger_lines else "• As booked"
+    journey_date_str = booking.journey_date.strftime('%d/%m/%Y') if booking.journey_date else 'N/A'
+    time_str = booking.created_at.strftime('%d/%m/%Y %H:%M:%S') if booking.created_at else 'N/A'
+    fare_val = booking.fare or 0.0
+
+    links_text = ""
+    if base_url and booking.booking_ref:
+        b_ref = booking.booking_ref
+        links_text = f"\n\n📥 *Direct PDF Downloads:*\n• [Download Official Ticket (PDF)]({base_url}/api/bookings/{b_ref}/ticket-pdf)\n• [Download Tax Invoice / Bill (PDF)]({base_url}/api/bookings/{b_ref}/invoice-pdf)"
 
     return f"""🎫 *IRCTC Ticket Booking Confirmed!*
 
 *PNR:* `{booking.pnr or 'N/A'}`
 *Train:* {booking.train_number or ''} - {booking.train_name or 'N/A'}
 *Route:* {booking.from_station} ➔ {booking.to_station}
-*Journey Date:* {booking.journey_date.strftime('%d/%m/%Y')}
+*Journey Date:* {journey_date_str}
 *Class / Quota:* {booking.journey_class} / {booking.quota}
 *Passengers ({booking.passenger_count}):*
 {passengers_text}
 
 *Status:* {booking.status}
-*Fare:* Rs. {booking.fare or 0:,.2f} (₹{booking.fare or 0:,.2f})
+*Fare:* Rs. {fare_val:,.2f} (₹{fare_val:,.2f})
 *Booking Ref:* `{booking.booking_ref}`
-*Time:* {booking.created_at.strftime('%d/%m/%Y %H:%M:%S')}
+*Time:* {time_str}{links_text}
 """
 
 def format_action_required_telegram(booking, action_name: str) -> str:

@@ -569,9 +569,18 @@ class TelegramBotService:
         if data == "action_continue":
             waiting_session = get_latest_waiting_session()
             if waiting_session:
+                is_payment = getattr(waiting_session, "is_payment", False) or getattr(waiting_session, "waiting_input_type", "") == "PAYMENT"
                 waiting_session.user_resumed()
                 lang = user_languages.get(chat_id, "hinglish")
-                msg = "✅ *प्रक्रिया पुनः प्रारंभ!* ऑटोमेशन आगे बढ़ रहा है..." if lang == "hi" else ("✅ *Resumed!* Automation progressing..." if lang == "en" else "✅ *Resumed!* Automation aage badh rahi hai...")
+                if is_payment:
+                    if lang == "hi":
+                        msg = "🔄 *भुगतान सत्यापन प्रगति पर है...*\nबैंक और IRCTC पोर्टल से भुगतान की पुष्टि की जा रही है, कृपया 15-30 सेकंड प्रतीक्षा करें..."
+                    elif lang == "en":
+                        msg = "🔄 *Payment Verification in Progress...*\nVerifying payment confirmation from bank & IRCTC portal, please wait 15-30 seconds..."
+                    else:
+                        msg = "🔄 *Payment Verification Chalu Hai...*\nBank aur IRCTC portal se payment confirm ki ja rahi hai, kripya 15-30 seconds wait karein..."
+                else:
+                    msg = "✅ *प्रक्रिया पुनः प्रारंभ!* ऑटोमेशन आगे बढ़ रहा है..." if lang == "hi" else ("✅ *Resumed!* Automation progressing..." if lang == "en" else "✅ *Resumed!* Automation aage badh rahi hai...")
                 await send_telegram_message(msg, chat_id=chat_id)
             else:
                 lang = user_languages.get(chat_id, "hinglish")

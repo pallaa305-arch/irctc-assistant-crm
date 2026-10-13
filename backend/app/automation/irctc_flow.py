@@ -3180,44 +3180,93 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         confirmation_detected = False
         captured_pnr = None
         captured_txn = None
+        detected_failure_reason = None
 
-        # Actively poll for redirect or manual resume (up to 180s)
-        for tick in range(180):
-            if session_state.continue_event.is_set() or session_state.cancel_event.is_set():
-                break
-
-            # Check all open pages in browser context
+        async def inspect_browser_pages():
+            nonlocal page, confirmation_detected, captured_pnr, captured_txn, detected_failure_reason
             try:
                 all_pages = page.context.pages
                 for p in all_pages:
                     curr_url = p.url.lower()
-                    if "ticketconfirm" in curr_url or "confirmation" in curr_url or "bookingconfirmed" in curr_url:
+                    if any(key in curr_url for key in ["ticketconfirm", "bookedticket", "bookingconfirmed", "printeticket"]):
                         page = p
                         confirmation_detected = True
-                        break
-                    
-                    # Scan DOM for 10-digit PNR
-                    pnr_found = await p.evaluate('''() => {
+                        return "CONFIRMED"
+
+                    eval_res = await p.evaluate(r'''() => {
                         if (!document.body) return null;
                         const text = document.body.innerText;
-                        if (text.includes('Transaction Failed') || text.includes('Payment Failed')) return 'FAILED';
-                        const m = text.match(/\\b[2-9]\\d{9}\\b/);
-                        return m ? m[0] : null;
+                        
+                        // Check for failure keywords
+                        const failPatterns = [
+                            'Transaction Failed', 'Payment Failed', 'Payment Declined',
+                            'Transaction Timed Out', 'Payment Cancelled', 'Payment Rejected',
+                            'Bank Declined', 'Session Expired', 'User Cancelled', 'Failed at Bank'
+                        ];
+                        for (const pat of failPatterns) {
+                            if (text.includes(pat)) {
+                                const lines = text.split('\n').map(l => l.trim()).filter(Boolean);
+                                const matchLine = lines.find(l => l.includes(pat) || l.includes('Reason') || l.includes('Error')) || pat;
+                                return { status: 'FAILED', reason: matchLine };
+                            }
+                        }
+
+                        // Check for PNR (10 digits starting 2-9)
+                        const pnrLabelMatch = text.match(/(?:PNR|pnr)[\s\:\.\#-]*([2-9]\d{9})/);
+                        if (pnrLabelMatch) {
+                            return { status: 'CONFIRMED', pnr: pnrLabelMatch[1] };
+                        }
+                        const m = text.match(/\b[2-9]\d{9}\b/);
+                        if (m && !m[0].startsWith('1000068')) {
+                            return { status: 'CONFIRMED', pnr: m[0] };
+                        }
+                        return null;
                     }''')
-                    if pnr_found == 'FAILED':
-                        log_event(db, "ERROR", "AUTOMATION", "Payment failure detected on gateway.", ref)
-                        break
-                    if pnr_found and not pnr_found.startswith("1000068"):
-                        captured_pnr = pnr_found
-                        page = p
-                        confirmation_detected = True
-                        break
+
+                    if eval_res:
+                        if eval_res.get("status") == "FAILED":
+                            detected_failure_reason = eval_res.get("reason") or "Payment declined/failed on bank portal."
+                            page = p
+                            return "FAILED"
+                        elif eval_res.get("status") == "CONFIRMED":
+                            if eval_res.get("pnr") and not captured_pnr:
+                                captured_pnr = eval_res.get("pnr")
+                            page = p
+                            confirmation_detected = True
+                            return "CONFIRMED"
             except Exception:
                 pass
+            return None
 
-            if confirmation_detected:
+        # Actively poll for redirect or manual resume (up to 180s)
+        for tick in range(180):
+            if session_state.cancel_event.is_set():
+                break
+
+            if session_state.continue_event.is_set():
+                log_event(db, "INFO", "AUTOMATION", f"User tapped continue at {tick}s. Entering active 40s verification loop...", ref)
+                # Active verification window (up to 40 seconds)
+                for v_tick in range(25):
+                    if session_state.cancel_event.is_set():
+                        break
+                    res = await inspect_browser_pages()
+                    if res == "CONFIRMED":
+                        log_event(db, "INFO", "AUTOMATION", f"Payment confirmed during verification window ({v_tick * 1.6:.1f}s)!", ref)
+                        break
+                    elif res == "FAILED":
+                        log_event(db, "ERROR", "AUTOMATION", f"Payment failure confirmed during verification window: {detected_failure_reason}", ref)
+                        break
+                    await asyncio.sleep(1.6)
+                break
+
+            # Passive polling while waiting for user to pay
+            res = await inspect_browser_pages()
+            if res == "CONFIRMED":
                 log_event(db, "INFO", "AUTOMATION", f"Automatic payment confirmation detected on IRCTC portal (Time: {tick}s)!", ref)
                 session_state.user_resumed()
+                break
+            elif res == "FAILED":
+                log_event(db, "ERROR", "AUTOMATION", f"Payment failure detected on gateway: {detected_failure_reason}", ref)
                 break
 
             await asyncio.sleep(1)
@@ -3279,12 +3328,40 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         else:
             booking.status = "FAILED"
             booking.payment_status = "FAILED"
+            
+            # Determine specific user-friendly failure reason
+            fail_reason = detected_failure_reason
+            if not fail_reason:
+                curr_url = page.url.lower() if page else ""
+                if "pinelabs" in curr_url or "pg" in curr_url or "axis" in curr_url or "upi" in curr_url:
+                    fail_reason = "Payment Gateway Par Response Timeout - Bank/UPI se payment confirmation nahi aayi."
+                else:
+                    fail_reason = "180s payment window expire ho gayi ya portal par confirmation PNR generate nahi hua."
+
+            booking.notes = f"Payment failure: {fail_reason}"
             db.commit()
             session_state.set_stage("FAILED", "FAILED")
-            session_state.error_message = "Payment time expired (180s) or transaction not completed on portal."
-            log_event(db, "WARNING", "AUTOMATION", "Booking payment timed out without confirmed PNR.", ref)
+            session_state.error_message = fail_reason
+            log_event(db, "WARNING", "AUTOMATION", f"Booking payment failed/timed out: {fail_reason}", ref)
+            
             if settings.TELEGRAM_ENABLED:
-                await send_telegram_message(f"⚠️ *Payment Timed Out* (Ref: `{ref}`)\n\n180 seconds payment window expired without confirmed PNR.")
+                fail_msg = (
+                    f"❌ *Payment / Booking Confirmation Nahi Hua*\n"
+                    f"*Ref:* `{ref}`\n\n"
+                    f"⚠️ *Karan:* {fail_reason}\n\n"
+                    f"💡 *Agar paise kat gaye hain:*\n"
+                    f"IRCTC aur Bank rules ke mutabiq kat gaye paise 3-5 working days mein aapke bank account/UPI mein automatically refund ho jate hain.\n\n"
+                    f"Aap dubara fresh booking shuru kar sakte hain ya status check kar sakte hain."
+                )
+                fail_kb = {
+                    "inline_keyboard": [
+                        [
+                            {"text": "🔍 Status Check Karein", "callback_data": "cmd_status"},
+                            {"text": "🚆 Nayi Booking Karein", "callback_data": "cmd_book"}
+                        ]
+                    ]
+                }
+                await send_telegram_message(fail_msg, reply_markup=fail_kb)
 
     except Exception as e:
         import traceback

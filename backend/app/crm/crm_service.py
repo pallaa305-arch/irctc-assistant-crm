@@ -160,8 +160,21 @@ async def finalize_successful_booking(db: Session, booking_id: int):
     # 2. Telegram Notification & PDF Documents Dispatch
     if settings.TELEGRAM_ENABLED:
         try:
-            tg_msg = format_booking_confirmation_telegram(booking, passengers)
-            sent = await send_telegram_message(tg_msg)
+            base_url = settings.get_server_base_url()
+            ticket_download_url = f"{base_url}/api/bookings/{booking.booking_ref}/ticket-pdf"
+            invoice_download_url = f"{base_url}/api/bookings/{booking.booking_ref}/invoice-pdf"
+
+            ticket_keyboard = {
+                "inline_keyboard": [
+                    [
+                        {"text": "📥 Download Ticket (PDF)", "url": ticket_download_url},
+                        {"text": "🧾 Download Invoice (PDF)", "url": invoice_download_url}
+                    ]
+                ]
+            }
+
+            tg_msg = format_booking_confirmation_telegram(booking, passengers, base_url=base_url)
+            sent = await send_telegram_message(tg_msg, reply_markup=ticket_keyboard)
             booking.telegram_status = "SENT" if sent else "FAILED"
             db.commit()
             log_event(db, "INFO", "NOTIFY", f"Telegram notification: {'Success' if sent else 'Failed'}", booking.booking_ref)
@@ -198,7 +211,8 @@ async def finalize_successful_booking(db: Session, booking_id: int):
                 await send_telegram_document(
                     document_bytes=ticket_pdf_bytes,
                     filename=f"IRCTC_Ticket_{pnr_display}.pdf",
-                    caption=f"🎫 *Booking record PDF (download official ERS from IRCTC)*\nAttached for your journey. Have a safe & comfortable trip! 🚆"
+                    caption=f"🎫 *Official ERS Train Ticket (PDF)*\nPNR: `{pnr_display}` | Ref: `{booking.booking_ref}`\nDirect link: {ticket_download_url}",
+                    reply_markup=ticket_keyboard
                 )
 
                 # 2. Send Travel Agency Tax Invoice / Bill PDF
@@ -206,7 +220,8 @@ async def finalize_successful_booking(db: Session, booking_id: int):
                 await send_telegram_document(
                     document_bytes=invoice_pdf_bytes,
                     filename=f"Invoice_Bill_{booking.booking_ref}.pdf",
-                    caption=f"🧾 *Booking expense summary PDF*\nAttached for your records and expense claims. Thank you! 🙏"
+                    caption=f"🧾 *Booking Tax Invoice & Bill (PDF)*\nRef: `{booking.booking_ref}`\nDirect link: {invoice_download_url}",
+                    reply_markup=ticket_keyboard
                 )
                 log_event(db, "INFO", "NOTIFY", f"Ticket PDF & Invoice Bill PDF dispatched to Telegram", booking.booking_ref)
             except Exception as pdf_err:

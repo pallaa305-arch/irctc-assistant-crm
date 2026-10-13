@@ -393,9 +393,12 @@ async def handle_user_action(booking_ref: str, payload: ActionRequest, db: Sessi
         return {"success": True, "message": "Automation cancelled."}
 
 @router.get("/{booking_id}/ticket-pdf")
-async def download_ticket_pdf(booking_id: int, db: Session = Depends(get_db)):
+async def download_ticket_pdf(booking_id: str, db: Session = Depends(get_db)):
     """Generates and downloads the Official IRCTC Electronic Reservation Slip (Ticket) PDF."""
-    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if booking_id.isdigit():
+        booking = db.query(Booking).filter((Booking.id == int(booking_id)) | (Booking.booking_ref == booking_id)).first()
+    else:
+        booking = db.query(Booking).filter(Booking.booking_ref == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
@@ -431,9 +434,12 @@ async def download_ticket_pdf(booking_id: int, db: Session = Depends(get_db)):
     )
 
 @router.get("/{booking_id}/invoice-pdf")
-async def download_invoice_pdf(booking_id: int, db: Session = Depends(get_db)):
+async def download_invoice_pdf(booking_id: str, db: Session = Depends(get_db)):
     """Generates and downloads the Travel Agency Booking expense summary PDF."""
-    booking = db.query(Booking).filter(Booking.id == booking_id).first()
+    if booking_id.isdigit():
+        booking = db.query(Booking).filter((Booking.id == int(booking_id)) | (Booking.booking_ref == booking_id)).first()
+    else:
+        booking = db.query(Booking).filter(Booking.booking_ref == booking_id).first()
     if not booking:
         raise HTTPException(status_code=404, detail="Booking not found")
 
