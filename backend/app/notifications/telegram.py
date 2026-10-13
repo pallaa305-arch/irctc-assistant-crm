@@ -118,7 +118,7 @@ async def send_telegram_photo(
         print(f"[TELEGRAM PHOTO EXCEPTION] {e}")
         return False
 
-async def send_telegram_document(
+async def send_telegram_document_detailed(
     document_bytes: bytes,
     filename: str,
     caption: str = "",
@@ -128,6 +128,7 @@ async def send_telegram_document(
 ) -> bool:
     """
     Sends a PDF document (Ticket or Bill/Invoice) directly to user's Telegram chat.
+    Includes automatic fallback retry when Markdown parsing fails.
     """
     token = bot_token or settings.TELEGRAM_BOT_TOKEN
     target_chat = chat_id or settings.TELEGRAM_CHAT_ID
@@ -135,7 +136,7 @@ async def send_telegram_document(
     if not token or not target_chat or not document_bytes:
         return False
 
-    url = f"{settings.TELEGRAM_API_BASE_URL.rstrip("/")}/bot{token}/sendDocument"
+    url = f"{settings.TELEGRAM_API_BASE_URL.rstrip('/')}/bot{token}/sendDocument"
     data = {
         "chat_id": target_chat,
         "caption": caption,
@@ -152,10 +153,27 @@ async def send_telegram_document(
     try:
         client = get_telegram_client()
         response = await client.post(url, data=data, files=files)
-        return response.status_code == 200
+        if response.status_code == 200:
+            return True
+        if "can't parse entities" in response.text.lower():
+            data_plain = dict(data)
+            data_plain.pop("parse_mode", None)
+            retry_res = await client.post(url, data=data_plain, files=files)
+            return retry_res.status_code == 200
+        return False
     except Exception as e:
         print(f"[TELEGRAM DOCUMENT ERROR] {str(e)}")
         return False
+
+async def send_telegram_document(
+    document_bytes: bytes,
+    filename: str,
+    caption: str = "",
+    chat_id: Optional[str] = None,
+    bot_token: Optional[str] = None,
+    reply_markup: Optional[Dict[str, Any]] = None
+) -> bool:
+    return await send_telegram_document_detailed(document_bytes, filename, caption, chat_id, bot_token, reply_markup)
 
 async def answer_callback_query(
     callback_query_id: str,

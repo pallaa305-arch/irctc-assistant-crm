@@ -1,12 +1,12 @@
 import pytest
 from datetime import date, datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, patch, MagicMock
 from fastapi.testclient import TestClient
 
 from app.main import app
 from app.database.connection import SessionLocal
 from app.database.models import Booking, BookingPassenger
-from app.automation.flow_state import get_or_create_session, clear_all_waiting_sessions
+from app.automation.flow_state import get_or_create_session, clear_all_waiting_sessions, BookingSessionState
 from app.notifications.telegram_bot_service import telegram_bot_service, user_chat_states, user_languages
 
 client = TestClient(app)
@@ -22,7 +22,6 @@ def clean_state():
 def test_download_ticket_and_invoice_by_booking_ref():
     db = SessionLocal()
     ref = "BK-TEST-VERIFY-001"
-    # Ensure cleanup
     old = db.query(Booking).filter(Booking.booking_ref == ref).first()
     if old:
         db.delete(old)
@@ -158,7 +157,6 @@ async def test_finalize_successful_booking_attaches_download_buttons():
             reply_markup = call_kwargs.get("reply_markup") or {}
             inline_kb = reply_markup.get("inline_keyboard", [])
             assert len(inline_kb) > 0
-            # Buttons must have download ticket URL
             btn_urls = [btn.get("url", "") for row in inline_kb for btn in row]
             assert any(f"/api/bookings/{ref}/ticket-pdf" in u for u in btn_urls)
 
@@ -171,3 +169,98 @@ async def test_finalize_successful_booking_attaches_download_buttons():
             db.delete(b_clean)
             db.commit()
         db.close()
+
+def test_pay_redirect_xss_prevention_and_404():
+    # 1. Non-existent booking ref returns 404
+    res_404 = client.get("/api/bookings/pay-redirect/NONEXISTENT-REF-999")
+    assert res_404.status_code == 404
+
+    # 2. Existing booking with special characters is HTML escaped
+    db = SessionLocal()
+    ref_xss = "BK-XSS-TEST-99"
+    old = db.query(Booking).filter(Booking.booking_ref == ref_xss).first()
+    if old:
+        db.delete(old)
+        db.commit()
+
+    booking = Booking(
+        booking_ref=ref_xss,
+        from_station="NDLS",
+        to_station="HWH",
+        journey_date=date.today(),
+        status="PAYMENT_PENDING",
+        fare=500.0,
+        passenger_count=1,
+        payment_upi_url="upi://pay?pa=irctc@axisbank&pn=IRCTC&am=500.00"
+    )
+    db.add(booking)
+    db.commit()
+    b_id = booking.id
+    db.close()
+
+    try:
+        # Access via booking_ref
+        res = client.get(f"/api/bookings/pay-redirect/{ref_xss}")
+        assert res.status_code == 200
+        text = res.text
+        assert ref_xss in text
+        assert "upi://pay?pa=irctc@axisbank" in text
+
+        # Access via integer ID
+        res_id = client.get(f"/api/bookings/pay-redirect/{b_id}")
+        assert res_id.status_code == 200
+        assert ref_xss in res_id.text
+    finally:
+        db = SessionLocal()
+        b = db.query(Booking).filter(Booking.booking_ref == ref_xss).first()
+        if b:
+            db.delete(b)
+            db.commit()
+        db.close()
+
+@pytest.mark.asyncio
+async def test_send_telegram_document_markdown_retry():
+    from app.notifications.telegram import send_telegram_document_detailed
+
+    # Mock response object
+    class FakeResponse:
+        def __init__(self, status_code, text):
+            self.status_code = status_code
+            self.text = text
+
+    # First call fails with entity error, second retry succeeds
+    mock_post = AsyncMock(side_effect=[
+        FakeResponse(400, "Bad Request: can't parse entities in caption"),
+        FakeResponse(200, '{"ok": true}')
+    ])
+
+    fake_client = MagicMock()
+    fake_client.post = mock_post
+
+    with patch("app.notifications.telegram.get_telegram_client", return_value=fake_client), \
+         patch("app.notifications.telegram.settings.TELEGRAM_BOT_TOKEN", "123:TOKEN"), \
+         patch("app.notifications.telegram.settings.TELEGRAM_CHAT_ID", "12345"):
+
+        result = await send_telegram_document_detailed(
+            document_bytes=b"%PDF-1.4 test dummy",
+            filename="ticket_file_name_with_underscores.pdf",
+            caption="*Invoice_File_123* with _markdown_ error"
+        )
+
+        assert result is True
+        assert mock_post.call_count == 2
+        # Second call must NOT have parse_mode in data
+        second_call_data = mock_post.call_args_list[1][1]["data"]
+        assert "parse_mode" not in second_call_data
+
+def test_flow_state_is_payment_attribute():
+    state = BookingSessionState("BK-TEST-IS-PAYMENT")
+    assert state.is_payment is False
+
+    state.pause_for_user("Please complete UPI payment", is_payment=True, input_type="PAYMENT")
+    assert state.is_payment is True
+    assert state.status == "PAYMENT_PENDING"
+
+    state.user_resumed()
+    assert state.is_payment is False
+    assert state.is_paused is False

@@ -3150,7 +3150,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
                 if upi_intent_url:
                     caption_lines.append(f"⚡ *ONE-CLICK MOBILE PAYMENT:*")
-                    caption_lines.append(f"👉 [📲 CLICK HERE TO PAY IN UPI APP]({upi_intent_url})\n")
+                    caption_lines.append(f"👉 [📲 CLICK HERE TO PAY IN UPI APP]({bridge_url})\n")
                     caption_lines.append(f"🔗 `{upi_intent_url}`\n")
                 else:
                     caption_lines.append(f"⚡ *ONE-CLICK MOBILE PAYMENT:*")
@@ -3181,6 +3181,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
         captured_pnr = None
         captured_txn = None
         detected_failure_reason = None
+        user_mob = "".join(c for c in (booking.contact_mobile or "") if c.isdigit())
 
         async def inspect_browser_pages():
             nonlocal page, confirmation_detected, captured_pnr, captured_txn, detected_failure_reason
@@ -3193,7 +3194,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         confirmation_detected = True
                         return "CONFIRMED"
 
-                    eval_res = await p.evaluate(r'''() => {
+                    eval_res = await p.evaluate(r'''([userMob]) => {
                         if (!document.body) return null;
                         const text = document.body.innerText;
                         
@@ -3211,17 +3212,24 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             }
                         }
 
-                        // Check for PNR (10 digits starting 2-9)
-                        const pnrLabelMatch = text.match(/(?:PNR|pnr)[\s\:\.\#-]*([2-9]\d{9})/);
-                        if (pnrLabelMatch) {
+                        // Must be on an actual ticket confirmation screen or have explicit PNR keyword
+                        const isConfirmPage = /Booking\s*Confirmation|Electronic\s*Reservation\s*Slip|Ticket\s*Booked\s*Successfully|Congratulations/i.test(text);
+                        const pnrLabelMatch = text.match(/(?:PNR(?:\s*No\.?)?|pnr)[\s\:\.\#-]*([2-9]\d{9})/i);
+                        if (pnrLabelMatch && pnrLabelMatch[1] !== userMob) {
                             return { status: 'CONFIRMED', pnr: pnrLabelMatch[1] };
                         }
-                        const m = text.match(/\b[2-9]\d{9}\b/);
-                        if (m && !m[0].startsWith('1000068')) {
-                            return { status: 'CONFIRMED', pnr: m[0] };
+
+                        if (isConfirmPage) {
+                            const matches = text.match(/\b[2-9]\d{9}\b/g) || [];
+                            for (const num of matches) {
+                                if (num !== userMob && !num.startsWith('1000068')) {
+                                    return { status: 'CONFIRMED', pnr: num };
+                                }
+                            }
                         }
+
                         return null;
-                    }''')
+                    }''', [user_mob])
 
                     if eval_res:
                         if eval_res.get("status") == "FAILED":
@@ -3245,6 +3253,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
 
             if session_state.continue_event.is_set():
                 log_event(db, "INFO", "AUTOMATION", f"User tapped continue at {tick}s. Entering active 40s verification loop...", ref)
+                resolved = False
                 # Active verification window (up to 40 seconds)
                 for v_tick in range(25):
                     if session_state.cancel_event.is_set():
@@ -3252,12 +3261,19 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     res = await inspect_browser_pages()
                     if res == "CONFIRMED":
                         log_event(db, "INFO", "AUTOMATION", f"Payment confirmed during verification window ({v_tick * 1.6:.1f}s)!", ref)
+                        resolved = True
                         break
                     elif res == "FAILED":
                         log_event(db, "ERROR", "AUTOMATION", f"Payment failure confirmed during verification window: {detected_failure_reason}", ref)
+                        resolved = True
                         break
                     await asyncio.sleep(1.6)
-                break
+
+                if resolved:
+                    break
+                # Verification pending: clear event and continue passive polling until 180s expires
+                session_state.continue_event.clear()
+                log_event(db, "INFO", "AUTOMATION", f"Payment verification still pending at {tick + 40}s. Continuing monitoring...", ref)
 
             # Passive polling while waiting for user to pay
             res = await inspect_browser_pages()

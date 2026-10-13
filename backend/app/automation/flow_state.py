@@ -10,6 +10,7 @@ class BookingSessionState:
         self.manual_prompt: Optional[str] = None
         self.error_message: Optional[str] = None
         self.is_paused: bool = False
+        self.is_payment: bool = False
         self.latest_screenshot_bytes: Optional[bytes] = None
         
         # User input handling (CAPTCHA text, OTP, or Payment confirmation)
@@ -41,6 +42,7 @@ class BookingSessionState:
         if self.cancel_event.is_set():
             return  # Already cancelled, don't pause
         self.is_paused = True
+        self.is_payment = is_payment
         self.manual_prompt = prompt
         self.waiting_input_type = input_type
         self.suggested_captcha = suggested_value
@@ -69,6 +71,7 @@ class BookingSessionState:
         if self.cancel_event.is_set():
             return  # Already cancelled, don't resume
         self.is_paused = False
+        self.is_payment = False
         self.manual_prompt = None
         self.waiting_input_type = "NONE"
         self.status = "IN_PROGRESS"

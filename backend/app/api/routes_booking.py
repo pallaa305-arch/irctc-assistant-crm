@@ -1,5 +1,7 @@
 import uuid
 import asyncio
+import html
+import json
 from datetime import datetime, date
 from typing import List, Optional
 from fastapi import APIRouter, Depends, HTTPException, Response
@@ -210,9 +212,14 @@ async def get_booking_state(booking_ref: str, db: Session = Depends(get_db)):
     }
 
 @router.get("/screenshot/{booking_ref}")
-async def get_booking_screenshot(booking_ref: str):
+async def get_booking_screenshot(booking_ref: str, db: Session = Depends(get_db)):
     """Returns the latest screenshot (CAPTCHA / QR / Login modal) for human-in-the-loop review."""
-    session_state = get_session(booking_ref)
+    actual_ref = booking_ref
+    if booking_ref.isdigit():
+        booking = db.query(Booking).filter((Booking.id == int(booking_ref)) | (Booking.booking_ref == booking_ref)).first()
+        if booking:
+            actual_ref = booking.booking_ref
+    session_state = get_session(actual_ref)
     if session_state and session_state.latest_screenshot_bytes:
         return Response(
             content=session_state.latest_screenshot_bytes,
@@ -244,8 +251,11 @@ async def pay_redirect(booking_ref: str, db: Session = Depends(get_db)):
     else:
         booking = db.query(Booking).filter(Booking.booking_ref == booking_ref).first()
 
-    actual_ref = booking.booking_ref if booking else booking_ref
-    session_state = get_session(actual_ref)
+    if not booking:
+        raise HTTPException(status_code=404, detail="Booking not found.")
+
+    actual_ref = html.escape(booking.booking_ref)
+    session_state = get_session(booking.booking_ref)
 
     upi_intent_url = ""
     if session_state and session_state.captured_data.get("upi_intent_url"):
@@ -253,34 +263,39 @@ async def pay_redirect(booking_ref: str, db: Session = Depends(get_db)):
     elif booking and booking.payment_upi_url:
         upi_intent_url = booking.payment_upi_url
 
+    # Sanitize and validate UPI intent URL
+    safe_upi_href = html.escape(upi_intent_url, quote=True) if upi_intent_url.startswith("upi://pay?") else ""
+    safe_upi_js = json.dumps(upi_intent_url) if upi_intent_url.startswith("upi://pay?") else '""'
+
     fare = booking.fare if (booking and booking.fare) else 0.0
     fare_str = f"{fare:,.2f}" if fare else "Total Amount"
 
     has_screenshot = bool(session_state and session_state.latest_screenshot_bytes) or (settings.DATA_DIR / "latest_captcha.png").exists()
     qr_img_html = f'<img src="/api/bookings/screenshot/{actual_ref}" class="qr-img" alt="IRCTC QR Code" />' if has_screenshot else ''
 
-    auto_pay_block = f"""<a id='autoPayLink' href="{upi_intent_url}" class='btn-main'>⚡ Open Any UPI App & Pay</a>""" if upi_intent_url else """<div class='btn-main' style='background:#475569;'>⏳ Generating Payment QR...</div>"""
+    auto_pay_block = f"""<a id='autoPayLink' href="{safe_upi_href}" class='btn-main'>⚡ Open Any UPI App & Pay</a>""" if safe_upi_href else """<div class='btn-main' style='background:#475569;'>⏳ Generating Payment QR...</div>"""
 
     app_grid_block = f"""
         <div class='app-grid'>
-            <a href="{upi_intent_url}" class='app-btn btn-gpay'>Google Pay</a>
-            <a href="{upi_intent_url}" class='app-btn btn-phonepe'>PhonePe</a>
-            <a href="{upi_intent_url}" class='app-btn btn-paytm'>Paytm</a>
-            <a href="{upi_intent_url}" class='app-btn btn-bhim'>BHIM / CRED</a>
+            <a href="{safe_upi_href}" class='app-btn btn-gpay'>Google Pay</a>
+            <a href="{safe_upi_href}" class='app-btn btn-phonepe'>PhonePe</a>
+            <a href="{safe_upi_href}" class='app-btn btn-paytm'>Paytm</a>
+            <a href="{safe_upi_href}" class='app-btn btn-bhim'>BHIM / CRED</a>
         </div>
-    """ if upi_intent_url else ""
+    """ if safe_upi_href else ""
 
-    upi_display_block = f"""<div class='upi-box'><code>{upi_intent_url}</code></div>""" if upi_intent_url else ""
+    upi_display_block = f"""<div class='upi-box'><code>{html.escape(upi_intent_url)}</code></div>""" if upi_intent_url else ""
 
     js_redirect = f"""
         window.addEventListener('DOMContentLoaded', () => {{
             setTimeout(() => {{
                 try {{
-                    window.location.href = "{upi_intent_url}";
+                    const target = {safe_upi_js};
+                    if (target) window.location.href = target;
                 }} catch (e) {{}}
             }}, 300);
         }});
-    """ if upi_intent_url else """
+    """ if safe_upi_href else """
         setTimeout(() => { window.location.reload(); }, 3000);
     """
 
