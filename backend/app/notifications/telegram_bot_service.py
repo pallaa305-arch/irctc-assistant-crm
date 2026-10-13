@@ -3,12 +3,13 @@ import re
 import json
 from pathlib import Path
 from datetime import datetime, date, timedelta
-from typing import Dict, Any, Optional, List
+from typing import Dict, Any, Optional, List, Tuple
 import httpx
 
 from app.config import settings
 from app.database.connection import SessionLocal
-from app.database.models import Booking, Passenger, SavedJourney
+from app.database.models import Booking, Passenger, SavedJourney, BookingPassenger
+from app.crm.crm_service import log_event
 from app.automation.flow_state import get_session, get_latest_waiting_session, get_or_create_session, clear_all_waiting_sessions
 from app.automation.irctc_flow import run_real_irctc_booking_flow
 from app.notifications.telegram import (
@@ -79,53 +80,131 @@ def resolve_station(text: str) -> Optional[str]:
 
     return None
 
-def parse_date_natural(text: str) -> Optional[str]:
+def validate_and_parse_journey_date(text: str) -> Tuple[Optional[str], Optional[str], Optional[str]]:
+    """
+    Validates and parses journey date input with support for ordinals, ISO, and natural dates.
+    Returns: (formatted_date_str, status, detail)
+    status:
+      - 'OK': valid upcoming date within 120 days. detail is None.
+      - 'PAST_DATE': date is in the past. detail is parsed past date string (DD/MM/YYYY).
+      - 'TOO_FAR': date is beyond IRCTC's 120-day ARP limit. detail is parsed future date string.
+      - 'INVALID_FORMAT': cannot parse date. detail is None.
+    """
     t = text.strip().lower()
     today = date.today()
-    if t in ["aaj", "today", "आज"]:
-        return today.strftime("%d/%m/%Y")
-    if t in ["kal", "tomorrow", "कल"]:
-        return (today + timedelta(days=1)).strftime("%d/%m/%Y")
-    if t in ["parso", "parson", "day after tomorrow", "परसों", "परसो"]:
-        return (today + timedelta(days=2)).strftime("%d/%m/%Y")
-    if t in ["next week", "agle hafte", "अगले हफ्ते", "अगले सप्ताह"]:
-        return (today + timedelta(days=7)).strftime("%d/%m/%Y")
+    max_date = today + timedelta(days=120)
 
-    # Match DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY
-    m = re.search(r'\b(\d{1,2})[/\-\.](\d{1,2})(?:[/\-\.](\d{2,4}))?\b', t)
-    if m:
-        day = int(m.group(1))
-        month = int(m.group(2))
-        year = int(m.group(3)) if m.group(3) else today.year
-        if year < 100:
-            year += 2000
+    # 1. Natural keywords for past
+    if t in ["yesterday", "beeta hua kal", "kal jo gaya"]:
+        past_d = (today - timedelta(days=1)).strftime("%d/%m/%Y")
+        return None, "PAST_DATE", past_d
+
+    # 2. Natural relative future keywords
+    if t in ["aaj", "today", "आज"]:
+        return today.strftime("%d/%m/%Y"), "OK", None
+    if t in ["kal", "tomorrow", "कल"]:
+        return (today + timedelta(days=1)).strftime("%d/%m/%Y"), "OK", None
+    if t in ["parso", "parson", "day after tomorrow", "परसों", "परसो"]:
+        return (today + timedelta(days=2)).strftime("%d/%m/%Y"), "OK", None
+    if t in ["next week", "agle hafte", "अगले हफ्ते", "अगले सप्ताह"]:
+        return (today + timedelta(days=7)).strftime("%d/%m/%Y"), "OK", None
+
+    # Helper for resolving (year, month, day, year_specified)
+    def check_ymd(year: int, month: int, day: int, year_specified: bool) -> Tuple[Optional[str], Optional[str], Optional[str]]:
         try:
             parsed = date(year, month, day)
-            if parsed < today:
-                parsed = date(today.year + 1, month, day)
-            return parsed.strftime("%d/%m/%Y")
         except ValueError:
-            pass
-
-    # Match month names e.g. "15 oct", "25 march"
-    months = {
-        "jan": 1, "feb": 2, "mar": 3, "apr": 4, "may": 5, "jun": 6,
-        "jul": 7, "aug": 8, "sep": 9, "oct": 10, "nov": 11, "dec": 12
-    }
-    for m_name, m_num in months.items():
-        if m_name in t:
-            day_match = re.search(r'\b(\d{1,2})\b', t)
-            if day_match:
-                day = int(day_match.group(1))
-                year = today.year
+            # Leap year rollover handling
+            if not year_specified and month == 2 and day == 29:
                 try:
-                    parsed = date(year, m_num, day)
-                    if parsed < today:
-                        parsed = date(year + 1, m_num, day)
-                    return parsed.strftime("%d/%m/%Y")
+                    parsed_next = date(today.year + 1, 2, 29)
+                    if today <= parsed_next <= max_date:
+                        return parsed_next.strftime("%d/%m/%Y"), "OK", None
+                    elif parsed_next > max_date:
+                        return None, "TOO_FAR", parsed_next.strftime("%d/%m/%Y")
                 except ValueError:
                     pass
-    return None
+            return None, "INVALID_FORMAT", None
+
+        if year_specified:
+            if parsed < today:
+                return None, "PAST_DATE", parsed.strftime("%d/%m/%Y")
+            if parsed > max_date:
+                return None, "TOO_FAR", parsed.strftime("%d/%m/%Y")
+            return parsed.strftime("%d/%m/%Y"), "OK", None
+        else:
+            if parsed >= today:
+                if parsed > max_date:
+                    return None, "TOO_FAR", parsed.strftime("%d/%m/%Y")
+                return parsed.strftime("%d/%m/%Y"), "OK", None
+            else:
+                try:
+                    parsed_next = date(today.year + 1, month, day)
+                except ValueError:
+                    parsed_next = None
+
+                if parsed_next and today <= parsed_next <= max_date:
+                    return parsed_next.strftime("%d/%m/%Y"), "OK", None
+                elif (today - parsed).days <= 30:
+                    return None, "PAST_DATE", parsed.strftime("%d/%m/%Y")
+                elif parsed_next and parsed_next > max_date:
+                    return None, "TOO_FAR", parsed_next.strftime("%d/%m/%Y")
+                else:
+                    return None, "PAST_DATE", parsed.strftime("%d/%m/%Y")
+
+    # 3. ISO format: YYYY-MM-DD or YYYY/MM/DD
+    iso_m = re.search(r'\b(20\d{2})[/\-\.](\d{1,2})[/\-\.](\d{1,2})\b', t)
+    if iso_m:
+        y, m, d = int(iso_m.group(1)), int(iso_m.group(2)), int(iso_m.group(3))
+        return check_ymd(y, m, d, True)
+
+    # 4. Standard DD/MM/YYYY or DD-MM-YYYY or DD.MM.YYYY with optional ordinals (15th/10)
+    dm = re.search(r'\b(\d{1,2})(?:st|nd|rd|th)?[/\-\.](\d{1,2})(?:[/\-\.](\d{2,4}))?\b', t)
+    if dm:
+        d = int(dm.group(1))
+        m = int(dm.group(2))
+        year_raw = dm.group(3)
+        year_specified = bool(year_raw)
+        y = int(year_raw) if year_raw else today.year
+        if y < 100:
+            y += 2000
+        return check_ymd(y, m, d, year_specified)
+
+    # 5. Month names with word boundaries e.g. '15 oct', '15th october', 'oct 15'
+    months = {
+        'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6,
+        'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12
+    }
+    for m_prefix, m_num in months.items():
+        # Match '15 oct', '15th october 2026'
+        pat1 = rf'\b(\d{{1,2}})(?:st|nd|rd|th)?\s+{m_prefix}[a-z]*(?:\s+(\d{{2,4}}))?\b'
+        match1 = re.search(pat1, t)
+        if match1:
+            d = int(match1.group(1))
+            year_raw = match1.group(2)
+            year_specified = bool(year_raw)
+            y = int(year_raw) if year_raw else today.year
+            if y < 100:
+                y += 2000
+            return check_ymd(y, m_num, d, year_specified)
+
+        # Match 'oct 15', 'october 15th, 2026'
+        pat2 = rf'\b{m_prefix}[a-z]*\s+(\d{{1,2}})(?:st|nd|rd|th)?(?:\s*,?\s*(\d{{2,4}}))?\b'
+        match2 = re.search(pat2, t)
+        if match2:
+            d = int(match2.group(1))
+            year_raw = match2.group(2)
+            year_specified = bool(year_raw)
+            y = int(year_raw) if year_raw else today.year
+            if y < 100:
+                y += 2000
+            return check_ymd(y, m_num, d, year_specified)
+
+    return None, "INVALID_FORMAT", None
+
+def parse_date_natural(text: str) -> Optional[str]:
+    valid_d, status, _ = validate_and_parse_journey_date(text)
+    return valid_d if status == "OK" else None
 
 def parse_class_natural(text: str) -> Optional[str]:
     t = text.strip().lower()
@@ -249,21 +328,19 @@ def extract_one_shot_booking_data(text: str) -> Optional[Dict[str, Any]]:
         # DD/MM/YYYY or DD-MM-YYYY
         dm = re.search(r'\b(\d{1,2})[/\-\.](\d{1,2})(?:[/\-\.](\d{2,4}))?\b', remaining)
         if dm:
-            d, m = int(dm.group(1)), int(dm.group(2))
-            y = int(dm.group(3)) if dm.group(3) else today.year
-            if y < 100: y += 2000
-            try:
-                date_found = date(y, m, d).strftime('%d/%m/%Y')
-                remaining = remaining[:dm.start()] + ' ' + remaining[dm.end():]
-            except Exception: pass
+            parsed_d, v_status, _ = validate_and_parse_journey_date(dm.group(0))
+            if parsed_d and v_status == "OK":
+                date_found = parsed_d
+            remaining = remaining[:dm.start()] + ' ' + remaining[dm.end():]
         if not date_found:
             # 15 oct, 25 march
             months = {'jan': 1, 'feb': 2, 'mar': 3, 'apr': 4, 'may': 5, 'jun': 6, 'jul': 7, 'aug': 8, 'sep': 9, 'oct': 10, 'nov': 11, 'dec': 12}
             for m_name, m_num in months.items():
                 match_m = re.search(rf'\b(\d{{1,2}})\s+{m_name}\w*\b', remaining, re.IGNORECASE)
                 if match_m:
-                    d = int(match_m.group(1))
-                    date_found = date(today.year, m_num, d).strftime('%d/%m/%Y')
+                    parsed_d, v_status, _ = validate_and_parse_journey_date(match_m.group(0))
+                    if parsed_d and v_status == "OK":
+                        date_found = parsed_d
                     remaining = remaining[:match_m.start()] + ' ' + remaining[match_m.end():]
                     break
     if date_found:
@@ -828,6 +905,10 @@ class TelegramBotService:
         # 3c. Check for IRCTC Credentials Command (/credentials)
         # -------------------------------------------------------------
         if clean.startswith("/credentials") or clean in ["credentials", "irctc login", "login id", "id password"]:
+            if str(chat_id) != str(settings.TELEGRAM_CHAT_ID):
+                await send_telegram_message("⛔ Unauthorized. Credentials can only be updated by the bot administrator.", chat_id=chat_id)
+                return
+
             parts = text.strip().split()
             if len(parts) >= 3:
                 u = parts[1].strip()
@@ -835,24 +916,35 @@ class TelegramBotService:
                 settings.IRCTC_USERNAME = u
                 settings.IRCTC_PASSWORD = p
 
-                # Persist to local .env
+                # Persist to local .env safely without clobbering other configs
                 try:
                     from app.config import BASE_DIR
                     env_path = BASE_DIR / ".env"
-                    lines = [
-                        f'APP_NAME="{settings.APP_NAME}"\n',
-                        f'APP_ENV="{settings.APP_ENV}"\n',
-                        f'DEMO_MODE={str(settings.DEMO_MODE).lower()}\n',
-                        f'BROWSER_HEADLESS={str(settings.BROWSER_HEADLESS).lower()}\n',
-                        f'BROWSER_SLOW_MO={settings.BROWSER_SLOW_MO}\n',
-                        f'IRCTC_USERNAME="{settings.IRCTC_USERNAME}"\n',
-                        f'IRCTC_PASSWORD="{settings.IRCTC_PASSWORD}"\n',
-                        f'TELEGRAM_BOT_TOKEN="{settings.TELEGRAM_BOT_TOKEN}"\n',
-                        f'TELEGRAM_CHAT_ID="{settings.TELEGRAM_CHAT_ID}"\n',
-                        f'TELEGRAM_ENABLED={str(settings.TELEGRAM_ENABLED).lower()}\n'
-                    ]
+                    existing_lines = []
+                    if env_path.exists():
+                        with open(env_path, "r", encoding="utf-8") as f:
+                            existing_lines = f.readlines()
+
+                    u_found = False
+                    p_found = False
+                    new_lines = []
+                    for line in existing_lines:
+                        if line.startswith("IRCTC_USERNAME="):
+                            new_lines.append(f'IRCTC_USERNAME="{u}"\n')
+                            u_found = True
+                        elif line.startswith("IRCTC_PASSWORD="):
+                            new_lines.append(f'IRCTC_PASSWORD="{p}"\n')
+                            p_found = True
+                        else:
+                            new_lines.append(line)
+
+                    if not u_found:
+                        new_lines.append(f'IRCTC_USERNAME="{u}"\n')
+                    if not p_found:
+                        new_lines.append(f'IRCTC_PASSWORD="{p}"\n')
+
                     with open(env_path, "w", encoding="utf-8") as f:
-                        f.writelines(lines)
+                        f.writelines(new_lines)
                 except Exception:
                     pass
 
@@ -1080,8 +1172,8 @@ class TelegramBotService:
 
             # Step B: In Date Selection
             if step in ["ASK_DATE", "ASK_DATE_MANUAL"]:
-                parsed_d = parse_date_natural(text)
-                if parsed_d:
+                parsed_d, date_status, date_detail = validate_and_parse_journey_date(text)
+                if parsed_d and date_status == "OK":
                     state["data"]["journey_date"] = parsed_d
                     d_msg = f"✅ यात्रा की तारीख: *{parsed_d}*" if lang == "hi" else f"✅ Journey Date: *{parsed_d}*"
                     if state["data"].get("passengers"):
@@ -1103,6 +1195,27 @@ class TelegramBotService:
                         await send_telegram_message(d_msg, chat_id=chat_id)
                         await self._ask_train(chat_id)
                         return
+                elif date_status == "PAST_DATE":
+                    p_str = date_detail or text.strip()
+                    if lang == "hi":
+                        err_d = f"⚠️ यह तारीख बीत चुकी है (*{p_str}*)! कृपया आने वाली वैध यात्रा की तारीख लिखें (जैसे: `15 Oct`, `25/10/2026`, या `कल`):"
+                    elif lang == "en":
+                        err_d = f"⚠️ This date has already passed (*{p_str}*)! Please enter a valid upcoming journey date (e.g. `15 Oct`, `25/10/2026`, or `Tomorrow`):"
+                    else:
+                        err_d = f"⚠️ Yeh date beet chuki hai (*{p_str}*)! Kripya aane wali valid journey date dalein (jaise: `15 Oct`, `25/10/2026`, ya `Kal`):"
+                    await send_telegram_message(err_d, chat_id=chat_id)
+                    await self._ask_date(chat_id)
+                    return
+                elif date_status == "TOO_FAR":
+                    if lang == "hi":
+                        err_d = "⚠️ IRCTC पर केवल आने वाले 120 दिनों तक की बुकिंग मान्य है। कृपया 120 दिनों के भीतर की तारीख लिखें:"
+                    elif lang == "en":
+                        err_d = "⚠️ IRCTC only allows bookings up to 120 days in advance. Please enter a date within the 120-day window:"
+                    else:
+                        err_d = "⚠️ IRCTC par booking sirf aane wale 120 dinon tak hi allowed hai. Kripya 120 dinon ke andar ki date dalein:"
+                    await send_telegram_message(err_d, chat_id=chat_id)
+                    await self._ask_date(chat_id)
+                    return
                 else:
                     if lang == "hi":
                         err_d = "⚠️ कृपया वैध तारीख लिखें, जैसे: `15 Oct`, `25/10/2026`, या `कल`:"
@@ -1225,8 +1338,8 @@ class TelegramBotService:
             # Step C: In Passenger Selection
             if step in ["ASK_PASSENGER", "ASK_PASSENGER_MANUAL"]:
                 # 1. Did user enter a date instead of traveler name?
-                potential_date = parse_date_natural(text)
-                if potential_date:
+                potential_date, p_status, p_detail = validate_and_parse_journey_date(text)
+                if potential_date and p_status == "OK":
                     state["data"]["journey_date"] = potential_date
                     state["step"] = "ASK_PASSENGER_MANUAL"
                     user_chat_states[chat_id] = state
@@ -1238,6 +1351,16 @@ class TelegramBotService:
                         d_up = f"📅 *Journey Date update ho gayi:* `{potential_date}`\n\nAb kripya passenger ka naam aur age likhein (jaise: `Deepak 28 M`):"
                     await send_telegram_message(d_up, chat_id=chat_id)
                     await self._ask_passenger(chat_id)
+                    return
+                elif p_status == "PAST_DATE":
+                    p_str = p_detail or text.strip()
+                    if lang == "hi":
+                        err_d = f"⚠️ यह तारीख बीत चुकी है (*{p_str}*)! कृपया आने वाली वैध यात्रा की तारीख लिखें:"
+                    elif lang == "en":
+                        err_d = f"⚠️ This date has already passed (*{p_str}*)! Please enter a valid upcoming date:"
+                    else:
+                        err_d = f"⚠️ Yeh date beet chuki hai (*{p_str}*)! Kripya aane wali valid date dalein:"
+                    await send_telegram_message(err_d, chat_id=chat_id)
                     return
 
                 # 2. Parse passenger details
@@ -2386,11 +2509,15 @@ class TelegramBotService:
                 if len(parts) == 3:
                     j_date = date(parts[2], parts[1], parts[0])
                 else:
-                    j_date = date.today() + timedelta(days=7)
+                    raise ValueError("Date parts length is not 3")
             else:
-                j_date = date.today() + timedelta(days=7)
+                raise ValueError("No slashes in date string")
+
+            if j_date < date.today():
+                raise ValueError("Journey date is in the past")
         except Exception:
-            j_date = date.today() + timedelta(days=7)
+            await send_telegram_message("❌ यात्रा की तारीख अमान्य है। कृपया बुकिंग दोबारा शुरू करें।", chat_id=chat_id)
+            return
 
         contact_mobile = data.get("contact_mobile") or data.get("mobile") or data.get("phone") or getattr(settings, "DEFAULT_CONTACT_MOBILE", "9876543210")
 
