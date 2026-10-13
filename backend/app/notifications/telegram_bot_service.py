@@ -1,3 +1,8 @@
+import logging
+from app.automation.tatkal_scheduler import compute_tatkal_timings
+from app.automation.master_list_sync import sync_passengers_to_irctc_master_list
+
+logger = logging.getLogger("telegram_bot_service")
 import asyncio
 import re
 import json
@@ -592,6 +597,47 @@ class TelegramBotService:
             await self._handle_cancel(chat_id)
             return
 
+        # Tatkal Auto-Booking Callbacks
+        if data == "cmd_tatkal":
+            user_chat_states[chat_id] = {"step": "ASK_ROUTE_MANUAL", "data": {"is_tatkal": True}}
+            await self._ask_route(chat_id, is_tatkal=True)
+            return
+
+        if data.startswith("tatkal_quota_"):
+            quota_val = data.replace("tatkal_quota_", "")
+            state = user_chat_states.get(chat_id, {})
+            if "data" not in state:
+                state["data"] = {}
+            state["data"]["tatkal_quota"] = quota_val
+            state["data"]["quota"] = quota_val
+            if state["data"].get("passengers"):
+                state["step"] = "ASK_TATKAL_PAYMENT"
+                user_chat_states[chat_id] = state
+                await self._ask_tatkal_payment(chat_id)
+            else:
+                state["step"] = "ASK_PASSENGER"
+                user_chat_states[chat_id] = state
+                await self._ask_passenger(chat_id)
+            return
+
+        if data.startswith("tatkal_pay_"):
+            pay_val = data.replace("tatkal_pay_", "")
+            state = user_chat_states.get(chat_id, {})
+            if "data" not in state:
+                state["data"] = {}
+            state["data"]["preferred_payment_mode"] = pay_val
+            state["step"] = "CONFIRM_SUMMARY"
+            user_chat_states[chat_id] = state
+            await self._show_summary_and_confirm(chat_id)
+            return
+
+        if data == "confirm_tatkal_book":
+            state = user_chat_states.get(chat_id, {})
+            data_dict = state.get("data", {})
+            await self._execute_telegram_tatkal_booking(chat_id, data_dict)
+            user_chat_states.pop(chat_id, None)
+            return
+
         if data == "cmd_book":
             user_chat_states[chat_id] = {"step": "ASK_ROUTE", "data": {}}
             await self._ask_route(chat_id)
@@ -811,6 +857,17 @@ class TelegramBotService:
             state["data"] = state.get("data", {})
             state["data"]["passengers"] = [{"name": pax_name, "age": age, "gender": gender, "berth_preference": berth}]
             if state["data"].get("journey_class"):
+                if state["data"].get("is_tatkal"):
+                    if not state["data"].get("tatkal_quota"):
+                        state["step"] = "ASK_TATKAL_QUOTA"
+                        user_chat_states[chat_id] = state
+                        await self._ask_tatkal_quota(chat_id)
+                        return
+                    elif not state["data"].get("preferred_payment_mode"):
+                        state["step"] = "ASK_TATKAL_PAYMENT"
+                        user_chat_states[chat_id] = state
+                        await self._ask_tatkal_payment(chat_id)
+                        return
                 state["step"] = "CONFIRM_SUMMARY"
                 user_chat_states[chat_id] = state
                 await self._show_summary_and_confirm(chat_id)
@@ -823,10 +880,19 @@ class TelegramBotService:
             cls_name = data.replace("class_", "")
             state["data"] = state.get("data", {})
             state["data"]["journey_class"] = cls_name
-            if state["data"].get("passengers"):
-                state["step"] = "CONFIRM_SUMMARY"
+            if state["data"].get("is_tatkal") and not state["data"].get("tatkal_quota"):
+                state["step"] = "ASK_TATKAL_QUOTA"
                 user_chat_states[chat_id] = state
-                await self._show_summary_and_confirm(chat_id)
+                await self._ask_tatkal_quota(chat_id)
+            elif state["data"].get("passengers"):
+                if state["data"].get("is_tatkal") and not state["data"].get("preferred_payment_mode"):
+                    state["step"] = "ASK_TATKAL_PAYMENT"
+                    user_chat_states[chat_id] = state
+                    await self._ask_tatkal_payment(chat_id)
+                else:
+                    state["step"] = "CONFIRM_SUMMARY"
+                    user_chat_states[chat_id] = state
+                    await self._show_summary_and_confirm(chat_id)
             else:
                 state["step"] = "ASK_PASSENGER"
                 user_chat_states[chat_id] = state
@@ -881,6 +947,12 @@ class TelegramBotService:
             "menu", "/menu", "/start", "/help", "नमस्ते", "हेलो", "हाय"
         }
         is_greeting = clean in GREETING_WORDS or clean.startswith("/start") or clean.startswith("/help") or clean.startswith("/menu")
+
+        # Tatkal Auto-Booking Command
+        if clean in ["/tatkal", "tatkal", "तत्काल", "tatkal booking", "tatkal book"]:
+            user_chat_states[chat_id] = {"step": "ASK_ROUTE_MANUAL", "data": {"is_tatkal": True}}
+            await self._ask_route(chat_id, is_tatkal=True)
+            return
 
         if is_greeting:
             # 1. Clear any active or waiting booking sessions so greeting is completely clean
@@ -1344,6 +1416,36 @@ class TelegramBotService:
                     await self._ask_passenger(chat_id)
                     return
 
+            # Step C2: In Tatkal Quota Selection
+            if step in ["ASK_TATKAL_QUOTA"]:
+                quota_choice = "PT" if "pt" in clean.lower() or "premium" in clean.lower() else "TQ"
+                state["data"]["tatkal_quota"] = quota_choice
+                state["data"]["quota"] = quota_choice
+                q_label = "Premium Tatkal (PT)" if quota_choice == "PT" else "Tatkal (TQ)"
+                ack = f"✅ कोटा: *{q_label}*" if lang == "hi" else f"✅ Quota: *{q_label}*"
+                await send_telegram_message(ack, chat_id=chat_id)
+                if state["data"].get("passengers"):
+                    state["step"] = "ASK_TATKAL_PAYMENT"
+                    user_chat_states[chat_id] = state
+                    await self._ask_tatkal_payment(chat_id)
+                else:
+                    state["step"] = "ASK_PASSENGER"
+                    user_chat_states[chat_id] = state
+                    await self._ask_passenger(chat_id)
+                return
+
+            # Step C3: In Tatkal Payment Mode Selection
+            if step in ["ASK_TATKAL_PAYMENT"]:
+                pay_choice = "EWALLET" if "wallet" in clean.lower() or "ewallet" in clean.lower() else "UPI_QR"
+                state["data"]["preferred_payment_mode"] = pay_choice
+                p_label = "IRCTC e-Wallet / Auto-Pay" if pay_choice == "EWALLET" else "Instant Mobile UPI QR"
+                ack = f"✅ भुगतान विधि: *{p_label}*" if lang == "hi" else f"✅ Payment Mode: *{p_label}*"
+                await send_telegram_message(ack, chat_id=chat_id)
+                state["step"] = "CONFIRM_SUMMARY"
+                user_chat_states[chat_id] = state
+                await self._show_summary_and_confirm(chat_id)
+                return
+
             # Step C: In Passenger Selection
             if step in ["ASK_PASSENGER", "ASK_PASSENGER_MANUAL"]:
                 # 1. Did user enter a date instead of traveler name?
@@ -1406,6 +1508,19 @@ class TelegramBotService:
                 state["data"]["passengers"] = [pax]
                 pax_ack = f"✅ यात्री जोड़ा गया: *{pax['name']}* ({pax['age']}/{pax['gender']})" if lang == "hi" else f"✅ Traveler Added: *{pax['name']}* ({pax['age']}/{pax['gender']})"
                 if state["data"].get("journey_class"):
+                    if state["data"].get("is_tatkal"):
+                        if not state["data"].get("tatkal_quota"):
+                            state["step"] = "ASK_TATKAL_QUOTA"
+                            user_chat_states[chat_id] = state
+                            await send_telegram_message(pax_ack, chat_id=chat_id)
+                            await self._ask_tatkal_quota(chat_id)
+                            return
+                        elif not state["data"].get("preferred_payment_mode"):
+                            state["step"] = "ASK_TATKAL_PAYMENT"
+                            user_chat_states[chat_id] = state
+                            await send_telegram_message(pax_ack, chat_id=chat_id)
+                            await self._ask_tatkal_payment(chat_id)
+                            return
                     state["step"] = "CONFIRM_SUMMARY"
                     user_chat_states[chat_id] = state
                     await send_telegram_message(pax_ack, chat_id=chat_id)
@@ -1441,7 +1556,10 @@ class TelegramBotService:
             # Step E: In Summary Confirmation
             if step in ["CONFIRM_SUMMARY"]:
                 if clean in ["yes", "haan", "ok", "confirm", "book", "हाँ"]:
-                    await self._execute_telegram_booking(chat_id, state.get("data", {}))
+                    if state.get("data", {}).get("is_tatkal"):
+                        await self._execute_telegram_tatkal_booking(chat_id, state.get("data", {}))
+                    else:
+                        await self._execute_telegram_booking(chat_id, state.get("data", {}))
                     user_chat_states.pop(chat_id, None)
                     return
                 else:
@@ -1630,7 +1748,7 @@ class TelegramBotService:
                 "👉 *नीचे दिए गए बटनों पर टैप करें या चैट में लिखें:*"
             )
             buttons = [
-                [{"text": "🎫 नई टिकट बुक करें", "callback_data": "cmd_book"}],
+                [{"text": "🎫 नई टिकट बुक करें", "callback_data": "cmd_book"}, {"text": "⚡ तत्काल ऑटो-बुकिंग", "callback_data": "cmd_tatkal"}],
                 [{"text": "🔍 PNR स्टेटस चेक", "callback_data": "cmd_pnr"}, {"text": "📍 लाइव ट्रेन स्थिति", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 वर्तमान स्थिति", "callback_data": "cmd_status"}, {"text": f"⚙️ मोड: {mode_label}", "callback_data": "cmd_mode"}],
                 [{"text": "👥 सहेजे गए यात्री", "callback_data": "cmd_passengers"}],
@@ -1650,7 +1768,7 @@ class TelegramBotService:
                 "👉 *Tap the buttons below or chat directly:*"
             )
             buttons = [
-                [{"text": "🎫 Book New Ticket", "callback_data": "cmd_book"}],
+                [{"text": "🎫 Book New Ticket", "callback_data": "cmd_book"}, {"text": "⚡ Tatkal Auto-Booking", "callback_data": "cmd_tatkal"}],
                 [{"text": "🔍 Check PNR Status", "callback_data": "cmd_pnr"}, {"text": "📍 Live Train Status", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": f"⚙️ Mode: {mode_label}", "callback_data": "cmd_mode"}],
                 [{"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
@@ -1670,7 +1788,7 @@ class TelegramBotService:
                 "👉 *Neeche diye gaye buttons par tap karein ya chat me likhein:*"
             )
             buttons = [
-                [{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}],
+                [{"text": "🎫 Nayi Ticket Book Karein", "callback_data": "cmd_book"}, {"text": "⚡ Tatkal Auto-Booking", "callback_data": "cmd_tatkal"}],
                 [{"text": "🔍 PNR Status Check", "callback_data": "cmd_pnr"}, {"text": "📍 Live Train Status", "callback_data": "cmd_live_train"}],
                 [{"text": "🔄 Current Status", "callback_data": "cmd_status"}, {"text": f"⚙️ Mode: {mode_label}", "callback_data": "cmd_mode"}],
                 [{"text": "👥 Saved Passengers", "callback_data": "cmd_passengers"}],
@@ -1985,13 +2103,16 @@ class TelegramBotService:
     async def _send_routes(self, chat_id: str):
         await self._ask_route(chat_id)
 
-    async def _ask_route(self, chat_id: str):
+    async def _ask_route(self, chat_id: str, is_tatkal: bool = False):
         lang = user_languages.get(chat_id, "hinglish")
         cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
         buttons = [[{"text": cancel_txt, "callback_data": "cancel_book"}]]
 
         keyboard = {"inline_keyboard": buttons}
-        user_chat_states[chat_id] = {"step": "ASK_ROUTE_MANUAL", "data": {}}
+        current_data = user_chat_states.get(chat_id, {}).get("data", {})
+        if is_tatkal:
+            current_data["is_tatkal"] = True
+        user_chat_states[chat_id] = {"step": "ASK_ROUTE_MANUAL", "data": current_data}
 
         if lang == "hi":
             msg = (
@@ -2359,6 +2480,79 @@ class TelegramBotService:
                 )
         await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
 
+    async def _ask_tatkal_quota(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
+        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "🚄 Tatkal (TQ)", "callback_data": "tatkal_quota_TQ"},
+                    {"text": "⚡ Premium Tatkal (PT)", "callback_data": "tatkal_quota_PT"}
+                ],
+                [{"text": cancel_txt, "callback_data": "cancel_book"}]
+            ]
+        }
+        if lang == "hi":
+            msg = (
+                "🎯 *तत्काल कोटा चुनें (Select Tatkal Quota):*\n\n"
+                "• *Tatkal (TQ):* फिक्स्ड तत्काल चार्ज, सीमित सीटें\n"
+                "• *Premium Tatkal (PT):* डायनामिक फेयर, उच्च कन्फर्मेशन संभावना\n\n"
+                "👉 *नीचे दिए गए बटनों में से अपना कोटा चुनें:*"
+            )
+        elif lang == "en":
+            msg = (
+                "🎯 *Select Tatkal Quota:*\n\n"
+                "• *Tatkal (TQ):* Standard fixed Tatkal quota\n"
+                "• *Premium Tatkal (PT):* Dynamic fare quota (higher confirmation chances)\n\n"
+                "👉 *Select your preferred quota below:*"
+            )
+        else:
+            msg = (
+                "🎯 *Tatkal Quota Select Karein:*\n\n"
+                "• *Tatkal (TQ):* Standard fixed Tatkal quota\n"
+                "• *Premium Tatkal (PT):* Dynamic fare quota (high confirmation chances)\n\n"
+                "👉 *Neeche diye gaye option par tap karein:*"
+            )
+        await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
+
+    async def _ask_tatkal_payment(self, chat_id: str):
+        lang = user_languages.get(chat_id, "hinglish")
+        cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
+        keyboard = {
+            "inline_keyboard": [
+                [
+                    {"text": "📲 Instant Mobile UPI QR", "callback_data": "tatkal_pay_UPI_QR"},
+                    {"text": "💳 IRCTC e-Wallet / Auto-Pay", "callback_data": "tatkal_pay_EWALLET"}
+                ],
+                [{"text": cancel_txt, "callback_data": "cancel_book"}]
+            ]
+        }
+        if lang == "hi":
+            msg = (
+                "💳 *तत्काल भुगतान विधि चुनें (Payment Method):*\n\n"
+                "तत्काल बुकिंग के समय भुगतान सबसे तेज़ होना चाहिए:\n"
+                "• *Instant Mobile UPI QR:* स्क्रीन पर QR आते ही मोबाइल से स्कैन करके भुगतान करें\n"
+                "• *IRCTC e-Wallet / Auto-Pay:* 1-क्लिक ऑटो डिडक्शन (बिना बैंक OTP के सुपरफास्ट)\n\n"
+                "👉 *अपनी पसंदीदा भुगतान विधि चुनें:*"
+            )
+        elif lang == "en":
+            msg = (
+                "💳 *Select Preferred Payment Method:*\n\n"
+                "During Tatkal rush, payment speed is critical:\n"
+                "• *Instant Mobile UPI QR:* Scan generated QR instantly via GPay/PhonePe/Paytm\n"
+                "• *IRCTC e-Wallet / Auto-Pay:* 1-click auto-deduction (fastest, no bank OTP delay)\n\n"
+                "👉 *Select your preferred method:*"
+            )
+        else:
+            msg = (
+                "💳 *Preferred Payment Method Chunein:*\n\n"
+                "Tatkal booking me fast payment bohot zaroori hoti hai:\n"
+                "• *Instant Mobile UPI QR:* GPay / PhonePe / Paytm se QR scan karke pay karein\n"
+                "• *IRCTC e-Wallet / Auto-Pay:* Direct wallet auto-debit (superfast 1-click)\n\n"
+                "👉 *Apna option select karein:*"
+            )
+        await send_telegram_message(msg, chat_id=chat_id, reply_markup=keyboard)
+
     async def _ask_class(self, chat_id: str):
         lang = user_languages.get(chat_id, "hinglish")
         cancel_txt = "❌ रद्द करें" if lang == "hi" else "❌ Cancel"
@@ -2427,6 +2621,74 @@ class TelegramBotService:
         j_date = data.get('journey_date', '')
         j_cls = data.get('journey_class', '3A')
 
+        if data.get("is_tatkal"):
+            quota_val = data.get("tatkal_quota") or "TQ"
+            quota_label = "⚡ Premium Tatkal (PT)" if quota_val == "PT" else "🚄 Tatkal (TQ)"
+            pay_val = data.get("preferred_payment_mode") or "UPI_QR"
+            pay_label = "💳 IRCTC e-Wallet / Auto-Pay" if pay_val == "EWALLET" else "📲 Instant Mobile UPI QR"
+            
+            timings = None
+            try:
+                date_str = data.get("journey_date", "")
+                parts = [int(x) for x in date_str.split("/")] if "/" in date_str else []
+                if len(parts) == 3:
+                    j_date_obj = date(parts[2], parts[1], parts[0])
+                    timings = compute_tatkal_timings(j_date_obj, j_cls)
+            except Exception:
+                pass
+
+            warmup_str = timings["warmup_time"].strftime("%I:%M %p, %d %b %Y") if timings else "T-2 Minutes before opening"
+            open_str = timings["opening_time"].strftime("%I:%M:%S %p sharp") if timings else ("10:00:00 AM sharp" if j_cls in ["1A","2A","3A","3E","CC","EC","EA","EV"] else "11:00:00 AM sharp")
+
+            if lang == "hi":
+                summary = (
+                    "⚡ *IRCTC तत्काल ऑटो-बुकिंग सारांश:*\n"
+                    "═════════════════════════════════════\n"
+                    f"• *मार्ग (Route):* `{from_st}` ➔ `{to_st}`\n"
+                    f"• *तारीख (Date):* {j_date}\n"
+                    f"• *ट्रेन / श्रेणी:* `{data.get('train_preference', 'Auto')}` | {j_cls}\n"
+                    f"• *कोटा (Quota):* {quota_label}\n"
+                    f"• *यात्री (Passenger):* {pax_name} ({pax_age}/{pax_gender})\n"
+                    f"• *भुगतान विधि:* {pay_label}\n"
+                    f"• *मास्टर लिस्ट सिंक:* ✅ ऑटो-सिंक सक्रिय\n\n"
+                    f"⏰ *वॉर्मअप समय:* `{warmup_str}`\n"
+                    f"🚀 *बुकिंग ओपनिंग:* `{open_str}`\n\n"
+                    "क्या आप इस तत्काल बुकिंग को शेड्यूल करना चाहते हैं?\n"
+                    "रात में डिटेल्स सेट हो जाएंगी, सुबह बॉट खुद समय पर बुक करेगा!"
+                )
+                btn_confirm = "⚡ तत्काल बुकिंग शेड्यूल करें"
+                btn_cancel = "❌ रद्द करें"
+            else:
+                summary = (
+                    "⚡ *IRCTC Tatkal Auto-Booking Schedule:*\n"
+                    "═════════════════════════════════════\n"
+                    f"• *Route:* `{from_st}` ➔ `{to_st}`\n"
+                    f"• *Date:* {j_date}\n"
+                    f"• *Train / Class:* `{data.get('train_preference', 'Auto')}` | {j_cls}\n"
+                    f"• *Quota:* {quota_label}\n"
+                    f"• *Passenger:* {pax_name} ({pax_age}/{pax_gender})\n"
+                    f"• *Payment Mode:* {pay_label}\n"
+                    f"• *Master List Sync:* ✅ Auto-Sync Enabled\n\n"
+                    f"⏰ *Warmup Trigger:* `{warmup_str}`\n"
+                    f"🚀 *Opening Time:* `{open_str}`\n\n"
+                    "Kya aap is Tatkal booking ko schedule karna chahte hain?\n"
+                    "Bot subah opening time se 2 min pehle browser launch karke booking confirm karega!"
+                )
+                btn_confirm = "⚡ Schedule Tatkal Booking"
+                btn_cancel = "❌ Cancel"
+
+            keyboard = {
+                "inline_keyboard": [
+                    [
+                        {"text": btn_confirm, "callback_data": "confirm_tatkal_book"},
+                        {"text": btn_cancel, "callback_data": "cancel_book"}
+                    ]
+                ]
+            }
+            await send_telegram_message(summary, chat_id=chat_id, reply_markup=keyboard)
+            return
+
+
         if lang == "hi":
             btn_confirm = "✅ पुष्टि करें और बुक करें"
             btn_cancel = "❌ रद्द करें"
@@ -2476,6 +2738,135 @@ class TelegramBotService:
             ]
         }
         await send_telegram_message(summary, chat_id=chat_id, reply_markup=keyboard)
+
+    async def _execute_telegram_tatkal_booking(self, chat_id: str, data: Dict[str, Any]):
+        lang = user_languages.get(chat_id, "hinglish")
+        db = SessionLocal()
+        import uuid
+        ref = f"TK-{datetime.now().strftime('%Y%m%d')}-{uuid.uuid4().hex[:6].upper()}"
+
+        if not data.get("passengers"):
+            try:
+                saved_pax = db.query(Passenger).order_by(Passenger.id.desc()).first()
+                if saved_pax:
+                    data["passengers"] = [{
+                        "name": saved_pax.name,
+                        "age": saved_pax.age,
+                        "gender": saved_pax.gender,
+                        "berth_preference": getattr(saved_pax, 'berth_preference', 'NONE') or 'NONE'
+                    }]
+                else:
+                    db.close()
+                    await send_telegram_message("❌ No passengers specified for Tatkal booking.", chat_id=chat_id)
+                    return
+            except Exception:
+                db.close()
+                await send_telegram_message("❌ No passengers specified for Tatkal booking.", chat_id=chat_id)
+                return
+
+        date_str = data.get("journey_date", "")
+        try:
+            parts = [int(x) for x in date_str.split("/")]
+            j_date = date(parts[2], parts[1], parts[0])
+            if j_date < date.today():
+                raise ValueError("Journey date is in the past")
+        except Exception:
+            db.close()
+            await send_telegram_message("❌ Invalid journey date for Tatkal schedule.", chat_id=chat_id)
+            return
+
+        j_cls = data.get("journey_class", "3A")
+        quota = data.get("tatkal_quota") or data.get("quota") or "TQ"
+        payment_mode = data.get("preferred_payment_mode", "UPI_QR")
+        timings = compute_tatkal_timings(j_date, j_cls)
+        warmup_time = timings["warmup_time"]
+
+        contact_mobile = data.get("contact_mobile") or getattr(settings, "DEFAULT_CONTACT_MOBILE", "9876543210")
+
+        booking = Booking(
+            booking_ref=ref,
+            from_station=data.get("from_station", "NDLS"),
+            to_station=data.get("to_station", "MMCT"),
+            boarding_station=data.get("from_station", "NDLS"),
+            journey_date=j_date,
+            journey_class=j_cls,
+            quota=quota,
+            train_number=data.get("train_preference") or data.get("train_number") or "",
+            train_name=data.get("train_name") or "Tatkal Train",
+            passenger_count=len(data.get("passengers", [])),
+            contact_mobile=contact_mobile,
+            status="SCHEDULED_TATKAL",
+            is_tatkal=True,
+            tatkal_quota_type=quota,
+            preferred_payment_mode=payment_mode,
+            scheduled_trigger_time=warmup_time,
+            master_list_synced=False,
+            payment_status="PENDING"
+        )
+        db.add(booking)
+        db.commit()
+        db.refresh(booking)
+
+        for p in data.get("passengers", []):
+            auto_save_passenger_to_db(p)
+            bp = BookingPassenger(
+                booking_id=booking.id,
+                name=p["name"],
+                age=p.get("age", 30),
+                gender=p.get("gender", "M"),
+                berth_preference=p.get("berth_preference", "NONE"),
+                status="SCHEDULED"
+            )
+            db.add(bp)
+        db.commit()
+        db.close()
+
+        # Background Master List Sync ahead of time
+        async def sync_bg():
+            db_s = SessionLocal()
+            try:
+                await sync_passengers_to_irctc_master_list(
+                    passengers=data.get("passengers", []),
+                    booking_ref=ref,
+                    db=db_s,
+                    live_mode=getattr(settings, 'LIVE_IRCTC', not getattr(settings, 'DEMO_MODE', False))
+                )
+            except Exception as e:
+                logger.error(f"Error syncing master list in background for {ref}: {e}")
+            finally:
+                db_s.close()
+
+        asyncio.create_task(sync_bg())
+
+        open_str = timings["opening_time"].strftime("%I:%M:%S %p sharp")
+        trigger_str = timings["warmup_time"].strftime("%I:%M:%S %p")
+        book_d_str = timings["booking_date"].strftime("%d %b %Y")
+
+        if lang == "hi":
+            ack_msg = (
+                f"⚡ *तत्काल बुकिंग सफलतापूर्वक शेड्यूल हो गई!*\n"
+                f"═════════════════════════════════════\n"
+                f"🎫 *संदर्भ (Ref):* `{ref}`\n"
+                f"📅 *यात्रा तिथि:* `{j_date.strftime('%d/%m/%Y')}`\n"
+                f"⏰ *बुकिंग खुलने का समय:* `{open_str}` ({book_d_str})\n"
+                f"🎯 *ऑटोमेशन वॉर्मअप:* `{trigger_str}` (T-2 मिनट पहले)\n"
+                f"👥 *IRCTC मास्टर लिस्ट:* बैकग्राउंड में सिंक हो रही है...\n"
+                f"💳 *भुगतान विधि:* `{payment_mode}`\n\n"
+                f"✅ *निश्चिंत रहें!* बॉट सुबह ठीक `{trigger_str}` पर IRCTC पोर्टल खोलकर लॉगिन करेगा और `{open_str}` बजते ही तत्काल सीट बुक कर देगा।"
+            )
+        else:
+            ack_msg = (
+                f"⚡ *Tatkal Booking Scheduled Successfully!*\n"
+                f"═════════════════════════════════════\n"
+                f"🎫 *Ref:* `{ref}`\n"
+                f"📅 *Journey Date:* `{j_date.strftime('%d/%m/%Y')}`\n"
+                f"⏰ *Opening Time:* `{open_str}` ({book_d_str})\n"
+                f"🎯 *Automation Warmup:* `{trigger_str}` (T-2 minutes ahead)\n"
+                f"👥 *IRCTC Master List:* Syncing in background...\n"
+                f"💳 *Payment Mode:* `{payment_mode}`\n\n"
+                f"✅ *Relax!* Bot will auto-launch at `{trigger_str}`, handle login & CAPTCHA, and hit IRCTC Tatkal servers at `{open_str}` sharp!"
+            )
+        await send_telegram_message(ack_msg, chat_id=chat_id)
 
     async def _execute_telegram_booking(self, chat_id: str, data: Dict[str, Any]):
         lang = user_languages.get(chat_id, "hinglish")

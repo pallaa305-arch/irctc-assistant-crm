@@ -48,6 +48,7 @@ class Settings(BaseSettings):
     BROWSER_HEADLESS: bool = False  # Visible browser by default as requested
     BROWSER_SLOW_MO: int = 0        # Zero artificial CDP throttling for authentic human mouse/keystroke cadence
     DEMO_MODE: bool = False         # Live Official IRCTC Mode by default
+    LIVE_IRCTC: bool = True         # Alias for non-demo live mode
     IRCTC_USERNAME: str = ""
     IRCTC_PASSWORD: str = ""
     DEFAULT_CONTACT_MOBILE: str = "9876543210"
