@@ -44,6 +44,13 @@ class Booking(Base):
     # CRM & Notes
     notes = Column(Text, nullable=True)
     is_archived = Column(Boolean, default=False)
+
+    # Tatkal Automation & Scheduling
+    is_tatkal = Column(Boolean, default=False, index=True)
+    tatkal_quota_type = Column(String(16), default="TQ")  # "TQ" (Tatkal) or "PT" (Premium Tatkal)
+    scheduled_trigger_time = Column(DateTime, nullable=True, index=True)
+    preferred_payment_mode = Column(String(32), default="UPI_QR")  # "UPI_QR" or "EWALLET"
+    master_list_synced = Column(Boolean, default=False)
     
     # Relationships
     passengers = relationship("BookingPassenger", back_populates="booking", cascade="all, delete-orphan")
