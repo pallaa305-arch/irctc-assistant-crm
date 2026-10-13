@@ -365,6 +365,43 @@ async def _wait_for_user_or_cancel(session_state: BookingSessionState, timeout_s
     return "timeout"
 
 
+async def wait_for_tatkal_opening_sharp(booking: Optional[Booking], db: Session, ref: str, session_state: BookingSessionState):
+    """
+    Precision clock synchronization for Tatkal rush.
+    Waits until opening_time (10:00:00 AM IST for AC, 11:00:00 AM IST for Non-AC).
+    Logs second-by-second countdown in the final 10 seconds.
+    """
+    if not booking or not getattr(booking, "is_tatkal", False):
+        return
+
+    from app.automation.tatkal_scheduler import compute_tatkal_timings
+    j_date = getattr(booking, "journey_date", None)
+    j_cls = getattr(booking, "journey_class", "3A")
+    if not j_date:
+        return
+
+    timings = compute_tatkal_timings(j_date, j_cls)
+    opening_time = timings["opening_time"]
+    now = datetime.now()
+
+    diff_seconds = (opening_time - now).total_seconds()
+    if diff_seconds > 0:
+        log_event(db, "INFO", "AUTOMATION", f"⚡ Tatkal Precision Clock Sync: Waiting {diff_seconds:.1f}s until opening at {opening_time.strftime('%H:%M:%S')}", ref)
+        while True:
+            remaining = (opening_time - datetime.now()).total_seconds()
+            if remaining <= 0:
+                break
+            if remaining > 15:
+                await asyncio.sleep(5)
+            elif remaining > 2:
+                session_state.manual_prompt = f"⏳ Tatkal Opening Countdown: {int(remaining)}s remaining..."
+                await asyncio.sleep(1)
+            else:
+                # Sub-second spin loop in final 2 seconds
+                await asyncio.sleep(0.05)
+        log_event(db, "INFO", "AUTOMATION", f"🚀 Tatkal Opening Time REACHED ({datetime.now().strftime('%H:%M:%S')})! Hitting IRCTC availability servers now!", ref)
+
+
 async def ensure_authenticated_session(page, ref: str, db: Session, session_state: BookingSessionState, booking: Optional[Booking] = None) -> bool:
     """
     Enforces that the IRCTC browser session is ALWAYS authenticated.
@@ -1004,8 +1041,14 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     except Exception as e:
                         log_event(db, "WARNING", "AUTOMATION", f"Failed to type date into calendar input: {e}", ref)
 
-                # 4. Quota — General Quota (GN) is selected by IRCTC by default. Do not touch unless specific quota required.
-                quota_needed = (getattr(booking, 'journey_quota', 'GN') or 'GN').upper()
+                # 4. Quota Selection (Tatkal / Premium Tatkal / General)
+                is_tatkal_mode = getattr(booking, "is_tatkal", False)
+                tatkal_type = getattr(booking, "tatkal_quota_type", "TQ") or "TQ"
+                if is_tatkal_mode:
+                    quota_needed = "PREMIUM TATKAL" if tatkal_type.upper() in ("PT", "PREMIUM TATKAL") else "TATKAL"
+                else:
+                    quota_needed = (getattr(booking, 'quota', None) or getattr(booking, 'journey_quota', 'GN') or 'GN').upper()
+
                 if quota_needed not in ('GN', 'GENERAL'):
                     try:
                         quota_dropdown = page.locator("p-dropdown[formcontrolname='journeyQuota']").first
@@ -1015,6 +1058,7 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                             opt = page.locator(f"li[aria-label*='{quota_needed}' i], span:has-text('{quota_needed}')").first
                             if await opt.count() > 0:
                                 await opt.click()
+                                log_event(db, "INFO", "AUTOMATION", f"Selected quota: {quota_needed}", ref)
                     except Exception as e:
                         log_event(db, "WARNING", "AUTOMATION", f"Quota selection note: {e}", ref)
 
@@ -1317,6 +1361,9 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                         classes_to_try.append(cp)
         except Exception:
             pass
+
+        # If Tatkal booking, synchronize with opening clock before probing availability
+        await wait_for_tatkal_opening_sharp(booking, db, ref, session_state)
 
         for try_cls in classes_to_try:
             cls_keys_try = cls_map.get(try_cls, [try_cls])
@@ -1798,14 +1845,29 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     except Exception:
                         pass
                     await name_input.click()
-                    await asyncio.sleep(0.2)
-                    await page.keyboard.press("Control+A")
-                    await page.keyboard.press("Backspace")
-                    await asyncio.sleep(0.1)
-                    await name_input.press_sequentially(p.name, delay=60)
-                    await asyncio.sleep(0.4)
-                    await page.keyboard.press("Tab")
-                    await asyncio.sleep(0.3)
+                    await asyncio.sleep(0.15)
+
+                    # Master List 1-Click selection support for Tatkal speed
+                    master_selected = False
+                    if getattr(booking, "is_tatkal", False) or getattr(booking, "master_list_synced", False):
+                        prefix = p.name[:3] if len(p.name) >= 3 else p.name
+                        await name_input.press_sequentially(prefix, delay=40)
+                        await asyncio.sleep(0.3)
+                        auto_item = page.locator(f"li.ui-autocomplete-list-item:has-text('{p.name}'), span:has-text('{p.name}')").first
+                        if await auto_item.count() > 0 and await auto_item.is_visible():
+                            await auto_item.click()
+                            await asyncio.sleep(0.3)
+                            log_event(db, "INFO", "AUTOMATION", f"1-Click Master List selected for '{p.name}'", ref)
+                            master_selected = True
+
+                    if not master_selected:
+                        await page.keyboard.press("Control+A")
+                        await page.keyboard.press("Backspace")
+                        await asyncio.sleep(0.1)
+                        await name_input.press_sequentially(p.name, delay=50)
+                        await asyncio.sleep(0.4)
+                        await page.keyboard.press("Tab")
+                        await asyncio.sleep(0.3)
 
                 # Age — type naturally with human cadence and mouse trajectory
                 age_inputs = page.locator("input[placeholder*='Age' i], input[formcontrolname='passengerAge']")
@@ -2035,17 +2097,26 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
             log_event(db, "WARNING", "AUTOMATION", f"Co-branded card benefit note: {e}", ref)
         await asyncio.sleep(0.3)
 
-        # Select Payment Mode: BHIM/UPI using exact IRCTC PassengerInputComponent DOM selectors
-        # In IRCTC's template: <tr><label for="2"><p-radiobutton id="2" value="2"></p-radiobutton> Pay through BHIM/UPI </label></tr>
+        # Select Payment Mode (Option 1: Cards/Wallets/EWALLET vs Option 2: BHIM/UPI)
+        pref_pay = getattr(booking, "preferred_payment_mode", "UPI_QR") or "UPI_QR"
         try:
-            upi_selectors = [
-                "p-radiobutton[id='2'] .ui-radiobutton-box",
-                "label[for='2'] .ui-radiobutton-box",
-                "tr:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
-                "label:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
-                "label[for='2']",
-                "label:has-text('Pay through BHIM/UPI')"
-            ]
+            if pref_pay == "EWALLET":
+                upi_selectors = [
+                    "p-radiobutton[id='1'] .ui-radiobutton-box",
+                    "label[for='1'] .ui-radiobutton-box",
+                    "tr:has-text('Credit & Debit Cards') .ui-radiobutton-box",
+                    "label:has-text('Credit & Debit Cards') .ui-radiobutton-box",
+                    "label[for='1']"
+                ]
+            else:
+                upi_selectors = [
+                    "p-radiobutton[id='2'] .ui-radiobutton-box",
+                    "label[for='2'] .ui-radiobutton-box",
+                    "tr:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
+                    "label:has-text('Pay through BHIM/UPI') .ui-radiobutton-box",
+                    "label[for='2']",
+                    "label:has-text('Pay through BHIM/UPI')"
+                ]
             for upi_sel in upi_selectors:
                 try:
                     loc = page.locator(upi_sel).first

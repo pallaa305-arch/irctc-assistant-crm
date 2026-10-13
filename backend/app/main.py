@@ -24,6 +24,7 @@ from fastapi.responses import FileResponse
 from app.database.connection import init_db
 from app.crm.excel_exporter import init_excel_workbook
 from app.automation.browser_manager import browser_manager
+from app.automation.tatkal_scheduler import start_tatkal_scheduler_loop
 from app.notifications.telegram_bot_service import telegram_bot_service
 from app.config import settings, BASE_DIR
 
@@ -45,8 +46,16 @@ async def lifespan(app: FastAPI):
     init_excel_workbook()
     if settings.TELEGRAM_BOT_TOKEN and settings.TELEGRAM_ENABLED:
         telegram_bot_service.start()
+
+    # Start background Tatkal scheduler loop
+    tatkal_stop_event = asyncio.Event()
+    tatkal_task = asyncio.create_task(start_tatkal_scheduler_loop(poll_interval=5, stop_event=tatkal_stop_event))
+
     yield
-    # Shutdown: Stop Telegram Bot and clean up browser context
+
+    # Shutdown: Stop Telegram Bot, Tatkal loop, and clean up browser context
+    tatkal_stop_event.set()
+    tatkal_task.cancel()
     telegram_bot_service.stop()
     await browser_manager.close()
 
@@ -77,45 +86,22 @@ app.include_router(system_router)
 app.include_router(railway_router)
 app.include_router(chat_router)
 
-from fastapi.responses import FileResponse, RedirectResponse
+# Mount static frontend build if it exists
+frontend_dist = BASE_DIR / "frontend" / "dist"
+if frontend_dist.exists():
+    app.mount("/assets", StaticFiles(directory=str(frontend_dist / "assets")), name="assets")
 
-@app.get("/api/health")
-async def health_check():
-    return {
-        "status": "Online",
-        "app": settings.APP_NAME,
-        "mode": "DEMO" if settings.DEMO_MODE else "LIVE_IRCTC"
-    }
-
-@app.get("/pay/{booking_ref}")
-@app.get("/api/pay-redirect/{booking_ref}")
-async def redirect_to_pay(booking_ref: str):
-    return RedirectResponse(url=f"/api/bookings/pay-redirect/{booking_ref}")
-
-# Serve Frontend static assets and SPA if built
-DIST_DIR = BASE_DIR / "frontend" / "dist"
-ASSETS_DIR = DIST_DIR / "assets"
-
-if ASSETS_DIR.exists():
-    app.mount("/assets", StaticFiles(directory=str(ASSETS_DIR)), name="assets")
-
-@app.get("/{full_path:path}")
-async def serve_spa(full_path: str):
-    if full_path.startswith("api"):
-        raise HTTPException(status_code=404, detail="Not Found")
-    if DIST_DIR.exists():
-        target_file = DIST_DIR / full_path
-        if full_path and target_file.is_file():
-            return FileResponse(target_file)
-        index_file = DIST_DIR / "index.html"
-        if index_file.exists():
-            return FileResponse(index_file)
-    return {
-        "status": "Online",
-        "message": "Frontend build not found. Run 'cd frontend && npm run build' or run 'npm run dev' for development mode.",
-        "api_docs": "/docs"
-    }
+    @app.get("/{full_path:path}")
+    async def serve_frontend(full_path: str):
+        # Allow API routes to pass through
+        if full_path.startswith("api/"):
+            raise HTTPException(status_code=404, detail="API route not found")
+        
+        file_path = frontend_dist / full_path
+        if file_path.exists() and file_path.is_file():
+            return FileResponse(file_path)
+        return FileResponse(frontend_dist / "index.html")
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+    uvicorn.run("app.main:app", host="0.0.0.0", port=8000, reload=True, loop="asyncio")
