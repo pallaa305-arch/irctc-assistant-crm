@@ -1540,6 +1540,17 @@ class TelegramBotService:
                     state["data"]["journey_class"] = cls
                     cls_ack = f"✅ श्रेणी चुनी गई: *{cls}*" if lang == "hi" else f"✅ Class Selected: *{cls}*"
                     await send_telegram_message(cls_ack, chat_id=chat_id)
+                    if state["data"].get("is_tatkal"):
+                        if not state["data"].get("tatkal_quota"):
+                            state["step"] = "ASK_TATKAL_QUOTA"
+                            user_chat_states[chat_id] = state
+                            await self._ask_tatkal_quota(chat_id)
+                            return
+                        elif not state["data"].get("preferred_payment_mode"):
+                            state["step"] = "ASK_TATKAL_PAYMENT"
+                            user_chat_states[chat_id] = state
+                            await self._ask_tatkal_payment(chat_id)
+                            return
                     if state["data"].get("passengers"):
                         state["step"] = "CONFIRM_SUMMARY"
                         user_chat_states[chat_id] = state

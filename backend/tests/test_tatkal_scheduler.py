@@ -1,3 +1,4 @@
+import asyncio
 import pytest
 from datetime import date, datetime, timedelta
 from unittest.mock import AsyncMock, patch, MagicMock
@@ -124,6 +125,50 @@ async def test_check_and_trigger_due_tatkal_bookings():
             # Status should transition
             db.refresh(b)
             assert b.status == "IN_PROGRESS"
+    finally:
+        b_clean = db.query(Booking).filter(Booking.id == b_id).first()
+        if b_clean:
+            db.delete(b_clean)
+            db.commit()
+        db.close()
+
+@pytest.mark.asyncio
+async def test_check_and_trigger_due_tatkal_bookings_default_dispatcher():
+    db = SessionLocal()
+    ref = "BK-TEST-TRIGGER-004"
+    old = db.query(Booking).filter(Booking.booking_ref == ref).first()
+    if old:
+        db.delete(old)
+        db.commit()
+
+    b = Booking(
+        booking_ref=ref,
+        from_station="NDLS",
+        to_station="CNB",
+        journey_date=date(2026, 10, 20),
+        journey_class="3A",
+        status="SCHEDULED_TATKAL",
+        is_tatkal=True,
+        scheduled_trigger_time=datetime(2026, 10, 19, 9, 58, 0)
+    )
+    db.add(b)
+    db.commit()
+    b_id = b.id
+
+    try:
+        with patch("app.automation.tatkal_scheduler.send_telegram_message", new_callable=AsyncMock), \
+             patch("app.automation.irctc_flow.run_real_irctc_booking_flow", new_callable=AsyncMock) as mock_flow:
+
+            triggered = await check_and_trigger_due_tatkal_bookings(
+                db, 
+                as_of=datetime(2026, 10, 19, 9, 58, 10),
+                trigger_func=None
+            )
+            assert len(triggered) == 1
+            assert triggered[0].booking_ref == ref
+            # Yield to let asyncio.create_task runner execute
+            await asyncio.sleep(0.05)
+            assert mock_flow.called
     finally:
         b_clean = db.query(Booking).filter(Booking.id == b_id).first()
         if b_clean:

@@ -10,9 +10,11 @@ from app.notifications.whatsapp import send_whatsapp_message, format_booking_con
 from app.services.pdf_service import pdf_service
 from app.config import settings
 
-def log_event(db: Session, level: str, category: str, message: str, booking_ref: Optional[str] = None):
+def log_event(db: Optional[Session], level: str, category: str, message: str, booking_ref: Optional[str] = None):
     """Safely logs an event after sanitizing credentials/cards."""
     safe_msg = sanitize_log_message(message)
+    if db is None:
+        return
     entry = SystemLog(
         level=level,
         category=category,

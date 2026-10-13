@@ -380,15 +380,16 @@ async def wait_for_tatkal_opening_sharp(booking: Optional[Booking], db: Session,
     if not j_date:
         return
 
+    from app.automation.tatkal_scheduler import get_ist_now
     timings = compute_tatkal_timings(j_date, j_cls)
     opening_time = timings["opening_time"]
-    now = datetime.now()
+    now = get_ist_now()
 
     diff_seconds = (opening_time - now).total_seconds()
     if diff_seconds > 0:
-        log_event(db, "INFO", "AUTOMATION", f"⚡ Tatkal Precision Clock Sync: Waiting {diff_seconds:.1f}s until opening at {opening_time.strftime('%H:%M:%S')}", ref)
+        log_event(db, "INFO", "AUTOMATION", f"⚡ Tatkal Precision Clock Sync: Waiting {diff_seconds:.1f}s until opening at {opening_time.strftime('%H:%M:%S')} IST", ref)
         while True:
-            remaining = (opening_time - datetime.now()).total_seconds()
+            remaining = (opening_time - get_ist_now()).total_seconds()
             if remaining <= 0:
                 break
             if remaining > 15:
@@ -399,7 +400,7 @@ async def wait_for_tatkal_opening_sharp(booking: Optional[Booking], db: Session,
             else:
                 # Sub-second spin loop in final 2 seconds
                 await asyncio.sleep(0.05)
-        log_event(db, "INFO", "AUTOMATION", f"🚀 Tatkal Opening Time REACHED ({datetime.now().strftime('%H:%M:%S')})! Hitting IRCTC availability servers now!", ref)
+        log_event(db, "INFO", "AUTOMATION", f"🚀 Tatkal Opening Time REACHED ({get_ist_now().strftime('%H:%M:%S')} IST)! Hitting IRCTC availability servers now!", ref)
 
 
 async def ensure_authenticated_session(page, ref: str, db: Session, session_state: BookingSessionState, booking: Optional[Booking] = None) -> bool:
@@ -2108,6 +2109,17 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     "label:has-text('Credit & Debit Cards') .ui-radiobutton-box",
                     "label[for='1']"
                 ]
+                for upi_sel in upi_selectors:
+                    try:
+                        loc = page.locator(upi_sel).first
+                        if await loc.count() > 0 and await loc.is_visible():
+                            await loc.scroll_into_view_if_needed()
+                            await SmartBrowserActions.human_click(page, loc)
+                            break
+                    except Exception:
+                        pass
+                await asyncio.sleep(0.25)
+                log_event(db, "INFO", "AUTOMATION", "Selected payment mode: Cards / Wallets / EWALLET (Option 1)", ref)
             else:
                 upi_selectors = [
                     "p-radiobutton[id='2'] .ui-radiobutton-box",
@@ -2117,57 +2129,47 @@ async def run_real_irctc_booking_flow(db: Session, booking_id: int, session_stat
                     "label[for='2']",
                     "label:has-text('Pay through BHIM/UPI')"
                 ]
-            for upi_sel in upi_selectors:
-                try:
-                    loc = page.locator(upi_sel).first
-                    if await loc.count() > 0 and await loc.is_visible():
-                        await loc.scroll_into_view_if_needed()
-                        await SmartBrowserActions.human_click(page, loc)
-                        break
-                except Exception:
-                    pass
-
-            await asyncio.sleep(0.25)
-            # Verify active state on Option 2 (BHIM/UPI) without confusing it with Option 1 (UPI_CC)
-            is_upi_active = await page.evaluate('''() => {
-                const r2 = document.querySelector("p-radiobutton[id='2'], label[for='2'] p-radiobutton");
-                if (r2) {
-                    const box = r2.querySelector('.ui-radiobutton-box');
-                    const inp = r2.querySelector('input[type="radio"]');
-                    if ((box && box.classList.contains('ui-state-active')) || (inp && inp.checked)) return true;
-                }
-                const labels = Array.from(document.querySelectorAll('label, tr'));
-                for (const l of labels) {
-                    const t = (l.innerText || '').toLowerCase();
-                    if (t.includes('bhim/upi') && !t.includes('credit') && !t.includes('debit')) {
-                        const box = l.querySelector('.ui-radiobutton-box');
-                        const inp = l.querySelector('input[type="radio"]');
-                        if ((box && box.classList.contains('ui-state-active')) || (inp && inp.checked)) return true;
-                    }
-                }
-                return false;
-            }''')
-            if not is_upi_active:
-                # Fallback trusted Playwright click directly on label[for='2'] or p-radiobutton[id='2']
-                for fallback_sel in ["label[for='2']", "p-radiobutton[id='2'] .ui-radiobutton-box", "label:has-text('Pay through BHIM/UPI')"]:
+                for upi_sel in upi_selectors:
                     try:
-                        loc = page.locator(fallback_sel).first
+                        loc = page.locator(upi_sel).first
                         if await loc.count() > 0 and await loc.is_visible():
-                            await loc.click(timeout=2000, force=True)
-                            await asyncio.sleep(0.25)
+                            await loc.scroll_into_view_if_needed()
+                            await SmartBrowserActions.human_click(page, loc)
                             break
                     except Exception:
                         pass
+
+                await asyncio.sleep(0.25)
+                # Verify active state on Option 2 (BHIM/UPI) without confusing it with Option 1 (UPI_CC)
                 is_upi_active = await page.evaluate('''() => {
                     const r2 = document.querySelector("p-radiobutton[id='2'], label[for='2'] p-radiobutton");
                     if (r2) {
                         const box = r2.querySelector('.ui-radiobutton-box');
                         const inp = r2.querySelector('input[type="radio"]');
-                        return Boolean((box && box.classList.contains('ui-state-active')) || (inp && inp.checked));
+                        if ((box && box.classList.contains('ui-state-active')) || (inp && inp.checked)) return true;
+                    }
+                    const labels = Array.from(document.querySelectorAll('label, tr'));
+                    for (const l of labels) {
+                        const t = (l.innerText || '').toLowerCase();
+                        if (t.includes('bhim/upi') && !t.includes('credit') && !t.includes('debit')) {
+                            const box = l.querySelector('.ui-radiobutton-box');
+                            const inp = l.querySelector('input[type="radio"]');
+                            if ((box && box.classList.contains('ui-state-active')) || (inp && inp.checked)) return true;
+                        }
                     }
                     return false;
                 }''')
-            log_event(db, "INFO", "AUTOMATION", f"Selected payment mode: BHIM/UPI (active={is_upi_active})", ref)
+                if not is_upi_active:
+                    for fallback_sel in ["label[for='2']", "p-radiobutton[id='2'] .ui-radiobutton-box", "label:has-text('Pay through BHIM/UPI')"]:
+                        try:
+                            loc = page.locator(fallback_sel).first
+                            if await loc.count() > 0 and await loc.is_visible():
+                                await loc.click(timeout=2000, force=True)
+                                await asyncio.sleep(0.25)
+                                break
+                        except Exception:
+                            pass
+                log_event(db, "INFO", "AUTOMATION", f"Selected payment mode: BHIM/UPI (Option 2, active={is_upi_active})", ref)
         except Exception as e:
             log_event(db, "WARNING", "AUTOMATION", f"Payment mode selection note: {e}", ref)
         await asyncio.sleep(0.2)

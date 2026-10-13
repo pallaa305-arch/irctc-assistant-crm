@@ -105,6 +105,12 @@ async def sync_passengers_to_irctc_master_list(
         }
 
     # LIVE IRCTC AUTOMATION
+    created_local_db = False
+    if db is None:
+        from app.database.connection import SessionLocal
+        db = SessionLocal()
+        created_local_db = True
+
     try:
         page = await browser_manager.get_page()
         session_state = BookingSessionState(booking_ref=booking_ref or "MASTER_LIST_SYNC")
@@ -146,6 +152,24 @@ async def sync_passengers_to_irctc_master_list(
                 if await page.query_selector(age_sel):
                     await page.fill(age_sel, str(p["age"]))
 
+                # Select Gender (Mandatory on IRCTC Master List)
+                gender_val = p.get("gender", "M")
+                gender_label = "Male" if gender_val == "M" else ("Female" if gender_val == "F" else "Transgender")
+                try:
+                    gender_sel = "select[formcontrolname='gender'], select#gender"
+                    if await page.query_selector(gender_sel):
+                        await page.select_option(gender_sel, value=gender_val)
+                    else:
+                        g_drop = page.locator("p-dropdown[formcontrolname='gender']").first
+                        if await g_drop.count() > 0:
+                            await g_drop.click()
+                            await page.wait_for_timeout(300)
+                            g_opt = page.locator(f"li[aria-label*='{gender_label}' i], span:has-text('{gender_label}')").first
+                            if await g_opt.count() > 0:
+                                await g_opt.click()
+                except Exception as ge:
+                    logger.warning(f"[MASTER_LIST] Gender select note for {name}: {ge}")
+
                 # Submit / Save button
                 btn_sel = "button:has-text('Submit'), button:has-text('Save'), button[type='submit']"
                 if await page.query_selector(btn_sel):
@@ -174,3 +198,6 @@ async def sync_passengers_to_irctc_master_list(
             "mode": "LIVE",
             "error": err_msg
         }
+    finally:
+        if created_local_db and db:
+            db.close()

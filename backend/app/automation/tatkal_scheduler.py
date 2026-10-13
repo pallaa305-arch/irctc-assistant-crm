@@ -3,6 +3,7 @@ import inspect
 import logging
 from datetime import date, datetime, time, timedelta
 from typing import Any, Callable, Dict, List, Optional
+from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 
 from app.database.connection import SessionLocal
@@ -11,7 +12,16 @@ from app.notifications.telegram import send_telegram_message
 
 logger = logging.getLogger("tatkal_scheduler")
 
+IST = ZoneInfo("Asia/Kolkata")
 AC_CLASSES = {"1A", "2A", "3A", "3E", "CC", "EC", "EA", "EV"}
+
+
+def get_ist_now() -> datetime:
+    """Returns current naive datetime in IST regardless of host system timezone."""
+    try:
+        return datetime.now(IST).replace(tzinfo=None)
+    except Exception:
+        return datetime.now()
 
 
 def compute_tatkal_timings(journey_date: date, journey_class: str) -> Dict[str, Any]:
@@ -41,8 +51,9 @@ def compute_tatkal_timings(journey_date: date, journey_class: str) -> Dict[str, 
 def get_due_tatkal_bookings(db: Session, as_of: Optional[datetime] = None) -> List[Booking]:
     """
     Fetches all Tatkal bookings whose warmup time is due (<= as_of) and status is SCHEDULED_TATKAL.
+    Always uses IST time to guarantee precision in any host/docker environment.
     """
-    now = as_of or datetime.now()
+    now = as_of or get_ist_now()
     return db.query(Booking).filter(
         Booking.is_tatkal == True,
         Booking.status == "SCHEDULED_TATKAL",
@@ -90,10 +101,22 @@ async def check_and_trigger_due_tatkal_bookings(
                 logger.error(f"Custom trigger_func failed for {booking.booking_ref}: {exc}")
         else:
             try:
-                from app.automation.irctc_flow import execute_booking_flow
-                asyncio.create_task(execute_booking_flow(booking.booking_ref))
+                from app.automation.irctc_flow import run_real_irctc_booking_flow
+                from app.automation.flow_state import get_or_create_session
+                session_state = get_or_create_session(booking.booking_ref)
+                session_state.set_stage("PREPARING", "IN_PROGRESS")
+                b_id = booking.id
+
+                async def _runner(bid: int, s_state):
+                    db_flow = SessionLocal()
+                    try:
+                        await run_real_irctc_booking_flow(db_flow, bid, s_state)
+                    finally:
+                        db_flow.close()
+
+                asyncio.create_task(_runner(b_id, session_state))
             except Exception as exc:
-                logger.error(f"Failed to launch execute_booking_flow for {booking.booking_ref}: {exc}")
+                logger.error(f"Failed to launch booking flow for {booking.booking_ref}: {exc}")
 
         triggered.append(booking)
 
